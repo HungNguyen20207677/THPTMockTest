@@ -1,7 +1,7 @@
 # THPTMockTest
 
 Personal web application for Vietnamese high-school Mathematics mock exams.
-This repository currently contains the project foundation only.
+It currently includes authentication, account management, and ADMIN exam setup.
 
 ## Requirements
 
@@ -27,6 +27,11 @@ npm run admin:create
 
 The command refuses to create another administrator when one already exists.
 
+For exam PDFs, enable PDF/ZIP delivery in the Cloudinary product-environment
+security settings. Uploads are proxied through the protected application API and
+limited to 15 MB, so the deployment request-body limit should allow and cap that
+size appropriately.
+
 ## Checks
 
 ```bash
@@ -34,6 +39,7 @@ npm run format:check
 npm run lint
 npm run type-check
 npm test
+npm audit
 npm run build
 ```
 

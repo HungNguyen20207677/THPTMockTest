@@ -21,13 +21,18 @@ export default async function AdminDashboardPage() {
             Xin chào, {admin.fullName}
           </h1>
           <p className="text-muted-foreground leading-7">
-            Bạn có thể tạo và quản lý tài khoản học sinh. Chức năng đề thi sẽ
-            được bổ sung ở giai đoạn sau.
+            Bạn có thể quản lý tài khoản học sinh, tệp PDF và đáp án của các đề
+            thi Toán THPT.
           </p>
         </div>
-        <Button asChild>
-          <Link href="/admin/students">Quản lý học sinh</Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild>
+            <Link href="/admin/students">Quản lý học sinh</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/admin/exams">Quản lý đề thi</Link>
+          </Button>
+        </div>
       </section>
     </main>
   );
