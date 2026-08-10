@@ -40,6 +40,29 @@ export interface ExamPdf {
   originalFilename: string;
 }
 
+export interface ExamPdfSignedUploadFields {
+  timestamp: string;
+  public_id: string;
+  overwrite: "0";
+  allowed_formats: "pdf";
+  filename_override: string;
+  type: "upload";
+}
+
+export interface ExamPdfUploadTicket {
+  uploadUrl: string;
+  apiKey: string;
+  signature: string;
+  fields: ExamPdfSignedUploadFields;
+}
+
+export interface ExamPdfUploadReference {
+  publicId: string;
+  originalFilename: string;
+  timestamp: number;
+  signature: string;
+}
+
 export interface ExamSummary {
   id: string;
   title: string;

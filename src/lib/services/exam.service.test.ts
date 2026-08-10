@@ -1,26 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  uploadExamPdf: vi.fn(),
+  assertAuthenticExamPdfUploadReference: vi.fn(),
+  assertValidExamPdfUploadReference: vi.fn(),
+  createExamPdfUploadTicket: vi.fn(),
+  verifyExamPdfAsset: vi.fn(),
+  discardExamPdfUpload: vi.fn(),
   deleteExamPdf: vi.fn(),
+  acquireExamPdfOperationLease: vi.fn(),
   createExamRecord: vi.fn(),
   deleteExamRecord: vi.fn(),
   findExamRecordById: vi.fn(),
+  findExamRecordByPdfPublicId: vi.fn(),
   listExamRecords: vi.fn(),
+  releaseExamPdfOperationLease: vi.fn(),
   updateExamRecord: vi.fn(),
   updateExamRecordStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/cloudinary/exam-pdf", () => ({
-  uploadExamPdf: mocks.uploadExamPdf,
+  assertAuthenticExamPdfUploadReference:
+    mocks.assertAuthenticExamPdfUploadReference,
+  assertValidExamPdfUploadReference: mocks.assertValidExamPdfUploadReference,
+  createExamPdfUploadTicket: mocks.createExamPdfUploadTicket,
+  verifyExamPdfAsset: mocks.verifyExamPdfAsset,
+  discardExamPdfUpload: mocks.discardExamPdfUpload,
   deleteExamPdf: mocks.deleteExamPdf,
 }));
 
 vi.mock("@/lib/db/dao/exam.dao", () => ({
+  acquireExamPdfOperationLease: mocks.acquireExamPdfOperationLease,
   createExamRecord: mocks.createExamRecord,
   deleteExamRecord: mocks.deleteExamRecord,
   findExamRecordById: mocks.findExamRecordById,
+  findExamRecordByPdfPublicId: mocks.findExamRecordByPdfPublicId,
   listExamRecords: mocks.listExamRecords,
+  releaseExamPdfOperationLease: mocks.releaseExamPdfOperationLease,
   updateExamRecord: mocks.updateExamRecord,
   updateExamRecordStatus: mocks.updateExamRecordStatus,
 }));
@@ -29,12 +44,16 @@ import { EXAM_STATUS, EXAM_STRUCTURE } from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
   changeExamStatus,
+  createExam,
+  deleteExam,
   editExam,
+  issueExamPdfUploadTicket,
   listExams,
 } from "@/lib/services/exam.service";
 import type { ExamPersistenceRecord } from "@/lib/db/dao/exam.dao";
 import type { UpsertExamInput } from "@/lib/validations/exam";
 import type { AppUser } from "@/types/user";
+import type { ExamPdfUploadReference } from "@/types/exam";
 
 const admin: AppUser = {
   id: "admin-id",
@@ -57,11 +76,17 @@ const oldPdf = {
 };
 
 const newPdf = {
-  publicId: "thpt-mock-test/exams/new.pdf",
+  publicId: "thpt-mock-test/exams/123e4567-e89b-42d3-a456-426614174000.pdf",
   secureUrl: "https://res.cloudinary.com/demo/raw/upload/new.pdf",
   originalFilename: "new.pdf",
 };
 
+const replacementPdfUpload: ExamPdfUploadReference = {
+  publicId: "thpt-mock-test/exams/123e4567-e89b-42d3-a456-426614174000.pdf",
+  originalFilename: "new.pdf",
+  timestamp: 1_786_363_200,
+  signature: "a".repeat(40),
+};
 function createValidInput(): UpsertExamInput {
   return {
     title: "Đề thi thử Toán số 1",
@@ -109,12 +134,24 @@ function createStoredExam(
 
 describe("exam service", () => {
   beforeEach(() => {
-    mocks.uploadExamPdf.mockReset();
+    mocks.assertAuthenticExamPdfUploadReference.mockReset();
+    mocks.assertValidExamPdfUploadReference.mockReset();
+    mocks.createExamPdfUploadTicket.mockReset();
+    mocks.verifyExamPdfAsset.mockReset();
+    mocks.discardExamPdfUpload.mockReset();
     mocks.deleteExamPdf.mockReset();
+    mocks.acquireExamPdfOperationLease.mockReset();
+    mocks.acquireExamPdfOperationLease.mockImplementation((publicId: string) =>
+      Promise.resolve({ publicId, token: `lease-${publicId}` }),
+    );
     mocks.createExamRecord.mockReset();
     mocks.deleteExamRecord.mockReset();
     mocks.findExamRecordById.mockReset();
+    mocks.findExamRecordByPdfPublicId.mockReset();
+    mocks.findExamRecordByPdfPublicId.mockResolvedValue(null);
     mocks.listExamRecords.mockReset();
+    mocks.releaseExamPdfOperationLease.mockReset();
+    mocks.releaseExamPdfOperationLease.mockResolvedValue(undefined);
     mocks.updateExamRecord.mockReset();
     mocks.updateExamRecordStatus.mockReset();
   });
@@ -172,14 +209,40 @@ describe("exam service", () => {
     expect(mocks.listExamRecords).not.toHaveBeenCalled();
   });
 
+  it("allows only an ADMIN to issue a signed PDF upload ticket", () => {
+    const intent = {
+      name: "de-thi.pdf",
+      type: "application/pdf",
+      size: 1024,
+    };
+    const ticket = {
+      uploadUrl: "https://api.cloudinary.com/upload",
+      apiKey: "api-key",
+      signature: "a".repeat(40),
+      fields: {
+        timestamp: "1786363200",
+        public_id: replacementPdfUpload.publicId,
+        overwrite: "0" as const,
+        allowed_formats: "pdf" as const,
+        filename_override: "de-thi.pdf",
+        type: "upload" as const,
+      },
+    };
+    mocks.createExamPdfUploadTicket.mockReturnValue(ticket);
+
+    expect(() => issueExamPdfUploadTicket(student, intent)).toThrowError(
+      expect.objectContaining({ code: "FORBIDDEN", statusCode: 403 }),
+    );
+    expect(mocks.createExamPdfUploadTicket).not.toHaveBeenCalled();
+    expect(issueExamPdfUploadTicket(admin, intent)).toEqual(ticket);
+    expect(mocks.createExamPdfUploadTicket).toHaveBeenCalledWith(intent);
+  });
+
   it("persists a replacement PDF before cleaning up the old asset", async () => {
     const currentExam = createStoredExam();
     const input = createValidInput();
-    const replacementFile = new File(["%PDF-1.7"], "new.pdf", {
-      type: "application/pdf",
-    });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
-    mocks.uploadExamPdf.mockResolvedValue(newPdf);
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
     mocks.updateExamRecord.mockResolvedValue(
       createStoredExam({ ...input, pdf: newPdf }),
     );
@@ -189,7 +252,7 @@ describe("exam service", () => {
       admin,
       currentExam.id,
       { ...input, expectedUpdatedAt: currentExam.updatedAt.toISOString() },
-      replacementFile,
+      replacementPdfUpload,
     );
 
     expect(result.pdf).toEqual(newPdf);
@@ -202,14 +265,20 @@ describe("exam service", () => {
     expect(mocks.updateExamRecord.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.deleteExamPdf.mock.invocationCallOrder[0],
     );
+    expect(
+      mocks.acquireExamPdfOperationLease.mock.calls.map(
+        ([publicId]) => publicId,
+      ),
+    ).toEqual([replacementPdfUpload.publicId, oldPdf.publicId].sort());
+    expect(mocks.deleteExamPdf.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.releaseExamPdfOperationLease.mock.invocationCallOrder[0],
+    );
   });
 
   it("rejects a stale edit before uploading a replacement PDF", async () => {
     const currentExam = createStoredExam();
-    const replacementFile = new File(["%PDF-1.7"], "new.pdf", {
-      type: "application/pdf",
-    });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.discardExamPdfUpload.mockResolvedValue(undefined);
 
     await expect(
       editExam(
@@ -219,13 +288,138 @@ describe("exam service", () => {
           ...createValidInput(),
           expectedUpdatedAt: "2025-12-31T00:00:00.000Z",
         },
-        replacementFile,
+        replacementPdfUpload,
       ),
     ).rejects.toMatchObject({
       code: "EXAM_CONFLICT",
       statusCode: 409,
     });
-    expect(mocks.uploadExamPdf).not.toHaveBeenCalled();
+    expect(mocks.discardExamPdfUpload).toHaveBeenCalledWith(
+      replacementPdfUpload,
+    );
+    expect(mocks.verifyExamPdfAsset).not.toHaveBeenCalled();
     expect(mocks.updateExamRecord).not.toHaveBeenCalled();
+  });
+
+  it("cleans up a verified replacement when Exam persistence fails", async () => {
+    const currentExam = createStoredExam();
+    const input = createValidInput();
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.updateExamRecord.mockRejectedValue(new Error("Database unavailable"));
+    mocks.discardExamPdfUpload.mockResolvedValue(undefined);
+
+    await expect(
+      editExam(
+        admin,
+        currentExam.id,
+        { ...input, expectedUpdatedAt: currentExam.updatedAt.toISOString() },
+        replacementPdfUpload,
+      ),
+    ).rejects.toThrow("Database unavailable");
+    expect(mocks.discardExamPdfUpload).toHaveBeenCalledWith(
+      replacementPdfUpload,
+    );
+    expect(mocks.deleteExamPdf).not.toHaveBeenCalledWith(oldPdf.publicId);
+  });
+
+  it("cleans up an unclaimed upload when Exam creation fails", async () => {
+    const input = createValidInput();
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.createExamRecord.mockRejectedValue(new Error("Database unavailable"));
+    mocks.discardExamPdfUpload.mockResolvedValue(undefined);
+
+    await expect(
+      createExam(admin, input, replacementPdfUpload),
+    ).rejects.toThrow("Database unavailable");
+    expect(mocks.discardExamPdfUpload).toHaveBeenCalledWith(
+      replacementPdfUpload,
+    );
+  });
+
+  it("does not verify or delete an upload reference already owned by an Exam", async () => {
+    const owner = createStoredExam({ pdf: newPdf });
+    mocks.findExamRecordById.mockResolvedValue(createStoredExam());
+    mocks.findExamRecordByPdfPublicId.mockResolvedValue(owner);
+
+    await expect(
+      editExam(
+        admin,
+        "exam-id",
+        {
+          ...createValidInput(),
+          expectedUpdatedAt: "2026-01-02T00:00:00.000Z",
+        },
+        replacementPdfUpload,
+      ),
+    ).rejects.toMatchObject({
+      code: "EXAM_PDF_ALREADY_ATTACHED",
+      statusCode: 409,
+    });
+    expect(mocks.verifyExamPdfAsset).not.toHaveBeenCalled();
+    expect(mocks.discardExamPdfUpload).not.toHaveBeenCalled();
+    expect(mocks.deleteExamPdf).not.toHaveBeenCalled();
+  });
+
+  it("does not delete the winning asset after a duplicate ownership race", async () => {
+    mocks.findExamRecordByPdfPublicId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(createStoredExam({ pdf: newPdf }));
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.createExamRecord.mockRejectedValue({ code: 11000 });
+
+    await expect(
+      createExam(admin, createValidInput(), replacementPdfUpload),
+    ).rejects.toMatchObject({
+      code: "EXAM_PDF_ALREADY_ATTACHED",
+      statusCode: 409,
+    });
+    expect(mocks.discardExamPdfUpload).not.toHaveBeenCalled();
+    expect(mocks.deleteExamPdf).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize or discard while another PDF operation holds the lease", async () => {
+    const currentExam = createStoredExam();
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.acquireExamPdfOperationLease.mockResolvedValue(null);
+
+    await expect(
+      editExam(
+        admin,
+        currentExam.id,
+        {
+          ...createValidInput(),
+          expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+        },
+        replacementPdfUpload,
+      ),
+    ).rejects.toMatchObject({
+      code: "EXAM_PDF_OPERATION_CONFLICT",
+      statusCode: 409,
+    });
+    expect(mocks.verifyExamPdfAsset).not.toHaveBeenCalled();
+    expect(mocks.discardExamPdfUpload).not.toHaveBeenCalled();
+    expect(mocks.releaseExamPdfOperationLease).not.toHaveBeenCalled();
+  });
+
+  it("holds the stored PDF lease through Exam deletion and asset cleanup", async () => {
+    const currentExam = createStoredExam();
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.deleteExamRecord.mockResolvedValue(currentExam);
+    mocks.deleteExamPdf.mockResolvedValue(undefined);
+
+    await deleteExam(
+      admin,
+      currentExam.id,
+      currentExam.updatedAt.toISOString(),
+    );
+
+    expect(mocks.acquireExamPdfOperationLease).toHaveBeenCalledWith(
+      oldPdf.publicId,
+    );
+    expect(mocks.deleteExamPdf).toHaveBeenCalledWith(oldPdf.publicId);
+    expect(mocks.deleteExamPdf.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.releaseExamPdfOperationLease.mock.invocationCallOrder[0],
+    );
   });
 });

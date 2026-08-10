@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { parseExamMultipartRequest } from "@/lib/api/exam-request";
 import { parseJsonRequest } from "@/lib/api/request";
 import { toErrorResponse } from "@/lib/api/route-error";
 import { requireApiRole } from "@/lib/auth/authorization";
@@ -9,7 +8,7 @@ import { deleteExam, editExam, getExam } from "@/lib/services/exam.service";
 import {
   deleteExamSchema,
   examIdSchema,
-  updateExamSchema,
+  updateExamRequestSchema,
 } from "@/lib/validations/exam";
 import type { ApiSuccessResponse } from "@/types/api";
 import type { ExamDetail } from "@/types/exam";
@@ -39,12 +38,13 @@ export async function PATCH(request: Request, context: ExamRouteContext) {
   try {
     const admin = await requireApiRole(USER_ROLE.ADMIN);
     const examId = examIdSchema.parse((await context.params).examId);
-    const { input, pdf } = await parseExamMultipartRequest(
-      request,
-      updateExamSchema,
-      false,
+    const input = await parseJsonRequest(request, updateExamRequestSchema);
+    const exam = await editExam(
+      admin,
+      examId,
+      input.exam,
+      input.replacementPdfUpload,
     );
-    const exam = await editExam(admin, examId, input, pdf);
     const response = {
       data: { exam },
     } satisfies ApiSuccessResponse<{ exam: ExamDetail }>;

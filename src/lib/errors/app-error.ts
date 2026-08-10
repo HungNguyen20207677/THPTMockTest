@@ -69,6 +69,26 @@ export class ExamPdfUploadError extends AppError {
   }
 }
 
+export class ExamPdfAlreadyAttachedError extends AppError {
+  constructor() {
+    super(
+      "Tệp PDF này đã được gắn với một đề thi khác.",
+      "EXAM_PDF_ALREADY_ATTACHED",
+      409,
+    );
+  }
+}
+
+export class ExamPdfOperationConflictError extends AppError {
+  constructor() {
+    super(
+      "Tệp PDF này đang được xử lý. Vui lòng thử lại.",
+      "EXAM_PDF_OPERATION_CONFLICT",
+      409,
+    );
+  }
+}
+
 export class ExamConflictError extends AppError {
   constructor() {
     super(

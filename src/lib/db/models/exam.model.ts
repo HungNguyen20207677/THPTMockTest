@@ -29,6 +29,12 @@ export interface ExamRecord {
   updatedAt: Date;
 }
 
+export interface ExamPdfOperationLeaseRecord {
+  _id: string;
+  token: string;
+  expiresAt: Date;
+}
+
 const pdfSchema = new Schema<ExamPdf>(
   {
     publicId: { type: String, required: true },
@@ -129,7 +135,27 @@ const examSchema = new Schema<ExamRecord>(
 );
 
 examSchema.index({ createdAt: -1 });
+examSchema.index({ "pdf.publicId": 1 }, { unique: true });
+
+const examPdfOperationLeaseSchema = new Schema<ExamPdfOperationLeaseRecord>(
+  {
+    _id: { type: String, required: true },
+    token: { type: String, required: true },
+    expiresAt: { type: Date, required: true },
+  },
+  { versionKey: false },
+);
+
+examPdfOperationLeaseSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export const ExamModel =
   (models.Exam as Model<ExamRecord> | undefined) ??
   model<ExamRecord>("Exam", examSchema);
+
+export const ExamPdfOperationLeaseModel =
+  (models.ExamPdfOperationLease as
+    Model<ExamPdfOperationLeaseRecord> | undefined) ??
+  model<ExamPdfOperationLeaseRecord>(
+    "ExamPdfOperationLease",
+    examPdfOperationLeaseSchema,
+  );

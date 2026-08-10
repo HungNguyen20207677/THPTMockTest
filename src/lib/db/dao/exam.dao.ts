@@ -1,9 +1,15 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { Types } from "mongoose";
 
 import { connectToDatabase } from "@/lib/db/mongoose";
-import { ExamModel } from "@/lib/db/models/exam.model";
+import {
+  ExamModel,
+  ExamPdfOperationLeaseModel,
+} from "@/lib/db/models/exam.model";
+import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import type {
   ExamAnswerKey,
   ExamPdf,
@@ -47,12 +53,21 @@ interface ExamDocumentData {
 }
 
 let examIndexesPromise: Promise<void> | null = null;
+const EXAM_PDF_OPERATION_LEASE_DURATION_MS = 60 * 60 * 1000;
+
+export interface ExamPdfOperationLease {
+  publicId: string;
+  token: string;
+}
 
 async function prepareExamModel(): Promise<void> {
   await connectToDatabase();
 
   if (!examIndexesPromise) {
-    examIndexesPromise = ExamModel.init()
+    examIndexesPromise = Promise.all([
+      ExamModel.init(),
+      ExamPdfOperationLeaseModel.init(),
+    ])
       .then(() => undefined)
       .catch((error: unknown) => {
         examIndexesPromise = null;
@@ -61,6 +76,53 @@ async function prepareExamModel(): Promise<void> {
   }
 
   await examIndexesPromise;
+}
+
+export async function acquireExamPdfOperationLease(
+  publicId: string,
+): Promise<ExamPdfOperationLease | null> {
+  await prepareExamModel();
+
+  const token = randomUUID();
+  const now = new Date();
+  const expiresAt = new Date(
+    now.getTime() + EXAM_PDF_OPERATION_LEASE_DURATION_MS,
+  );
+  const reclaimedLease = await ExamPdfOperationLeaseModel.findOneAndUpdate(
+    { _id: publicId, expiresAt: { $lte: now } },
+    { $set: { token, expiresAt } },
+    { returnDocument: "after" },
+  ).exec();
+
+  if (reclaimedLease) {
+    return { publicId, token };
+  }
+
+  try {
+    await ExamPdfOperationLeaseModel.create({
+      _id: publicId,
+      token,
+      expiresAt,
+    });
+
+    return { publicId, token };
+  } catch (error) {
+    if (isMongoDuplicateKeyError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function releaseExamPdfOperationLease(
+  lease: ExamPdfOperationLease,
+): Promise<void> {
+  await prepareExamModel();
+  await ExamPdfOperationLeaseModel.deleteOne({
+    _id: lease.publicId,
+    token: lease.token,
+  }).exec();
 }
 
 function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
@@ -95,6 +157,18 @@ export async function findExamRecordById(
   await prepareExamModel();
 
   const exam = await ExamModel.findById(examId).lean<ExamDocumentData>().exec();
+
+  return exam ? toExamRecord(exam) : null;
+}
+
+export async function findExamRecordByPdfPublicId(
+  publicId: string,
+): Promise<ExamPersistenceRecord | null> {
+  await prepareExamModel();
+
+  const exam = await ExamModel.findOne({ "pdf.publicId": publicId })
+    .lean<ExamDocumentData>()
+    .exec();
 
   return exam ? toExamRecord(exam) : null;
 }

@@ -11,6 +11,7 @@ import {
   isValidCanonicalShortAnswer,
   shortAnswerSlotsToCanonicalValue,
 } from "@/lib/exam/short-answer";
+import { examPdfUploadReferenceSchema } from "@/lib/validations/exam-pdf";
 import type { PartOneAnswer, PartTwoAnswer } from "@/types/exam";
 
 export const examStatusSchema = z.enum(EXAM_STATUSES);
@@ -85,10 +86,20 @@ export const examUpsertSchema = z.strictObject({
   answerKey: examAnswerKeySchema,
 });
 
+export const createExamRequestSchema = z.strictObject({
+  exam: examUpsertSchema,
+  pdfUpload: examPdfUploadReferenceSchema,
+});
+
 export const updateExamSchema = z.strictObject({
   ...examFields,
   answerKey: examAnswerKeySchema,
   expectedUpdatedAt: z.string().datetime(),
+});
+
+export const updateExamRequestSchema = z.strictObject({
+  exam: updateExamSchema,
+  replacementPdfUpload: examPdfUploadReferenceSchema.optional(),
 });
 
 export const publishableExamSchema = z.strictObject({

@@ -28,9 +28,8 @@ npm run admin:create
 The command refuses to create another administrator when one already exists.
 
 For exam PDFs, enable PDF/ZIP delivery in the Cloudinary product-environment
-security settings. Uploads are proxied through the protected application API and
-limited to 15 MB, so the deployment request-body limit should allow and cap that
-size appropriately.
+security settings. The ADMIN browser obtains short-lived signed parameters and
+uploads PDFs directly to Cloudinary; no unsigned upload preset is required.
 
 ## Checks
 

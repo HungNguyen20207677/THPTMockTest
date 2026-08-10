@@ -1,20 +1,34 @@
 import "server-only";
 
-import { deleteExamPdf, uploadExamPdf } from "@/lib/cloudinary/exam-pdf";
+import {
+  assertAuthenticExamPdfUploadReference,
+  assertValidExamPdfUploadReference,
+  createExamPdfUploadTicket,
+  deleteExamPdf,
+  discardExamPdfUpload,
+  verifyExamPdfAsset,
+} from "@/lib/cloudinary/exam-pdf";
 import { EXAM_STATUS } from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
+  acquireExamPdfOperationLease,
   createExamRecord,
   deleteExamRecord,
   findExamRecordById,
+  findExamRecordByPdfPublicId,
   listExamRecords,
+  releaseExamPdfOperationLease,
   updateExamRecord,
   updateExamRecordStatus,
+  type ExamPdfOperationLease,
   type ExamPersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
+import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import {
   ExamConflictError,
   ExamNotFoundError,
+  ExamPdfAlreadyAttachedError,
+  ExamPdfOperationConflictError,
   ExamPublicationError,
   ForbiddenError,
 } from "@/lib/errors/app-error";
@@ -27,10 +41,13 @@ import {
 import type {
   ExamDetail,
   ExamPdf,
+  ExamPdfUploadReference,
+  ExamPdfUploadTicket,
   ExamStatus,
   ExamSummary,
 } from "@/types/exam";
 import type { AppUser } from "@/types/user";
+import type { ExamPdfUploadIntent } from "@/lib/validations/exam-pdf";
 
 function assertAdmin(actor: AppUser): void {
   if (actor.role !== USER_ROLE.ADMIN) {
@@ -88,6 +105,105 @@ async function deletePdfBestEffort(publicId: string): Promise<void> {
   }
 }
 
+async function assertPdfUploadIsUnclaimed(
+  reference: ExamPdfUploadReference,
+): Promise<void> {
+  if (await findExamRecordByPdfPublicId(reference.publicId)) {
+    throw new ExamPdfAlreadyAttachedError();
+  }
+}
+
+async function acquirePdfOperationLeases(
+  publicIds: string[],
+): Promise<ExamPdfOperationLease[]> {
+  const leases: ExamPdfOperationLease[] = [];
+
+  try {
+    for (const publicId of [...new Set(publicIds)].sort()) {
+      const lease = await acquireExamPdfOperationLease(publicId);
+
+      if (!lease) {
+        throw new ExamPdfOperationConflictError();
+      }
+
+      leases.push(lease);
+    }
+
+    return leases;
+  } catch (error) {
+    await releasePdfOperationLeasesBestEffort(leases);
+    throw error;
+  }
+}
+
+async function acquirePdfUploadLeases(
+  reference: ExamPdfUploadReference,
+  additionalPublicIds: string[] = [],
+): Promise<ExamPdfOperationLease[]> {
+  assertAuthenticExamPdfUploadReference(reference);
+  return acquirePdfOperationLeases([
+    reference.publicId,
+    ...additionalPublicIds,
+  ]);
+}
+
+async function releasePdfOperationLeasesBestEffort(
+  leases: ExamPdfOperationLease[],
+): Promise<void> {
+  for (const lease of [...leases].reverse()) {
+    try {
+      await releaseExamPdfOperationLease(lease);
+    } catch {
+      // The lease expires automatically if MongoDB cannot release it now.
+    }
+  }
+}
+
+async function discardPdfUploadWhileLeasedBestEffort(
+  reference: ExamPdfUploadReference,
+): Promise<void> {
+  try {
+    if (!(await findExamRecordByPdfPublicId(reference.publicId))) {
+      await discardExamPdfUpload(reference);
+    }
+  } catch {
+    // Cleanup must not replace the original validation or persistence error.
+  }
+}
+
+export async function discardUnclaimedExamPdfUpload(
+  reference: ExamPdfUploadReference,
+): Promise<void> {
+  assertAuthenticExamPdfUploadReference(reference);
+  const leases = await acquirePdfOperationLeases([reference.publicId]);
+
+  try {
+    if (await findExamRecordByPdfPublicId(reference.publicId)) {
+      return;
+    }
+
+    await discardExamPdfUpload(reference);
+  } finally {
+    await releasePdfOperationLeasesBestEffort(leases);
+  }
+}
+
+async function discardPdfUploadBestEffort(
+  reference: ExamPdfUploadReference,
+): Promise<void> {
+  try {
+    await discardUnclaimedExamPdfUpload(reference);
+  } catch {
+    // Cleanup must not replace the original validation or persistence error.
+  }
+}
+
+function normalizePdfOwnershipError(error: unknown): unknown {
+  return isMongoDuplicateKeyError(error)
+    ? new ExamPdfAlreadyAttachedError()
+    : error;
+}
+
 export async function listExams(actor: AppUser): Promise<ExamSummary[]> {
   assertAdmin(actor);
   const exams = await listExamRecords();
@@ -108,20 +224,27 @@ export async function getExam(
   return toExamDetail(exam);
 }
 
+export function issueExamPdfUploadTicket(
+  actor: AppUser,
+  intent: ExamPdfUploadIntent,
+): ExamPdfUploadTicket {
+  assertAdmin(actor);
+  return createExamPdfUploadTicket(intent);
+}
+
 export async function createExam(
   actor: AppUser,
   input: UpsertExamInput,
-  pdfFile: File,
+  pdfUpload: ExamPdfUploadReference,
 ): Promise<ExamDetail> {
   assertAdmin(actor);
-
-  if (input.status === EXAM_STATUS.PUBLISHED) {
-    assertPublishableContent(input);
-  }
-
-  const pdf = await uploadExamPdf(pdfFile);
+  const leases = await acquirePdfUploadLeases(pdfUpload);
 
   try {
+    assertValidExamPdfUploadReference(pdfUpload);
+    await assertPdfUploadIsUnclaimed(pdfUpload);
+    const pdf = await verifyExamPdfAsset(pdfUpload);
+
     if (input.status === EXAM_STATUS.PUBLISHED) {
       assertExamCanBePublished({
         title: input.title,
@@ -133,8 +256,10 @@ export async function createExam(
     const exam = await createExamRecord({ ...input, pdf }, actor.id);
     return toExamDetail(exam);
   } catch (error) {
-    await deletePdfBestEffort(pdf.publicId);
-    throw error;
+    await discardPdfUploadWhileLeasedBestEffort(pdfUpload);
+    throw normalizePdfOwnershipError(error);
+  } finally {
+    await releasePdfOperationLeasesBestEffort(leases);
   }
 }
 
@@ -142,17 +267,17 @@ export async function editExam(
   actor: AppUser,
   examId: string,
   input: UpdateExamInput,
-  replacementPdf?: File,
+  replacementPdfUpload?: ExamPdfUploadReference,
 ): Promise<ExamDetail> {
   assertAdmin(actor);
   const currentExam = await findExamRecordById(examId);
 
   if (!currentExam) {
-    throw new ExamNotFoundError();
-  }
+    if (replacementPdfUpload) {
+      await discardPdfUploadBestEffort(replacementPdfUpload);
+    }
 
-  if (currentExam.updatedAt.toISOString() !== input.expectedUpdatedAt) {
-    throw new ExamConflictError();
+    throw new ExamNotFoundError();
   }
 
   const examInput: UpsertExamInput = {
@@ -162,16 +287,30 @@ export async function editExam(
     settings: input.settings,
     answerKey: input.answerKey,
   };
-
-  if (examInput.status === EXAM_STATUS.PUBLISHED) {
-    assertPublishableContent(examInput);
-  }
-
-  const newPdf = replacementPdf
-    ? await uploadExamPdf(replacementPdf)
-    : currentExam.pdf;
+  const replacementLeases = replacementPdfUpload
+    ? await acquirePdfUploadLeases(replacementPdfUpload, [
+        currentExam.pdf.publicId,
+      ])
+    : [];
 
   try {
+    if (currentExam.updatedAt.toISOString() !== input.expectedUpdatedAt) {
+      throw new ExamConflictError();
+    }
+
+    if (examInput.status === EXAM_STATUS.PUBLISHED) {
+      assertPublishableContent(examInput);
+    }
+
+    if (replacementPdfUpload) {
+      assertValidExamPdfUploadReference(replacementPdfUpload);
+      await assertPdfUploadIsUnclaimed(replacementPdfUpload);
+    }
+
+    const newPdf = replacementPdfUpload
+      ? await verifyExamPdfAsset(replacementPdfUpload)
+      : currentExam.pdf;
+
     if (examInput.status === EXAM_STATUS.PUBLISHED) {
       assertExamCanBePublished({
         title: examInput.title,
@@ -190,17 +329,19 @@ export async function editExam(
       throw new ExamConflictError();
     }
 
-    if (replacementPdf && currentExam.pdf.publicId !== newPdf.publicId) {
+    if (replacementPdfUpload && currentExam.pdf.publicId !== newPdf.publicId) {
       await deletePdfBestEffort(currentExam.pdf.publicId);
     }
 
     return toExamDetail(updatedExam);
   } catch (error) {
-    if (replacementPdf) {
-      await deletePdfBestEffort(newPdf.publicId);
+    if (replacementPdfUpload) {
+      await discardPdfUploadWhileLeasedBestEffort(replacementPdfUpload);
     }
 
-    throw error;
+    throw normalizePdfOwnershipError(error);
+  } finally {
+    await releasePdfOperationLeasesBestEffort(replacementLeases);
   }
 }
 
@@ -254,11 +395,17 @@ export async function deleteExam(
     throw new ExamConflictError();
   }
 
-  const deletedExam = await deleteExamRecord(examId, currentExam.updatedAt);
+  const leases = await acquirePdfOperationLeases([currentExam.pdf.publicId]);
 
-  if (!deletedExam) {
-    throw new ExamConflictError();
+  try {
+    const deletedExam = await deleteExamRecord(examId, currentExam.updatedAt);
+
+    if (!deletedExam) {
+      throw new ExamConflictError();
+    }
+
+    await deletePdfBestEffort(deletedExam.pdf.publicId);
+  } finally {
+    await releasePdfOperationLeasesBestEffort(leases);
   }
-
-  await deletePdfBestEffort(deletedExam.pdf.publicId);
 }
