@@ -138,6 +138,7 @@ function createStoredExam(
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-02T00:00:00.000Z"),
     ...overrides,
+    attemptsStarted: overrides.attemptsStarted ?? false,
   };
 }
 
@@ -464,6 +465,26 @@ describe("exam service", () => {
     );
   });
 
+  it("honors the atomic attempt-start guard before the first attempt insert finishes", async () => {
+    const currentExam = createStoredExam({ attemptsStarted: true });
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.discardExamPdfUpload.mockResolvedValue(undefined);
+
+    await expect(
+      editExam(
+        admin,
+        currentExam.id,
+        {
+          ...createValidInput(),
+          expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+        },
+        replacementPdfUpload,
+      ),
+    ).rejects.toMatchObject({ code: "EXAM_CONTENT_LOCKED" });
+    expect(mocks.hasExamAttemptRecords).not.toHaveBeenCalled();
+    expect(mocks.updateExamRecord).not.toHaveBeenCalled();
+  });
+
   it("rejects answer-key changes after the Exam has attempts", async () => {
     const currentExam = createStoredExam();
     const input = createValidInput();
@@ -497,6 +518,17 @@ describe("exam service", () => {
     });
     expect(mocks.deleteExamRecord).not.toHaveBeenCalled();
     expect(mocks.deleteExamPdf).not.toHaveBeenCalled();
+  });
+
+  it("rejects hard deletion while the first attempt is being created", async () => {
+    const currentExam = createStoredExam({ attemptsStarted: true });
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+
+    await expect(
+      deleteExam(admin, currentExam.id, currentExam.updatedAt.toISOString()),
+    ).rejects.toMatchObject({ code: "EXAM_HAS_ATTEMPTS" });
+    expect(mocks.hasExamAttemptRecords).not.toHaveBeenCalled();
+    expect(mocks.deleteExamRecord).not.toHaveBeenCalled();
   });
 
   it("updates only metadata and settings after the Exam has attempts", async () => {

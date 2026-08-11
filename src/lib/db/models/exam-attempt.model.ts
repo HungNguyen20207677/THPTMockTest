@@ -25,6 +25,7 @@ export interface ExamAttemptRecord {
   submittedAt?: Date;
   lastSavedAt?: Date;
   answers: AttemptAnswers;
+  answerRevision: number;
   grading?: AttemptGradingSnapshot;
   gradedAt?: Date;
   createdAt: Date;
@@ -64,6 +65,7 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
         message: "Attempt answers must match the fixed THPT Math structure.",
       },
     },
+    answerRevision: { type: Number, required: true, default: 0, min: 0 },
     grading: {
       type: Schema.Types.Mixed,
       validate: {
@@ -93,6 +95,26 @@ examAttemptSchema.index(
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
     },
   },
+);
+examAttemptSchema.index(
+  { status: 1, submittedAt: -1, _id: -1 },
+  { name: "results_by_submission" },
+);
+examAttemptSchema.index(
+  { studentId: 1, status: 1, submittedAt: -1, _id: -1 },
+  { name: "student_results_by_submission" },
+);
+examAttemptSchema.index(
+  { examId: 1, status: 1, submittedAt: -1, _id: -1 },
+  { name: "exam_results_by_submission" },
+);
+examAttemptSchema.index(
+  { studentId: 1, examId: 1, status: 1, submittedAt: -1, _id: -1 },
+  { name: "student_exam_results_by_submission" },
+);
+examAttemptSchema.index(
+  { status: 1, expiresAt: 1 },
+  { name: "expired_attempts" },
 );
 
 export const ExamAttemptModel =

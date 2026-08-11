@@ -227,7 +227,9 @@ export function StudentManagement() {
               <AlertDialogTitle>Xác nhận xóa tài khoản</AlertDialogTitle>
               <AlertDialogDescription>
                 Xóa vĩnh viễn tài khoản {deleteTarget.fullName} (@
-                {deleteTarget.username})? Thao tác này không thể hoàn tác.
+                {deleteTarget.username})? Thao tác này không thể hoàn tác. Tài
+                khoản đã có lượt làm bài sẽ không thể xóa; hãy khóa tài khoản để
+                giữ lại lịch sử kết quả.
               </AlertDialogDescription>
             </AlertDialogHeader>
             {actionError && (

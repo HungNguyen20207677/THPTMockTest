@@ -7,6 +7,7 @@ import type {
   StudentExamList,
   StudentExamAttemptMutationResult,
 } from "@/types/exam-attempt";
+import type { StudentExamAttemptHistory } from "@/types/reporting";
 
 const STUDENT_EXAMS_ENDPOINT = "/api/student/exams";
 
@@ -27,9 +28,10 @@ export function fetchStudentExams(): Promise<
 export function startStudentExamAttempt(
   examId: string,
 ): Promise<ApiSuccessResponse<{ context: StudentExamAttemptContext }>> {
-  return apiRequest(`${STUDENT_EXAMS_ENDPOINT}/${examId}/attempts`, {
-    method: "POST",
-  });
+  return apiRequest(
+    `${STUDENT_EXAMS_ENDPOINT}/${examId}/attempts`,
+    jsonRequest("POST", {}),
+  );
 }
 
 export function fetchStudentExamAttempt(
@@ -71,9 +73,10 @@ export function finalizeStudentExamAttempt(
   examId: string,
   attemptId: string,
 ): Promise<ApiSuccessResponse<StudentExamAttemptMutationResult>> {
-  return apiRequest(`${getAttemptEndpoint(examId, attemptId)}/auto-submit`, {
-    method: "POST",
-  });
+  return apiRequest(
+    `${getAttemptEndpoint(examId, attemptId)}/auto-submit`,
+    jsonRequest("POST", {}),
+  );
 }
 
 export function fetchStudentExamAttemptResult(
@@ -81,4 +84,19 @@ export function fetchStudentExamAttemptResult(
   attemptId: string,
 ): Promise<ApiSuccessResponse<{ result: StudentExamAttemptResult }>> {
   return apiRequest(`${getAttemptEndpoint(examId, attemptId)}/result`);
+}
+
+export function fetchStudentExamAttemptHistory(
+  examId: string,
+  page = 1,
+  pageSize = 20,
+): Promise<ApiSuccessResponse<{ history: StudentExamAttemptHistory }>> {
+  const searchParams = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+
+  return apiRequest(
+    `${STUDENT_EXAMS_ENDPOINT}/${examId}/history?${searchParams.toString()}`,
+  );
 }

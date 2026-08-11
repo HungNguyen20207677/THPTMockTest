@@ -65,6 +65,8 @@ const savedAtFormatter = new Intl.DateTimeFormat("vi-VN", {
   second: "2-digit",
   timeZone: "Asia/Ho_Chi_Minh",
 });
+const FINAL_AUTOSAVE_WAIT_MS = 2000;
+const PDF_LOAD_TIMEOUT_MS = 15_000;
 
 interface AttemptWorkspaceProps {
   examId: string;
@@ -82,7 +84,10 @@ interface AnswerSheetProps {
   progress: AttemptAnswerProgress;
 }
 
-function getRequestError(error: unknown): string {
+function getRequestError(
+  error: unknown,
+  fallback = "Không thể tải lượt làm bài. Vui lòng thử lại.",
+): string {
   if (error instanceof ApiClientError) {
     if (error.code === "UNAUTHENTICATED") {
       window.location.replace("/login");
@@ -93,7 +98,20 @@ function getRequestError(error: unknown): string {
     return error.message;
   }
 
-  return "Không thể tải lượt làm bài. Vui lòng thử lại.";
+  return fallback;
+}
+
+function isRetryableFinalizationError(error: unknown): boolean {
+  return (
+    !(error instanceof ApiClientError) ||
+    error.statusCode === 408 ||
+    error.statusCode >= 500 ||
+    error.code === "EXAM_ATTEMPT_STATE_CONFLICT"
+  );
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function QuestionStatusLink({
@@ -299,8 +317,17 @@ function PartTwoSection({
                     key={statement}
                     className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0"
                   >
-                    <span className="text-sm font-semibold">Ý {statement}</span>
-                    <div className="grid grid-cols-2 gap-2">
+                    <span
+                      id={`part-two-${questionIndex}-${statement}-label`}
+                      className="text-sm font-semibold"
+                    >
+                      Ý {statement}
+                    </span>
+                    <div
+                      role="radiogroup"
+                      aria-labelledby={`part-two-${questionIndex}-${statement}-label`}
+                      className="grid grid-cols-2 gap-2"
+                    >
                       {[
                         { label: "Đúng", value: true },
                         { label: "Sai", value: false },
@@ -481,7 +508,18 @@ function ActiveAttemptWorkspace({
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isAutoFinalizing, setIsAutoFinalizing] = useState(false);
+  const [isExpirationPending, setIsExpirationPending] = useState(false);
+  const [autoFinalizationError, setAutoFinalizationError] = useState<
+    string | null
+  >(null);
+  const [pdfLoadState, setPdfLoadState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const [pdfLoadVersion, setPdfLoadVersion] = useState(0);
   const autoSubmitInFlightRef = useRef(false);
+  const expirationStartedRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
   const autoSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -498,15 +536,55 @@ function ActiveAttemptWorkspace({
     enabled: autosaveEnabled,
     isPayloadValid: answerPayloadIsValid,
     saveAnswers: async (latestAnswers) => {
-      const response = await saveStudentExamAttemptAnswers(
-        exam.id,
-        initialAttempt.id,
-        latestAnswers,
-      );
-      return { lastSavedAt: response.data.attempt.lastSavedAt };
+      try {
+        const response = await saveStudentExamAttemptAnswers(
+          exam.id,
+          initialAttempt.id,
+          latestAnswers,
+        );
+        return { lastSavedAt: response.data.attempt.lastSavedAt };
+      } catch (error) {
+        if (
+          error instanceof ApiClientError &&
+          error.code === "EXAM_ATTEMPT_LOCKED"
+        ) {
+          await adoptTerminalAttemptIfAvailable();
+        }
+
+        throw error;
+      }
     },
   });
   const progress = getAttemptAnswerProgress(answers);
+
+  async function adoptTerminalAttemptIfAvailable(): Promise<boolean> {
+    try {
+      const response = await fetchStudentExamAttempt(
+        exam.id,
+        initialAttempt.id,
+      );
+      const latestContext = response.data.context;
+
+      if (
+        latestContext.attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
+        latestContext.canEditAnswers
+      ) {
+        return false;
+      }
+
+      if (!isMountedRef.current) {
+        return true;
+      }
+
+      setAnswers(latestContext.attempt.answers);
+      setContext(latestContext);
+      setIsSubmitDialogOpen(false);
+      router.replace(getResultHref(exam.id, initialAttempt.id));
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   function clearAutoSubmitRetry() {
     if (autoSubmitRetryTimerRef.current) {
@@ -516,20 +594,30 @@ function ActiveAttemptWorkspace({
   }
 
   function scheduleAutoSubmitRetry(delayMilliseconds: number) {
+    if (!isMountedRef.current) {
+      return;
+    }
+
     clearAutoSubmitRetry();
     autoSubmitRetryTimerRef.current = setTimeout(() => {
       autoSubmitRetryTimerRef.current = null;
-      void finalizeAfterExpiration();
+      if (expirationStartedRef.current) {
+        void finalizeAfterExpiration();
+      } else {
+        void handleCountdownExpired();
+      }
     }, delayMilliseconds);
   }
 
   async function finalizeAfterExpiration() {
-    if (autoSubmitInFlightRef.current) {
+    if (!isMountedRef.current || autoSubmitInFlightRef.current) {
       return;
     }
 
+    clearAutoSubmitRetry();
     autoSubmitInFlightRef.current = true;
     setIsAutoFinalizing(true);
+    setAutoFinalizationError(null);
 
     try {
       const response = await finalizeStudentExamAttempt(
@@ -538,15 +626,27 @@ function ActiveAttemptWorkspace({
       );
       const result = response.data;
 
+      if (!isMountedRef.current) {
+        return;
+      }
+
       if (result.attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
         const authoritativeRemaining = Math.max(
           0,
           new Date(result.attempt.expiresAt).getTime() -
             new Date(result.serverNow).getTime(),
         );
-        scheduleAutoSubmitRetry(
-          Math.max(500, Math.min(3000, authoritativeRemaining + 250)),
-        );
+        setContext((currentContext) => ({
+          ...currentContext,
+          attempt: result.attempt,
+          serverNow: result.serverNow,
+          canEditAnswers: result.canEditAnswers,
+        }));
+        setHasCountdownExpired(false);
+        setIsExpirationPending(false);
+        expirationStartedRef.current = false;
+        scheduleAutoSubmitRetry(Math.max(500, authoritativeRemaining + 250));
+        setIsAutoFinalizing(false);
       } else {
         clearAutoSubmitRetry();
         setAnswers(result.attempt.answers);
@@ -559,22 +659,56 @@ function ActiveAttemptWorkspace({
         setIsAutoFinalizing(false);
         router.replace(getResultHref(exam.id, initialAttempt.id));
       }
-    } catch {
-      scheduleAutoSubmitRetry(3000);
+    } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setIsAutoFinalizing(false);
+      setAutoFinalizationError(
+        getRequestError(
+          error,
+          "Không thể hoàn tất nộp bài tự động. Vui lòng thử lại.",
+        ),
+      );
+
+      if (isRetryableFinalizationError(error)) {
+        scheduleAutoSubmitRetry(3000);
+      }
     } finally {
       autoSubmitInFlightRef.current = false;
     }
   }
 
-  function handleCountdownExpired() {
-    setHasCountdownExpired(true);
+  async function handleCountdownExpired() {
+    if (expirationStartedRef.current) {
+      return;
+    }
+
+    expirationStartedRef.current = true;
+    clearAutoSubmitRetry();
+    setIsExpirationPending(true);
     setIsSubmitDialogOpen(false);
     setSubmissionError(null);
-    void finalizeAfterExpiration();
+    const finalSave = autosave.flush().catch(() => undefined);
+    await Promise.race([finalSave, wait(FINAL_AUTOSAVE_WAIT_MS)]);
+
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setHasCountdownExpired(true);
+    setIsExpirationPending(false);
+    await finalizeAfterExpiration();
   }
 
   async function handleManualSubmit() {
-    if (isSubmitting || hasCountdownExpired || !answerPayloadIsValid) {
+    if (
+      isSubmitting ||
+      hasCountdownExpired ||
+      isExpirationPending ||
+      !answerPayloadIsValid
+    ) {
       return;
     }
 
@@ -588,6 +722,11 @@ function ActiveAttemptWorkspace({
         answers,
       );
       const result = response.data;
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
       setAnswers(result.attempt.answers);
       setContext((currentContext) => ({
         ...currentContext,
@@ -598,12 +737,47 @@ function ActiveAttemptWorkspace({
       setIsSubmitDialogOpen(false);
       router.replace(getResultHref(exam.id, initialAttempt.id));
     } catch (submitError) {
-      setSubmissionError(getRequestError(submitError));
+      const errorMessage = getRequestError(
+        submitError,
+        "Không thể nộp bài. Vui lòng thử lại.",
+      );
+      const isAuthenticationError =
+        submitError instanceof ApiClientError &&
+        (submitError.code === "UNAUTHENTICATED" ||
+          submitError.code === "FORBIDDEN");
+      const adoptedTerminalAttempt = isAuthenticationError
+        ? false
+        : await adoptTerminalAttemptIfAvailable();
+
+      if (!isMountedRef.current || adoptedTerminalAttempt) {
+        return;
+      }
+
+      setSubmissionError(errorMessage);
       setIsSubmitting(false);
     }
   }
 
-  useEffect(() => clearAutoSubmitRetry, []);
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+      clearAutoSubmitRetry();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (pdfLoadState !== "loading") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(
+      () => setPdfLoadState("error"),
+      PDF_LOAD_TIMEOUT_MS,
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [pdfLoadState, pdfLoadVersion]);
 
   if (
     context.attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS ||
@@ -623,15 +797,25 @@ function ActiveAttemptWorkspace({
           }
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            submitButtonRef.current?.focus();
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Xác nhận nộp bài</AlertDialogTitle>
             <AlertDialogDescription>
               Bạn đã hoàn thành {progress.answeredQuestions}/
-              {progress.totalQuestions} câu. Vẫn còn{" "}
-              {progress.totalQuestions - progress.answeredQuestions} câu chưa
-              hoàn thành. Sau khi nộp, câu trả lời không thể thay đổi và lượt
-              làm bài sẽ kết thúc.
+              {progress.totalQuestions} câu.{" "}
+              {progress.answeredQuestions < progress.totalQuestions && (
+                <>
+                  Vẫn còn {progress.totalQuestions - progress.answeredQuestions}{" "}
+                  câu chưa hoàn thành.{" "}
+                </>
+              )}
+              Sau khi nộp, câu trả lời không thể thay đổi và lượt làm bài sẽ kết
+              thúc.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {submissionError && (
@@ -655,7 +839,7 @@ function ActiveAttemptWorkspace({
       </AlertDialog>
 
       <div className="flex h-full min-h-0 flex-col gap-3">
-        <header className="border-border bg-background shrink-0 rounded-xl border px-4 py-3 shadow-sm">
+        <header className="border-border bg-background sticky top-0 z-20 shrink-0 rounded-xl border px-4 py-3 shadow-sm lg:static">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
               <p className="text-muted-foreground text-xs font-semibold tracking-wide">
@@ -687,7 +871,7 @@ function ActiveAttemptWorkspace({
                       remainingMilliseconds > 0 &&
                       remainingMilliseconds <= 3000
                     ) {
-                      autosave.flush();
+                      void autosave.flush().catch(() => undefined);
                     }
                   }}
                   onExpired={handleCountdownExpired}
@@ -701,9 +885,13 @@ function ActiveAttemptWorkspace({
                 />
               </div>
               <Button
+                ref={submitButtonRef}
                 type="button"
                 disabled={
-                  isSubmitting || hasCountdownExpired || !answerPayloadIsValid
+                  isSubmitting ||
+                  hasCountdownExpired ||
+                  isExpirationPending ||
+                  !answerPayloadIsValid
                 }
                 title={
                   answerPayloadIsValid
@@ -718,16 +906,30 @@ function ActiveAttemptWorkspace({
           </div>
         </header>
 
-        {hasCountdownExpired && (
-          <p
+        {(hasCountdownExpired || isExpirationPending) && (
+          <div
             role="status"
             className="border-destructive/30 bg-destructive/5 text-destructive shrink-0 rounded-lg border px-4 py-2 text-sm"
           >
             Hết giờ.{" "}
             {isAutoFinalizing
               ? "Đang hoàn tất nộp bài..."
-              : "Đang chờ hoàn tất nộp bài..."}
-          </p>
+              : autoFinalizationError
+                ? autoFinalizationError
+                : "Đang đồng bộ câu trả lời cuối cùng..."}
+            {autoFinalizationError && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="ml-3"
+                disabled={isAutoFinalizing}
+                onClick={() => void finalizeAfterExpiration()}
+              >
+                Thử nộp lại
+              </Button>
+            )}
+          </div>
         )}
 
         <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(24rem,2fr)]">
@@ -750,11 +952,53 @@ function ActiveAttemptWorkspace({
                 </a>
               </Button>
             </div>
+            {pdfLoadState === "loading" && (
+              <p
+                role="status"
+                className="text-muted-foreground px-4 py-3 text-center text-sm"
+              >
+                Đang tải đề thi PDF...
+              </p>
+            )}
+            {pdfLoadState === "error" && (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+                <p role="alert" className="text-destructive text-sm">
+                  Không thể hiển thị đề thi PDF trong trang này.
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setPdfLoadState("loading");
+                      setPdfLoadVersion((version) => version + 1);
+                    }}
+                  >
+                    Thử tải lại
+                  </Button>
+                  <Button asChild variant="outline">
+                    <a
+                      href={context.exam.pdf.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Mở đề thi PDF
+                    </a>
+                  </Button>
+                </div>
+              </div>
+            )}
             <object
+              key={pdfLoadVersion}
               data={context.exam.pdf.url}
               type="application/pdf"
               title={`Đề thi ${context.exam.title}`}
-              className="min-h-0 w-full flex-1"
+              className={cn(
+                "min-h-0 w-full flex-1",
+                pdfLoadState === "error" && "hidden",
+              )}
+              onLoad={() => setPdfLoadState("ready")}
+              onError={() => setPdfLoadState("error")}
             >
               <div className="flex h-full min-h-96 flex-col items-center justify-center gap-3 p-6 text-center">
                 <p className="text-muted-foreground text-sm">
@@ -777,7 +1021,7 @@ function ActiveAttemptWorkspace({
             aria-labelledby="answer-sheet-heading"
             className="border-border bg-background min-h-0 overflow-y-auto rounded-xl border shadow-sm lg:h-full"
           >
-            <div className="border-border bg-background/95 sticky top-0 z-10 space-y-3 border-b p-4 backdrop-blur-sm">
+            <div className="border-border bg-background/95 z-10 space-y-3 border-b p-4 backdrop-blur-sm lg:sticky lg:top-0">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 id="answer-sheet-heading" className="font-semibold">
@@ -807,7 +1051,9 @@ function ActiveAttemptWorkspace({
             <AnswerSheet
               answers={answers}
               setAnswers={setAnswers}
-              disabled={hasCountdownExpired || isSubmitting}
+              disabled={
+                hasCountdownExpired || isExpirationPending || isSubmitting
+              }
               progress={progress}
             />
           </section>
@@ -822,6 +1068,7 @@ export function AttemptWorkspace({ examId, attemptId }: AttemptWorkspaceProps) {
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
     let isCurrent = true;
@@ -842,7 +1089,7 @@ export function AttemptWorkspace({ examId, attemptId }: AttemptWorkspaceProps) {
     return () => {
       isCurrent = false;
     };
-  }, [attemptId, examId]);
+  }, [attemptId, examId, refreshVersion]);
 
   if (error) {
     return (
@@ -851,9 +1098,21 @@ export function AttemptWorkspace({ examId, attemptId }: AttemptWorkspaceProps) {
           <p role="alert" className="text-destructive">
             {error}
           </p>
-          <Button asChild variant="outline">
-            <Link href="/student">Quay lại danh sách đề thi</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setError(null);
+                setRefreshVersion((version) => version + 1);
+              }}
+            >
+              Thử tải lại
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/student">Quay lại danh sách đề thi</Link>
+            </Button>
+          </div>
         </div>
       </div>
     );

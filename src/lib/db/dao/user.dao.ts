@@ -151,6 +151,44 @@ export async function listStudentUsers(): Promise<UserAccountRecord[]> {
   return users.map(toUserAccount);
 }
 
+export async function findStudentUsersByIds(
+  studentIds: string[],
+): Promise<UserAccountRecord[]> {
+  await prepareUserModel();
+
+  if (studentIds.length === 0) {
+    return [];
+  }
+
+  const users = await UserModel.find({
+    _id: { $in: studentIds },
+    role: USER_ROLE.STUDENT,
+  })
+    .select(
+      "_id username fullName role isActive +sessionVersion createdAt updatedAt",
+    )
+    .lean<UserDocumentData[]>()
+    .exec();
+
+  return users.map(toUserAccount);
+}
+
+export async function countStudentUsers(): Promise<{
+  total: number;
+  active: number;
+}> {
+  await prepareUserModel();
+  const [total, active] = await Promise.all([
+    UserModel.countDocuments({ role: USER_ROLE.STUDENT }).exec(),
+    UserModel.countDocuments({
+      role: USER_ROLE.STUDENT,
+      isActive: true,
+    }).exec(),
+  ]);
+
+  return { total, active };
+}
+
 export async function createUser(
   input: CreateUserRecord,
 ): Promise<UserAccountRecord> {
@@ -225,12 +263,31 @@ export async function updateStudentActiveStatus(
   return user ? toUserAccount(user) : null;
 }
 
+export async function markStudentAttemptsStarted(
+  studentId: string,
+): Promise<boolean> {
+  await prepareUserModel();
+
+  const result = await UserModel.updateOne(
+    {
+      _id: studentId,
+      role: USER_ROLE.STUDENT,
+      isActive: true,
+    },
+    { $set: { attemptsStarted: true } },
+    { runValidators: true },
+  ).exec();
+
+  return result.matchedCount === 1;
+}
+
 export async function deleteStudentUser(studentId: string): Promise<boolean> {
   await prepareUserModel();
 
   const result = await UserModel.deleteOne({
     _id: studentId,
     role: USER_ROLE.STUDENT,
+    attemptsStarted: { $ne: true },
   }).exec();
 
   return result.deletedCount === 1;

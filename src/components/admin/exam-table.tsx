@@ -111,6 +111,11 @@ export function ExamTable({
         <div className="min-w-44 space-y-2">
           <div className="flex flex-wrap gap-1">
             <Button asChild size="sm" variant="outline">
+              <Link href={`/admin/exams/${row.original.id}/results`}>
+                Kết quả
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline">
               <Link href={`/admin/exams/${row.original.id}/edit`}>Sửa</Link>
             </Button>
             <Button

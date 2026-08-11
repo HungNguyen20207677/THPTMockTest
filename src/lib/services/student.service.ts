@@ -4,6 +4,7 @@ import { hash } from "bcryptjs";
 
 import { USER_ROLE } from "@/lib/constants/roles";
 import { PASSWORD_HASH_ROUNDS } from "@/lib/constants/user";
+import { hasStudentExamAttemptRecords } from "@/lib/db/dao/exam-attempt.dao";
 import {
   createUser,
   deleteStudentUser,
@@ -19,6 +20,7 @@ import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import {
   DuplicateUsernameError,
   ForbiddenError,
+  StudentHasAttemptsError,
   StudentNotFoundError,
 } from "@/lib/errors/app-error";
 import { normalizeUsername } from "@/lib/utils/username";
@@ -175,9 +177,13 @@ export async function deleteStudent(
 ): Promise<void> {
   await requireStudentTarget(actor, studentId);
 
+  if (await hasStudentExamAttemptRecords(studentId)) {
+    throw new StudentHasAttemptsError();
+  }
+
   const deleted = await deleteStudentUser(studentId);
 
   if (!deleted) {
-    throw new StudentNotFoundError();
+    throw new StudentHasAttemptsError();
   }
 }

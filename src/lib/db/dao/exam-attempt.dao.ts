@@ -28,6 +28,7 @@ export interface ExamAttemptPersistenceRecord {
   submittedAt?: Date;
   lastSavedAt?: Date;
   answers?: AttemptAnswers;
+  answerRevision: number;
   grading?: AttemptGradingSnapshot;
   gradedAt?: Date;
   createdAt: Date;
@@ -55,6 +56,18 @@ export interface FinalizeOwnedExamAttemptInput extends MutateOwnedExamAttemptInp
   grading: AttemptGradingSnapshot;
 }
 
+export interface ExamAttemptReportFilter {
+  studentId?: string;
+  examId?: string;
+  status?: (typeof TERMINAL_EXAM_ATTEMPT_STATUSES)[number];
+}
+
+export interface ExamAttemptStatusCounts {
+  inProgress: number;
+  submitted: number;
+  autoSubmitted: number;
+}
+
 interface ExamAttemptDocumentData {
   _id: Types.ObjectId;
   examId: Types.ObjectId;
@@ -66,6 +79,7 @@ interface ExamAttemptDocumentData {
   submittedAt?: Date;
   lastSavedAt?: Date;
   answers?: unknown;
+  answerRevision?: number;
   grading?: unknown;
   gradedAt?: Date;
   createdAt: Date;
@@ -134,10 +148,29 @@ function toExamAttemptRecord(
     submittedAt: attempt.submittedAt,
     lastSavedAt: attempt.lastSavedAt,
     answers: parsedAnswers?.data ?? createEmptyAttemptAnswers(),
+    answerRevision: attempt.answerRevision ?? 0,
     grading: parsedGrading?.data,
     gradedAt: attempt.gradedAt,
     createdAt: attempt.createdAt,
     updatedAt: attempt.updatedAt,
+  };
+}
+
+function getAttemptScopeFilter(
+  filter: Pick<ExamAttemptReportFilter, "studentId" | "examId">,
+): Record<string, unknown> {
+  return {
+    ...(filter.studentId ? { studentId: filter.studentId } : {}),
+    ...(filter.examId ? { examId: filter.examId } : {}),
+  };
+}
+
+function getTerminalAttemptFilter(
+  filter: ExamAttemptReportFilter,
+): Record<string, unknown> {
+  return {
+    ...getAttemptScopeFilter(filter),
+    status: filter.status ?? { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
   };
 }
 
@@ -202,21 +235,12 @@ export async function findOwnedExamAttemptRecord(
   return attempt ? toExamAttemptRecord(attempt) : null;
 }
 
-export async function listExamAttemptRecordsForStudent(
+export async function listAllExamAttemptRecordsForStudent(
   studentId: string,
-  examIds: string[],
 ): Promise<ExamAttemptPersistenceRecord[]> {
   await prepareExamAttemptModel();
 
-  if (examIds.length === 0) {
-    return [];
-  }
-
-  const attempts = await ExamAttemptModel.find({
-    studentId,
-    examId: { $in: examIds },
-  })
-    .sort({ attemptNumber: -1 })
+  const attempts = await ExamAttemptModel.find({ studentId })
     .lean<ExamAttemptDocumentData[]>()
     .exec();
 
@@ -250,6 +274,7 @@ export async function saveOwnedActiveExamAttemptAnswers(
         answers: input.answers,
         lastSavedAt: input.now,
       },
+      $inc: { answerRevision: 1 },
     },
     { returnDocument: "after", runValidators: true },
   )
@@ -294,7 +319,7 @@ export async function autoSubmitExpiredExamAttemptRecord(
   attemptId: string,
   studentId: string,
   examId: string,
-  expectedUpdatedAt: Date,
+  expectedAnswerRevision: number,
   grading: AttemptGradingSnapshot,
   now: Date,
 ): Promise<ExamAttemptPersistenceRecord | null> {
@@ -305,7 +330,14 @@ export async function autoSubmitExpiredExamAttemptRecord(
       _id: attemptId,
       studentId,
       examId,
-      updatedAt: expectedUpdatedAt,
+      ...(expectedAnswerRevision === 0
+        ? {
+            $or: [
+              { answerRevision: 0 },
+              { answerRevision: { $exists: false } },
+            ],
+          }
+        : { answerRevision: expectedAnswerRevision }),
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
       expiresAt: { $lte: now },
     },
@@ -347,6 +379,99 @@ export async function setOwnedTerminalExamAttemptGradingIfMissing(
 export async function hasExamAttemptRecords(examId: string): Promise<boolean> {
   await prepareExamAttemptModel();
   return Boolean(await ExamAttemptModel.exists({ examId }));
+}
+
+export async function hasStudentExamAttemptRecords(
+  studentId: string,
+): Promise<boolean> {
+  await prepareExamAttemptModel();
+  return Boolean(await ExamAttemptModel.exists({ studentId }));
+}
+
+export async function listExpiredExamAttemptRecords(
+  now: Date,
+  filter: Pick<ExamAttemptReportFilter, "studentId" | "examId"> = {},
+): Promise<ExamAttemptPersistenceRecord[]> {
+  await prepareExamAttemptModel();
+
+  const attempts = await ExamAttemptModel.find({
+    ...getAttemptScopeFilter(filter),
+    status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+    expiresAt: { $lte: now },
+  })
+    .sort({ expiresAt: 1, _id: 1 })
+    .lean<ExamAttemptDocumentData[]>()
+    .exec();
+
+  return attempts.map(toExamAttemptRecord);
+}
+
+export async function listActiveExamAttemptRecords(
+  filter: Pick<ExamAttemptReportFilter, "studentId" | "examId"> = {},
+): Promise<ExamAttemptPersistenceRecord[]> {
+  await prepareExamAttemptModel();
+
+  const attempts = await ExamAttemptModel.find({
+    ...getAttemptScopeFilter(filter),
+    status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+  })
+    .lean<ExamAttemptDocumentData[]>()
+    .exec();
+
+  return attempts.map(toExamAttemptRecord);
+}
+
+export async function listTerminalExamAttemptRecords(
+  filter: ExamAttemptReportFilter = {},
+): Promise<ExamAttemptPersistenceRecord[]> {
+  await prepareExamAttemptModel();
+
+  const attempts = await ExamAttemptModel.find(getTerminalAttemptFilter(filter))
+    .sort({ submittedAt: -1, _id: -1 })
+    .lean<ExamAttemptDocumentData[]>()
+    .exec();
+
+  return attempts.map(toExamAttemptRecord);
+}
+
+export async function listTerminalExamAttemptRecordPage(
+  filter: ExamAttemptReportFilter,
+  page: number,
+  pageSize: number,
+): Promise<{ attempts: ExamAttemptPersistenceRecord[]; totalItems: number }> {
+  await prepareExamAttemptModel();
+  const query = getTerminalAttemptFilter(filter);
+  const [attempts, totalItems] = await Promise.all([
+    ExamAttemptModel.find(query)
+      .sort({ submittedAt: -1, _id: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .lean<ExamAttemptDocumentData[]>()
+      .exec(),
+    ExamAttemptModel.countDocuments(query).exec(),
+  ]);
+
+  return {
+    attempts: attempts.map(toExamAttemptRecord),
+    totalItems,
+  };
+}
+
+export async function countExamAttemptRecordsByStatus(): Promise<ExamAttemptStatusCounts> {
+  await prepareExamAttemptModel();
+  const [inProgress, submitted, autoSubmitted] = await Promise.all([
+    ExamAttemptModel.countDocuments({
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+    }).exec(),
+    ExamAttemptModel.countDocuments({
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+    }).exec(),
+    ExamAttemptModel.countDocuments({
+      status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+    }).exec(),
+  ]);
+
+  return { inProgress, submitted, autoSubmitted };
 }
 
 export async function findExamIdsWithAttemptRecords(

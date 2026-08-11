@@ -71,7 +71,7 @@ function toExamSummary(
     title: exam.title,
     status: exam.status,
     settings: exam.settings,
-    hasAttempts,
+    hasAttempts: hasAttempts || exam.attemptsStarted,
     createdAt: exam.createdAt.toISOString(),
     updatedAt: exam.updatedAt.toISOString(),
   };
@@ -115,7 +115,10 @@ async function deletePdfBestEffort(publicId: string): Promise<void> {
   try {
     await deleteExamPdf(publicId);
   } catch (error) {
-    console.error(`Could not delete Cloudinary PDF ${publicId}.`, error);
+    console.error("Could not delete a Cloudinary PDF.", {
+      publicId,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
   }
 }
 
@@ -185,7 +188,7 @@ async function discardPdfUploadWhileLeasedBestEffort(
   }
 }
 
-export async function discardUnclaimedExamPdfUpload(
+async function discardUnclaimedExamPdfUploadRecord(
   reference: ExamPdfUploadReference,
 ): Promise<void> {
   assertAuthenticExamPdfUploadReference(reference);
@@ -202,11 +205,19 @@ export async function discardUnclaimedExamPdfUpload(
   }
 }
 
+export async function discardUnclaimedExamPdfUpload(
+  actor: AppUser,
+  reference: ExamPdfUploadReference,
+): Promise<void> {
+  assertAdmin(actor);
+  await discardUnclaimedExamPdfUploadRecord(reference);
+}
+
 async function discardPdfUploadBestEffort(
   reference: ExamPdfUploadReference,
 ): Promise<void> {
   try {
-    await discardUnclaimedExamPdfUpload(reference);
+    await discardUnclaimedExamPdfUploadRecord(reference);
   } catch {
     // Cleanup must not replace the original validation or persistence error.
   }
@@ -307,7 +318,8 @@ export async function editExam(
     throw new ExamConflictError();
   }
 
-  const hasAttempts = await hasExamAttemptRecords(examId);
+  const hasAttempts =
+    currentExam.attemptsStarted || (await hasExamAttemptRecords(examId));
   const answerKeyChanged =
     JSON.stringify(currentExam.answerKey) !== JSON.stringify(input.answerKey);
 
@@ -422,7 +434,10 @@ export async function changeExamStatus(
     throw new ExamConflictError();
   }
 
-  return toExamDetail(updatedExam, await hasExamAttemptRecords(examId));
+  return toExamDetail(
+    updatedExam,
+    updatedExam.attemptsStarted || (await hasExamAttemptRecords(examId)),
+  );
 }
 
 export async function deleteExam(
@@ -441,7 +456,7 @@ export async function deleteExam(
     throw new ExamConflictError();
   }
 
-  if (await hasExamAttemptRecords(examId)) {
+  if (currentExam.attemptsStarted || (await hasExamAttemptRecords(examId))) {
     throw new ExamHasAttemptsError();
   }
 

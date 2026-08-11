@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   hash: vi.fn(),
+  hasStudentExamAttemptRecords: vi.fn(),
   createUser: vi.fn(),
   deleteStudentUser: vi.fn(),
   findUserById: vi.fn(),
@@ -14,6 +15,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("bcryptjs", () => ({
   hash: mocks.hash,
+}));
+
+vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
+  hasStudentExamAttemptRecords: mocks.hasStudentExamAttemptRecords,
 }));
 
 vi.mock("@/lib/db/dao/user.dao", () => ({
@@ -55,6 +60,7 @@ const studentActor: AppUser = {
 describe("student service", () => {
   beforeEach(() => {
     mocks.hash.mockReset();
+    mocks.hasStudentExamAttemptRecords.mockReset();
     mocks.createUser.mockReset();
     mocks.deleteStudentUser.mockReset();
     mocks.findUserById.mockReset();
@@ -65,6 +71,7 @@ describe("student service", () => {
     mocks.updateStudentPassword.mockReset();
 
     mocks.hash.mockResolvedValue("hashed-password");
+    mocks.hasStudentExamAttemptRecords.mockResolvedValue(false);
   });
 
   it("allows an ADMIN to create a STUDENT with a hashed password", async () => {
@@ -150,5 +157,46 @@ describe("student service", () => {
       statusCode: 404,
     });
     expect(mocks.deleteStudentUser).not.toHaveBeenCalled();
+  });
+
+  it("preserves result history by rejecting deletion after any attempt", async () => {
+    mocks.findUserById.mockResolvedValue({
+      id: "student-id",
+      username: "student-one",
+      fullName: "Nguyen Van An",
+      role: USER_ROLE.STUDENT,
+      isActive: true,
+      createdAt,
+      updatedAt,
+    });
+    mocks.hasStudentExamAttemptRecords.mockResolvedValue(true);
+
+    await expect(deleteStudent(admin, "student-id")).rejects.toMatchObject({
+      code: "STUDENT_HAS_ATTEMPTS",
+      statusCode: 409,
+    });
+    expect(mocks.hasStudentExamAttemptRecords).toHaveBeenCalledWith(
+      "student-id",
+    );
+    expect(mocks.deleteStudentUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects deletion when an attempt start reserved the student concurrently", async () => {
+    mocks.findUserById.mockResolvedValue({
+      id: "student-id",
+      username: "student-one",
+      fullName: "Nguyen Van An",
+      role: USER_ROLE.STUDENT,
+      isActive: true,
+      createdAt,
+      updatedAt,
+    });
+    mocks.hasStudentExamAttemptRecords.mockResolvedValue(false);
+    mocks.deleteStudentUser.mockResolvedValue(false);
+
+    await expect(deleteStudent(admin, "student-id")).rejects.toMatchObject({
+      code: "STUDENT_HAS_ATTEMPTS",
+      statusCode: 409,
+    });
   });
 });

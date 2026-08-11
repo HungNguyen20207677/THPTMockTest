@@ -137,7 +137,7 @@ describe("attempt answers", () => {
     expect(attemptAnswersSchema.safeParse(answers).success).toBe(true);
   });
 
-  it("does not count empty or invalid Part III states", () => {
+  it("saves but does not count an incomplete Part III state", () => {
     const answers = createEmptyAttemptAnswers();
     answers.partThree[1] = ["-", null, null, null];
 
@@ -146,7 +146,7 @@ describe("attempt answers", () => {
     expect(progress.partThree[0]).toBe(false);
     expect(progress.partThree[1]).toBe(false);
     expect(progress.answeredQuestions).toBe(0);
-    expect(attemptAnswersSchema.safeParse(answers).success).toBe(false);
+    expect(attemptAnswersSchema.safeParse(answers).success).toBe(true);
   });
 
   it("rejects malformed or unexpected save payload fields", () => {

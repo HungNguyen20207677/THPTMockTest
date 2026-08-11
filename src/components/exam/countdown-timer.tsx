@@ -68,8 +68,15 @@ export function CountdownTimer({
 
     updateRemainingTime();
     const intervalId = window.setInterval(updateRemainingTime, 1000);
+    const expirationTimeoutId = window.setTimeout(
+      updateRemainingTime,
+      getServerSynchronizedRemainingMilliseconds(expiresAt, serverNow, 0),
+    );
 
-    return () => window.clearInterval(intervalId);
+    return () => {
+      window.clearInterval(intervalId);
+      window.clearTimeout(expirationTimeoutId);
+    };
   }, [expiresAt, serverNow]);
 
   const displayTime = formatCountdown(remainingMilliseconds);

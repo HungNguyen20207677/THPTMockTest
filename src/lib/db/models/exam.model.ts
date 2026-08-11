@@ -24,6 +24,7 @@ export interface ExamRecord {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  attemptsStarted: boolean;
   createdBy: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -121,6 +122,7 @@ const examSchema = new Schema<ExamRecord>(
     pdf: { type: pdfSchema, required: true },
     settings: { type: settingsSchema, required: true },
     answerKey: { type: answerKeySchema, required: true },
+    attemptsStarted: { type: Boolean, required: true, default: false },
     createdBy: {
       type: Schema.Types.ObjectId,
       ref: "User",

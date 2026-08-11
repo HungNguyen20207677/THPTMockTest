@@ -1,0 +1,403 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  countExamAttemptRecordsByStatus: vi.fn(),
+  findExamAttemptRecordById: vi.fn(),
+  findLatestExamAttemptRecord: vi.fn(),
+  listActiveExamAttemptRecords: vi.fn(),
+  listExpiredExamAttemptRecords: vi.fn(),
+  listTerminalExamAttemptRecordPage: vi.fn(),
+  listTerminalExamAttemptRecords: vi.fn(),
+  countExamRecords: vi.fn(),
+  findExamReportingRecordById: vi.fn(),
+  findExamReportingRecordsByIds: vi.fn(),
+  countStudentUsers: vi.fn(),
+  findStudentUsersByIds: vi.fn(),
+  findUserById: vi.fn(),
+  buildExamAttemptResult: vi.fn(),
+  ensureTerminalAttemptGrading: vi.fn(),
+  isTerminalExamAttemptStatus: vi.fn(),
+  resolveAttemptExpiration: vi.fn(),
+}));
+
+vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
+  countExamAttemptRecordsByStatus: mocks.countExamAttemptRecordsByStatus,
+  findExamAttemptRecordById: mocks.findExamAttemptRecordById,
+  findLatestExamAttemptRecord: mocks.findLatestExamAttemptRecord,
+  listActiveExamAttemptRecords: mocks.listActiveExamAttemptRecords,
+  listExpiredExamAttemptRecords: mocks.listExpiredExamAttemptRecords,
+  listTerminalExamAttemptRecordPage: mocks.listTerminalExamAttemptRecordPage,
+  listTerminalExamAttemptRecords: mocks.listTerminalExamAttemptRecords,
+}));
+
+vi.mock("@/lib/db/dao/exam.dao", () => ({
+  countExamRecords: mocks.countExamRecords,
+  findExamReportingRecordById: mocks.findExamReportingRecordById,
+  findExamReportingRecordsByIds: mocks.findExamReportingRecordsByIds,
+}));
+
+vi.mock("@/lib/db/dao/user.dao", () => ({
+  countStudentUsers: mocks.countStudentUsers,
+  findStudentUsersByIds: mocks.findStudentUsersByIds,
+  findUserById: mocks.findUserById,
+}));
+
+vi.mock("@/lib/services/exam-attempt.service", () => ({
+  buildExamAttemptResult: mocks.buildExamAttemptResult,
+  ensureTerminalAttemptGrading: mocks.ensureTerminalAttemptGrading,
+  isTerminalExamAttemptStatus: mocks.isTerminalExamAttemptStatus,
+  resolveAttemptExpiration: mocks.resolveAttemptExpiration,
+}));
+
+import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import { EXAM_STATUS } from "@/lib/constants/exam";
+import { USER_ROLE } from "@/lib/constants/roles";
+import type { ExamAttemptPersistenceRecord } from "@/lib/db/dao/exam-attempt.dao";
+import type { ExamReportingPersistenceRecord } from "@/lib/db/dao/exam.dao";
+import type { UserAccountRecord } from "@/lib/db/dao/user.dao";
+import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
+import {
+  getAdminAttemptDetail,
+  getAdminDashboardSummary,
+  getStudentExamAttemptHistory,
+  listAdminResults,
+} from "@/lib/services/reporting.service";
+import type { AttemptGradingSnapshot } from "@/types/exam-attempt";
+import type { ExamAnswerKey } from "@/types/exam";
+import type { AppUser } from "@/types/user";
+
+const now = new Date("2026-08-11T03:00:00.000Z");
+const admin: AppUser = {
+  id: "admin-id",
+  username: "admin",
+  fullName: "Quan Tri Vien",
+  role: USER_ROLE.ADMIN,
+};
+const studentActor: AppUser = {
+  id: "student-id",
+  username: "student",
+  fullName: "Nguyen Van An",
+  role: USER_ROLE.STUDENT,
+};
+
+function createAnswerKey(): ExamAnswerKey {
+  return {
+    partOne: Array.from({ length: 12 }, () => "A" as const),
+    partTwo: Array.from({ length: 4 }, () => ({
+      a: true,
+      b: false,
+      c: true,
+      d: false,
+    })),
+    partThree: ["1", "2", "3", "4", "5", "6"],
+  };
+}
+
+function createGrading(score = 750): AttemptGradingSnapshot {
+  return {
+    totalScoreHundredths: score,
+    sectionScoresHundredths: {
+      partOne: Math.min(score, 300),
+      partTwo: Math.min(Math.max(score - 300, 0), 400),
+      partThree: Math.min(Math.max(score - 700, 0), 300),
+    },
+    partOne: [],
+    partTwo: [],
+    partThree: [],
+  };
+}
+
+function createExam(
+  overrides: Partial<ExamReportingPersistenceRecord> = {},
+): ExamReportingPersistenceRecord {
+  return {
+    id: "exam-id",
+    title: "Đề thi thử Toán số 1",
+    status: EXAM_STATUS.PUBLISHED,
+    answerKey: createAnswerKey(),
+    settings: {
+      showScoreAfterSubmission: true,
+      showAnswersAfterSubmission: true,
+    },
+    ...overrides,
+  };
+}
+
+function createStudent(
+  overrides: Partial<UserAccountRecord> = {},
+): UserAccountRecord {
+  return {
+    id: studentActor.id,
+    username: studentActor.username,
+    fullName: studentActor.fullName,
+    role: USER_ROLE.STUDENT,
+    isActive: true,
+    sessionVersion: 0,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function createAttempt(
+  overrides: Partial<ExamAttemptPersistenceRecord> = {},
+): ExamAttemptPersistenceRecord {
+  return {
+    id: "attempt-id",
+    examId: "exam-id",
+    studentId: studentActor.id,
+    attemptNumber: 1,
+    status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+    startedAt: new Date("2026-08-11T01:00:00.000Z"),
+    expiresAt: new Date("2026-08-11T02:30:00.000Z"),
+    submittedAt: new Date("2026-08-11T02:00:00.000Z"),
+    answers: createEmptyAttemptAnswers(),
+    answerRevision: 0,
+    grading: createGrading(),
+    gradedAt: new Date("2026-08-11T02:00:00.000Z"),
+    createdAt: new Date("2026-08-11T01:00:00.000Z"),
+    updatedAt: new Date("2026-08-11T02:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+describe("reporting service", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    for (const mock of Object.values(mocks)) {
+      mock.mockReset();
+    }
+
+    mocks.listExpiredExamAttemptRecords.mockResolvedValue([]);
+    mocks.listActiveExamAttemptRecords.mockResolvedValue([]);
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue([]);
+    mocks.listTerminalExamAttemptRecordPage.mockResolvedValue({
+      attempts: [],
+      totalItems: 0,
+    });
+    mocks.findExamAttemptRecordById.mockResolvedValue(null);
+    mocks.findLatestExamAttemptRecord.mockResolvedValue(null);
+    mocks.findExamReportingRecordById.mockResolvedValue(createExam());
+    mocks.findExamReportingRecordsByIds.mockImplementation(
+      (examIds: string[]) =>
+        Promise.resolve(examIds.map((id) => createExam({ id }))),
+    );
+    mocks.findStudentUsersByIds.mockImplementation((studentIds: string[]) =>
+      Promise.resolve(studentIds.map((id) => createStudent({ id }))),
+    );
+    mocks.countStudentUsers.mockResolvedValue({ total: 3, active: 2 });
+    mocks.countExamRecords.mockResolvedValue({ total: 4, published: 3 });
+    mocks.countExamAttemptRecordsByStatus.mockResolvedValue({
+      inProgress: 1,
+      submitted: 5,
+      autoSubmitted: 2,
+    });
+    mocks.isTerminalExamAttemptStatus.mockImplementation(
+      (status: string) => status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+    );
+    mocks.resolveAttemptExpiration.mockImplementation(
+      (attempt: ExamAttemptPersistenceRecord) => Promise.resolve(attempt),
+    );
+    mocks.ensureTerminalAttemptGrading.mockImplementation(
+      (attempt: ExamAttemptPersistenceRecord) => Promise.resolve(attempt),
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects a STUDENT before reading ADMIN dashboard data", async () => {
+    await expect(getAdminDashboardSummary(studentActor)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      statusCode: 403,
+    });
+    expect(mocks.listExpiredExamAttemptRecords).not.toHaveBeenCalled();
+  });
+
+  it("reconciles expired attempts before returning dashboard counts", async () => {
+    const expiredAttempt = createAttempt({
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      submittedAt: undefined,
+      grading: undefined,
+      expiresAt: new Date("2026-08-11T02:59:00.000Z"),
+    });
+    mocks.listExpiredExamAttemptRecords.mockResolvedValue([expiredAttempt]);
+
+    const summary = await getAdminDashboardSummary(admin);
+
+    expect(mocks.findExamReportingRecordsByIds).toHaveBeenCalledWith([
+      expiredAttempt.examId,
+    ]);
+    expect(mocks.resolveAttemptExpiration).toHaveBeenCalledWith(
+      expiredAttempt,
+      now,
+      0,
+      expect.objectContaining({ id: expiredAttempt.examId }),
+    );
+    expect(summary).toEqual({
+      activeStudentCount: 2,
+      examCount: 4,
+      publishedExamCount: 3,
+      activeAttemptCount: 1,
+      completedAttemptCount: 7,
+    });
+  });
+
+  it("returns paginated result DTOs with batched identities and immutable grading", async () => {
+    const attempts = [
+      createAttempt({ id: "attempt-one" }),
+      createAttempt({ id: "attempt-two", attemptNumber: 2 }),
+    ];
+    mocks.listTerminalExamAttemptRecordPage.mockResolvedValue({
+      attempts,
+      totalItems: 22,
+    });
+
+    const result = await listAdminResults(admin, {
+      page: 2,
+      pageSize: 20,
+    });
+
+    expect(mocks.findExamReportingRecordsByIds).toHaveBeenCalledWith([
+      "exam-id",
+    ]);
+    expect(mocks.findStudentUsersByIds).toHaveBeenCalledWith([studentActor.id]);
+    expect(mocks.ensureTerminalAttemptGrading).not.toHaveBeenCalled();
+    expect(result.pagination).toEqual({
+      page: 2,
+      pageSize: 20,
+      totalItems: 22,
+      totalPages: 2,
+    });
+    expect(result.results[0]).toMatchObject({
+      id: "attempt-one",
+      student: { id: studentActor.id, fullName: studentActor.fullName },
+      exam: { id: "exam-id", title: "Đề thi thử Toán số 1" },
+      score: { total: 7.5 },
+    });
+    expect(JSON.stringify(result)).not.toContain("answerKey");
+    expect(JSON.stringify(result)).not.toContain('"answers"');
+    expect(JSON.stringify(result)).not.toContain("scoreHundredths");
+  });
+
+  it("backfills only a missing legacy grading snapshot", async () => {
+    const legacyAttempt = createAttempt({
+      grading: undefined,
+      gradedAt: undefined,
+    });
+    const gradedAttempt = createAttempt();
+    mocks.listTerminalExamAttemptRecordPage.mockResolvedValue({
+      attempts: [legacyAttempt],
+      totalItems: 1,
+    });
+    mocks.ensureTerminalAttemptGrading.mockResolvedValue(gradedAttempt);
+
+    const result = await listAdminResults(admin, { page: 1, pageSize: 20 });
+
+    expect(mocks.ensureTerminalAttemptGrading).toHaveBeenCalledWith(
+      legacyAttempt,
+      expect.objectContaining({ id: legacyAttempt.examId }),
+      now,
+    );
+    expect(mocks.ensureTerminalAttemptGrading).toHaveBeenCalledTimes(1);
+    expect(result.results[0].score.total).toBe(7.5);
+  });
+
+  it("does not expose answers for an unexpired active ADMIN detail", async () => {
+    const activeAttempt = createAttempt({
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      submittedAt: undefined,
+      grading: undefined,
+      gradedAt: undefined,
+      expiresAt: new Date("2026-08-11T04:00:00.000Z"),
+    });
+    mocks.findExamAttemptRecordById.mockResolvedValue(activeAttempt);
+
+    const detail = await getAdminAttemptDetail(admin, activeAttempt.id);
+
+    expect(detail.attempt.status).toBe(EXAM_ATTEMPT_STATUS.IN_PROGRESS);
+    expect(detail).not.toHaveProperty("score");
+    expect(detail).not.toHaveProperty("answerReview");
+    expect(JSON.stringify(detail)).not.toContain('"answers"');
+    expect(mocks.ensureTerminalAttemptGrading).not.toHaveBeenCalled();
+    expect(mocks.buildExamAttemptResult).not.toHaveBeenCalled();
+  });
+
+  it("gives ADMIN a terminal review regardless of student visibility settings", async () => {
+    const attempt = createAttempt();
+    const exam = createExam({
+      settings: {
+        showScoreAfterSubmission: false,
+        showAnswersAfterSubmission: false,
+      },
+    });
+    mocks.findExamAttemptRecordById.mockResolvedValue(attempt);
+    mocks.findExamReportingRecordById.mockResolvedValue(exam);
+    mocks.buildExamAttemptResult.mockReturnValue({
+      exam: { id: exam.id, title: exam.title },
+      attempt: {
+        id: attempt.id,
+        attemptNumber: attempt.attemptNumber,
+        status: attempt.status,
+        startedAt: attempt.startedAt.toISOString(),
+        expiresAt: attempt.expiresAt.toISOString(),
+        submittedAt: attempt.submittedAt?.toISOString() ?? "",
+        timeUsedSeconds: 3600,
+      },
+      visibility: { score: true, answers: true },
+      score: {
+        total: 7.5,
+        sections: { partOne: 3, partTwo: 4, partThree: 0.5 },
+      },
+      answerReview: { partOne: [], partTwo: [], partThree: [] },
+    });
+
+    const detail = await getAdminAttemptDetail(admin, attempt.id);
+
+    expect(mocks.buildExamAttemptResult).toHaveBeenCalledWith(
+      expect.objectContaining({ id: attempt.id }),
+      exam,
+      { score: true, answers: true },
+    );
+    expect(detail.score?.total).toBe(7.5);
+    expect(detail.answerReview).toEqual({
+      partOne: [],
+      partTwo: [],
+      partThree: [],
+    });
+  });
+
+  it("honors current score visibility in a student's hidden-Exam history", async () => {
+    const attempt = createAttempt();
+    const hiddenExam = createExam({
+      status: EXAM_STATUS.HIDDEN,
+      settings: {
+        showScoreAfterSubmission: false,
+        showAnswersAfterSubmission: false,
+      },
+    });
+    mocks.findExamReportingRecordById.mockResolvedValue(hiddenExam);
+    mocks.findLatestExamAttemptRecord.mockResolvedValue(attempt);
+    mocks.listTerminalExamAttemptRecordPage.mockResolvedValue({
+      attempts: [attempt],
+      totalItems: 1,
+    });
+
+    const history = await getStudentExamAttemptHistory(
+      studentActor,
+      hiddenExam.id,
+      { page: 1, pageSize: 20 },
+    );
+
+    expect(history.visibility).toEqual({ score: false, answers: false });
+    expect(history.attempts[0]).not.toHaveProperty("score");
+    expect(JSON.stringify(history)).not.toContain("totalScoreHundredths");
+    expect(mocks.findLatestExamAttemptRecord).toHaveBeenCalledWith(
+      studentActor.id,
+      hiddenExam.id,
+    );
+  });
+});

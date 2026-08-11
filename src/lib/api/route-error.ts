@@ -6,6 +6,10 @@ import { ZodError } from "zod";
 import { AppError } from "@/lib/errors/app-error";
 import type { ApiErrorResponse } from "@/types/api";
 
+const PRIVATE_RESPONSE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+};
+
 export function toErrorResponse(error: unknown): NextResponse {
   if (error instanceof ZodError) {
     const response = {
@@ -15,7 +19,10 @@ export function toErrorResponse(error: unknown): NextResponse {
       },
     } satisfies ApiErrorResponse;
 
-    return NextResponse.json(response, { status: 400 });
+    return NextResponse.json(response, {
+      status: 400,
+      headers: PRIVATE_RESPONSE_HEADERS,
+    });
   }
 
   if (error instanceof AppError) {
@@ -26,10 +33,15 @@ export function toErrorResponse(error: unknown): NextResponse {
       },
     } satisfies ApiErrorResponse;
 
-    return NextResponse.json(response, { status: error.statusCode });
+    return NextResponse.json(response, {
+      status: error.statusCode,
+      headers: PRIVATE_RESPONSE_HEADERS,
+    });
   }
 
-  console.error(error);
+  console.error("Unhandled API error.", {
+    name: error instanceof Error ? error.name : "UnknownError",
+  });
 
   const response = {
     error: {
@@ -38,5 +50,8 @@ export function toErrorResponse(error: unknown): NextResponse {
     },
   } satisfies ApiErrorResponse;
 
-  return NextResponse.json(response, { status: 500 });
+  return NextResponse.json(response, {
+    status: 500,
+    headers: PRIVATE_RESPONSE_HEADERS,
+  });
 }

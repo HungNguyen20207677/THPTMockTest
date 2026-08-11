@@ -72,6 +72,7 @@ export interface StudentExamSummary {
   description?: string;
   durationMinutes: number;
   allowRetake: boolean;
+  isAvailable: boolean;
   state: StudentExamState;
   activeAttemptId?: string;
   latestCompletedAttemptId?: string;

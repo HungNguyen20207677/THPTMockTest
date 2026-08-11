@@ -44,7 +44,10 @@ export function ShortAnswerBubbleInput({
 }: ShortAnswerBubbleInputProps) {
   const generatedId = useId();
   const errorId = `${generatedId}-error`;
+  const statusId = `${generatedId}-status`;
   const displayValue = shortAnswerSlotsToDisplayValue(value);
+  const isIncomplete =
+    !displayValue && !isEmptyShortAnswerSlots(value) && !error;
   const answerStatus = displayValue
     ? `Đáp án đã chọn: ${displayValue}`
     : isEmptyShortAnswerSlots(value)
@@ -70,12 +73,14 @@ export function ShortAnswerBubbleInput({
   return (
     <fieldset
       className="border-border space-y-3 rounded-lg border p-3"
-      aria-describedby={error ? errorId : undefined}
-      aria-invalid={Boolean(error)}
+      aria-describedby={`${statusId}${error ? ` ${errorId}` : ""}`}
+      aria-invalid={Boolean(error) || isIncomplete}
     >
       <legend className="px-1 font-medium">{label}</legend>
       <div className="flex justify-end">
-        <span className="text-muted-foreground text-sm">{answerStatus}</span>
+        <span id={statusId} className="text-muted-foreground text-sm">
+          {answerStatus}
+        </span>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -97,10 +102,15 @@ export function ShortAnswerBubbleInput({
                   const optionAlreadyUsed = value.some(
                     (slot, index) => index !== slotIndex && slot === option,
                   );
+                  const hasDigitBefore = value
+                    .slice(0, slotIndex)
+                    .some(
+                      (slot) => slot !== null && slot !== "-" && slot !== ",",
+                    );
                   const optionDisabled =
                     (option === "-" && slotIndex !== 0) ||
                     (option === "," &&
-                      (slotIndex === 0 ||
+                      (!hasDigitBefore ||
                         slotIndex === value.length - 1 ||
                         optionAlreadyUsed)) ||
                     (option === "-" && optionAlreadyUsed);
@@ -117,7 +127,6 @@ export function ShortAnswerBubbleInput({
                         optionDisabled &&
                           "cursor-not-allowed opacity-35 hover:border-input",
                       )}
-                      aria-label={`Ô ${slotIndex + 1}: ${getOptionLabel(option)}`}
                     >
                       <input
                         ref={
@@ -131,6 +140,7 @@ export function ShortAnswerBubbleInput({
                         value={option}
                         checked={selectedOption === option}
                         disabled={disabled || optionDisabled}
+                        aria-label={`Ô ${slotIndex + 1}: ${getOptionLabel(option)}`}
                         onBlur={onBlur}
                         onChange={() => updateSlot(slotIndex, option)}
                       />
@@ -147,7 +157,7 @@ export function ShortAnswerBubbleInput({
                 disabled={disabled || selectedOption === null}
                 onClick={() => clearFromSlot(slotIndex)}
               >
-                Xóa ô
+                Xóa từ ô này
               </Button>
             </fieldset>
           );

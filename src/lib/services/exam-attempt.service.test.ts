@@ -7,13 +7,16 @@ const mocks = vi.hoisted(() => ({
   findExamAttemptRecordById: vi.fn(),
   findLatestExamAttemptRecord: vi.fn(),
   findOwnedExamAttemptRecord: vi.fn(),
-  listExamAttemptRecordsForStudent: vi.fn(),
+  listAllExamAttemptRecordsForStudent: vi.fn(),
   saveOwnedActiveExamAttemptAnswers: vi.fn(),
   setOwnedTerminalExamAttemptGradingIfMissing: vi.fn(),
   submitOwnedActiveExamAttempt: vi.fn(),
   findExamGradingRecordById: vi.fn(),
   findStudentExamRecordById: vi.fn(),
   listPublishedStudentExamRecords: vi.fn(),
+  listStudentExamRecordsByIds: vi.fn(),
+  markExamAttemptsStarted: vi.fn(),
+  markStudentAttemptsStarted: vi.fn(),
 }));
 
 vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
@@ -23,7 +26,8 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   findExamAttemptRecordById: mocks.findExamAttemptRecordById,
   findLatestExamAttemptRecord: mocks.findLatestExamAttemptRecord,
   findOwnedExamAttemptRecord: mocks.findOwnedExamAttemptRecord,
-  listExamAttemptRecordsForStudent: mocks.listExamAttemptRecordsForStudent,
+  listAllExamAttemptRecordsForStudent:
+    mocks.listAllExamAttemptRecordsForStudent,
   saveOwnedActiveExamAttemptAnswers: mocks.saveOwnedActiveExamAttemptAnswers,
   setOwnedTerminalExamAttemptGradingIfMissing:
     mocks.setOwnedTerminalExamAttemptGradingIfMissing,
@@ -34,6 +38,12 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
   findExamGradingRecordById: mocks.findExamGradingRecordById,
   findStudentExamRecordById: mocks.findStudentExamRecordById,
   listPublishedStudentExamRecords: mocks.listPublishedStudentExamRecords,
+  listStudentExamRecordsByIds: mocks.listStudentExamRecordsByIds,
+  markExamAttemptsStarted: mocks.markExamAttemptsStarted,
+}));
+
+vi.mock("@/lib/db/dao/user.dao", () => ({
+  markStudentAttemptsStarted: mocks.markStudentAttemptsStarted,
 }));
 
 import {
@@ -88,6 +98,7 @@ function createStudentExam(
     createdAt: new Date("2026-08-10T00:00:00.000Z"),
     updatedAt: new Date("2026-08-10T00:00:00.000Z"),
     ...overrides,
+    attemptsStarted: overrides.attemptsStarted ?? false,
   };
 }
 
@@ -134,6 +145,7 @@ function createAttempt(
     startedAt: new Date("2026-08-11T02:55:00.000Z"),
     expiresAt: new Date("2026-08-11T04:25:00.000Z"),
     answers: createEmptyAttemptAnswers(),
+    answerRevision: 0,
     createdAt: new Date("2026-08-11T02:55:00.000Z"),
     updatedAt: new Date("2026-08-11T02:55:00.000Z"),
     ...overrides,
@@ -173,10 +185,13 @@ describe("ExamAttempt service", () => {
     mocks.findActiveExamAttemptRecord.mockResolvedValue(null);
     mocks.findLatestExamAttemptRecord.mockResolvedValue(null);
     mocks.findExamAttemptRecordById.mockResolvedValue(null);
+    mocks.markExamAttemptsStarted.mockResolvedValue(true);
+    mocks.markStudentAttemptsStarted.mockResolvedValue(true);
     mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(null);
     mocks.setOwnedTerminalExamAttemptGradingIfMissing.mockResolvedValue(null);
     mocks.listPublishedStudentExamRecords.mockResolvedValue([]);
-    mocks.listExamAttemptRecordsForStudent.mockResolvedValue([]);
+    mocks.listStudentExamRecordsByIds.mockResolvedValue([]);
+    mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([]);
     mockAttemptCreation();
   });
 
@@ -187,6 +202,17 @@ describe("ExamAttempt service", () => {
   it("creates attempt 1 with server timestamps and the fixed 90-minute duration", async () => {
     const result = await startOrResumeExamAttempt(student, "exam-id");
 
+    expect(mocks.markExamAttemptsStarted).toHaveBeenCalledWith(
+      "exam-id",
+      new Date("2026-08-10T00:00:00.000Z"),
+    );
+    expect(
+      mocks.markExamAttemptsStarted.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.createExamAttemptRecord.mock.invocationCallOrder[0]);
+    expect(mocks.markStudentAttemptsStarted).toHaveBeenCalledWith(student.id);
+    expect(
+      mocks.markStudentAttemptsStarted.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.createExamAttemptRecord.mock.invocationCallOrder[0]);
     expect(mocks.createExamAttemptRecord).toHaveBeenCalledWith({
       examId: "exam-id",
       studentId: student.id,
@@ -208,6 +234,33 @@ describe("ExamAttempt service", () => {
         new Date(result.attempt.startedAt).getTime(),
     ).toBe(90 * 60 * 1000);
     expect(result.serverNow).toBe(serverNow.toISOString());
+  });
+
+  it("re-reads the Exam when another request wins the content-lock race", async () => {
+    const unlockedExam = createStudentExam();
+    const lockedExam = createStudentExam({
+      attemptsStarted: true,
+      updatedAt: new Date("2026-08-10T00:00:01.000Z"),
+    });
+    mocks.findStudentExamRecordById
+      .mockResolvedValueOnce(unlockedExam)
+      .mockResolvedValueOnce(lockedExam);
+    mocks.markExamAttemptsStarted.mockResolvedValueOnce(false);
+
+    const result = await startOrResumeExamAttempt(student, "exam-id");
+
+    expect(result.attempt.id).toBe("attempt-1");
+    expect(mocks.findStudentExamRecordById).toHaveBeenCalledTimes(2);
+    expect(mocks.markExamAttemptsStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not create an attempt after the student account is deactivated", async () => {
+    mocks.markStudentAttemptsStarted.mockResolvedValue(false);
+
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
   });
 
   it("returns the same valid active attempt for repeated starts", async () => {
@@ -313,7 +366,7 @@ describe("ExamAttempt service", () => {
       expiredAttempt.id,
       student.id,
       expiredAttempt.examId,
-      expiredAttempt.updatedAt,
+      expiredAttempt.answerRevision,
       gradeAttemptAnswers(
         expiredAttempt.answers ?? createEmptyAttemptAnswers(),
         createAnswerKey(),
@@ -397,6 +450,35 @@ describe("ExamAttempt service", () => {
     expect(result.exam).not.toHaveProperty("createdBy");
     expect(result.exam).not.toHaveProperty("settings");
     expect(JSON.stringify(result)).not.toContain("answerKey");
+  });
+
+  it("rechecks expiration after loading the workspace", async () => {
+    const expiresAt = new Date(serverNow.getTime() + 1000);
+    const responseNow = new Date(serverNow.getTime() + 2000);
+    const activeAttempt = createAttempt({ expiresAt });
+    const autoSubmittedAttempt = createAttempt({
+      expiresAt,
+      status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+      submittedAt: expiresAt,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.findStudentExamRecordById.mockImplementation(async () => {
+      vi.setSystemTime(responseNow);
+      return createStudentExam();
+    });
+    mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(
+      autoSubmittedAttempt,
+    );
+
+    const result = await getOwnedExamAttemptContext(
+      student,
+      "exam-id",
+      activeAttempt.id,
+    );
+
+    expect(result.attempt.status).toBe(EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED);
+    expect(result.serverNow).toBe(responseNow.toISOString());
+    expect(result.canEditAnswers).toBe(false);
   });
 
   it("exposes a legacy attempt without answers as the fixed empty state", async () => {
@@ -532,7 +614,7 @@ describe("ExamAttempt service", () => {
       expiredAttempt.id,
       student.id,
       expiredAttempt.examId,
-      expiredAttempt.updatedAt,
+      expiredAttempt.answerRevision,
       gradeAttemptAnswers(
         expiredAttempt.answers ?? createEmptyAttemptAnswers(),
         createAnswerKey(),
@@ -618,7 +700,7 @@ describe("ExamAttempt service", () => {
       expiredAttempt.id,
       student.id,
       expiredAttempt.examId,
-      expiredAttempt.updatedAt,
+      expiredAttempt.answerRevision,
       gradeAttemptAnswers(persistedAnswers, createAnswerKey()),
       serverNow,
     );
@@ -679,7 +761,7 @@ describe("ExamAttempt service", () => {
     expect(result.canEditAnswers).toBe(false);
   });
 
-  it("re-reads and re-grades when a final autosave wins the expiration race", async () => {
+  it("re-reads and re-grades when a same-millisecond autosave increments the answer revision", async () => {
     const expiresAt = new Date("2026-08-11T02:59:00.000Z");
     const oldAnswers = createEmptyAttemptAnswers();
     oldAnswers.partOne[0] = "A";
@@ -693,8 +775,9 @@ describe("ExamAttempt service", () => {
     const refreshedAttempt = createAttempt({
       expiresAt,
       answers: latestAnswers,
+      answerRevision: 1,
       lastSavedAt: new Date("2026-08-11T02:58:59.900Z"),
-      updatedAt: new Date("2026-08-11T02:58:59.900Z"),
+      updatedAt: expiredAttempt.updatedAt,
     });
     const latestGrading = gradeAttemptAnswers(latestAnswers, createAnswerKey());
     const autoSubmittedAttempt = createAttempt({
@@ -721,7 +804,7 @@ describe("ExamAttempt service", () => {
       refreshedAttempt.id,
       student.id,
       refreshedAttempt.examId,
-      refreshedAttempt.updatedAt,
+      refreshedAttempt.answerRevision,
       latestGrading,
       serverNow,
     );
@@ -1036,7 +1119,7 @@ describe("ExamAttempt service", () => {
       notStartedExam,
       inProgressExam,
     ]);
-    mocks.listExamAttemptRecordsForStudent.mockResolvedValue([
+    mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([
       createAttempt({
         id: "active-attempt",
         examId: inProgressExam.id,
@@ -1073,7 +1156,38 @@ describe("ExamAttempt service", () => {
     expect(result.exams[0]).not.toHaveProperty("answerKey");
     expect(result.exams[0]).not.toHaveProperty("pdf");
     expect(result.exams[0]).not.toHaveProperty("createdBy");
-    expect(mocks.listExamAttemptRecordsForStudent).toHaveBeenCalledTimes(1);
+    expect(mocks.listAllExamAttemptRecordsForStudent).toHaveBeenCalledTimes(1);
     expect(result.exams[2].latestCompletedAttemptId).toBe("completed-attempt");
+  });
+
+  it("retains hidden Exams with attempt history without allowing a retake", async () => {
+    const hiddenExam = createStudentExam({
+      id: "hidden-exam",
+      status: EXAM_STATUS.HIDDEN,
+      allowRetake: true,
+    });
+    mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([
+      createAttempt({
+        id: "hidden-result",
+        examId: hiddenExam.id,
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        submittedAt: serverNow,
+      }),
+    ]);
+    mocks.listStudentExamRecordsByIds.mockResolvedValue([hiddenExam]);
+
+    const result = await listStudentExams(student);
+
+    expect(mocks.listStudentExamRecordsByIds).toHaveBeenCalledWith([
+      hiddenExam.id,
+    ]);
+    expect(result.exams).toEqual([
+      expect.objectContaining({
+        id: hiddenExam.id,
+        state: STUDENT_EXAM_STATE.COMPLETED,
+        isAvailable: false,
+        latestCompletedAttemptId: "hidden-result",
+      }),
+    ]);
   });
 });

@@ -28,7 +28,7 @@ export default async function StudentAttemptPage({
   }
 
   return (
-    <main className="mx-auto max-w-[1800px] px-3 py-3 lg:h-[calc(100dvh-5.5rem)] lg:overflow-hidden">
+    <main className="mx-auto max-w-[1800px] px-3 py-3 lg:h-[calc(100dvh-8.75rem)] lg:overflow-hidden">
       <AttemptWorkspace
         examId={parsedExamId.data}
         attemptId={parsedAttemptId.data}

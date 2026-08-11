@@ -14,7 +14,7 @@ import {
   findExamAttemptRecordById,
   findLatestExamAttemptRecord,
   findOwnedExamAttemptRecord,
-  listExamAttemptRecordsForStudent,
+  listAllExamAttemptRecordsForStudent,
   saveOwnedActiveExamAttemptAnswers,
   setOwnedTerminalExamAttemptGradingIfMissing,
   submitOwnedActiveExamAttempt,
@@ -24,10 +24,13 @@ import {
   findExamGradingRecordById,
   findStudentExamRecordById,
   listPublishedStudentExamRecords,
+  listStudentExamRecordsByIds,
+  markExamAttemptsStarted,
   type ExamGradingPersistenceRecord,
   type StudentExamWorkspacePersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
+import { markStudentAttemptsStarted } from "@/lib/db/dao/user.dao";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import {
   gradeAttemptAnswers,
@@ -121,10 +124,11 @@ function toAttemptMutationResult(
   };
 }
 
-async function resolveAttemptExpiration(
+export async function resolveAttemptExpiration(
   attempt: ExamAttemptPersistenceRecord,
   serverNow: Date,
   retryCount = 0,
+  reportingExam?: ExamGradingPersistenceRecord,
 ): Promise<ExamAttemptPersistenceRecord> {
   if (
     attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS ||
@@ -133,7 +137,8 @@ async function resolveAttemptExpiration(
     return attempt;
   }
 
-  const exam = await getExamGradingRecordOrThrow(attempt.examId);
+  const exam =
+    reportingExam ?? (await getExamGradingRecordOrThrow(attempt.examId));
   const grading = gradeAttemptAnswers(
     attempt.answers ?? createEmptyAttemptAnswers(),
     exam.answerKey,
@@ -143,7 +148,7 @@ async function resolveAttemptExpiration(
     attempt.id,
     attempt.studentId,
     attempt.examId,
-    attempt.updatedAt,
+    attempt.answerRevision,
     grading,
     serverNow,
   );
@@ -162,10 +167,24 @@ async function resolveAttemptExpiration(
       throw new ExamAttemptStateConflictError();
     }
 
-    return resolveAttemptExpiration(currentAttempt, serverNow, retryCount + 1);
+    return resolveAttemptExpiration(
+      currentAttempt,
+      serverNow,
+      retryCount + 1,
+      exam,
+    );
   }
 
   return currentAttempt ?? attempt;
+}
+
+async function toFreshAttemptContext(
+  exam: StudentExamWorkspacePersistenceRecord,
+  attempt: ExamAttemptPersistenceRecord,
+): Promise<StudentExamAttemptContext> {
+  const responseNow = new Date();
+  const resolvedAttempt = await resolveAttemptExpiration(attempt, responseNow);
+  return toAttemptContext(exam, resolvedAttempt, responseNow);
 }
 
 async function getExamGradingRecordOrThrow(
@@ -190,7 +209,7 @@ function isValidActiveAttempt(
   );
 }
 
-function isTerminalExamAttemptStatus(
+export function isTerminalExamAttemptStatus(
   status: ExamAttemptPersistenceRecord["status"],
 ): boolean {
   return TERMINAL_EXAM_ATTEMPT_STATUSES.some(
@@ -203,14 +222,34 @@ export async function startOrResumeExamAttempt(
   examId: string,
 ): Promise<StudentExamAttemptContext> {
   assertStudent(actor);
-  const exam = await findStudentExamRecordById(examId);
+  let exam: StudentExamWorkspacePersistenceRecord | null = null;
 
-  if (!exam) {
-    throw new ExamNotFoundError();
+  for (let retry = 0; retry < START_ATTEMPT_MAX_RETRIES; retry += 1) {
+    const currentExam = await findStudentExamRecordById(examId);
+
+    if (!currentExam) {
+      throw new ExamNotFoundError();
+    }
+
+    if (currentExam.status !== EXAM_STATUS.PUBLISHED) {
+      throw new ExamNotPublishedError();
+    }
+
+    if (
+      currentExam.attemptsStarted ||
+      (await markExamAttemptsStarted(examId, currentExam.updatedAt))
+    ) {
+      exam = { ...currentExam, attemptsStarted: true };
+      break;
+    }
   }
 
-  if (exam.status !== EXAM_STATUS.PUBLISHED) {
-    throw new ExamNotPublishedError();
+  if (!exam) {
+    throw new ExamAttemptConflictError();
+  }
+
+  if (!(await markStudentAttemptsStarted(actor.id))) {
+    throw new ForbiddenError("Tài khoản học sinh không còn hoạt động.");
   }
 
   for (let retry = 0; retry < START_ATTEMPT_MAX_RETRIES; retry += 1) {
@@ -224,7 +263,7 @@ export async function startOrResumeExamAttempt(
       );
 
       if (isValidActiveAttempt(resolvedAttempt, serverNow)) {
-        return toAttemptContext(exam, resolvedAttempt, serverNow);
+        return toFreshAttemptContext(exam, resolvedAttempt);
       }
     }
 
@@ -247,7 +286,7 @@ export async function startOrResumeExamAttempt(
         expiresAt,
       });
 
-      return toAttemptContext(exam, attempt, startedAt);
+      return toFreshAttemptContext(exam, attempt);
     } catch (error) {
       if (!isMongoDuplicateKeyError(error)) {
         throw error;
@@ -266,7 +305,7 @@ export async function startOrResumeExamAttempt(
         );
 
         if (isValidActiveAttempt(resolvedAttempt, recoveryNow)) {
-          return toAttemptContext(exam, resolvedAttempt, recoveryNow);
+          return toFreshAttemptContext(exam, resolvedAttempt);
         }
       }
     }
@@ -279,13 +318,21 @@ export async function listStudentExams(
   actor: AppUser,
 ): Promise<StudentExamList> {
   assertStudent(actor);
-  const exams = await listPublishedStudentExamRecords();
-  const examIds = exams.map((exam) => exam.id);
+  const [publishedExams, storedAttempts] = await Promise.all([
+    listPublishedStudentExamRecords(),
+    listAllExamAttemptRecordsForStudent(actor.id),
+  ]);
+  const publishedExamIds = new Set(publishedExams.map((exam) => exam.id));
+  const retainedExamIds = [
+    ...new Set(
+      storedAttempts
+        .map((attempt) => attempt.examId)
+        .filter((examId) => !publishedExamIds.has(examId)),
+    ),
+  ];
+  const retainedExams = await listStudentExamRecordsByIds(retainedExamIds);
+  const exams = [...publishedExams, ...retainedExams];
   const serverNow = new Date();
-  const storedAttempts = await listExamAttemptRecordsForStudent(
-    actor.id,
-    examIds,
-  );
   const attempts = await Promise.all(
     storedAttempts.map((attempt) =>
       attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
@@ -325,6 +372,7 @@ export async function listStudentExams(
       description: exam.description,
       durationMinutes: EXAM_STRUCTURE.durationMinutes,
       allowRetake: exam.allowRetake,
+      isAvailable: exam.status === EXAM_STATUS.PUBLISHED,
       state,
       activeAttemptId: activeAttempt?.id,
       latestCompletedAttemptId: latestCompletedAttempt?.id,
@@ -374,7 +422,7 @@ export async function getOwnedExamAttemptContext(
     throw new ExamNotFoundError();
   }
 
-  return toAttemptContext(exam, resolvedAttempt, serverNow);
+  return toFreshAttemptContext(exam, resolvedAttempt);
 }
 
 async function getOwnedAttemptOrThrow(
@@ -489,7 +537,7 @@ export async function finalizeExpiredExamAttempt(
   return toAttemptMutationResult(resolvedAttempt, serverNow);
 }
 
-async function ensureTerminalAttemptGrading(
+export async function ensureTerminalAttemptGrading(
   attempt: ExamAttemptPersistenceRecord,
   exam: ExamGradingPersistenceRecord,
   serverNow: Date,
@@ -537,28 +585,13 @@ function getCorrectPartThreeDisplayAnswer(answer: string): string {
   return normalizedAnswer.replace(".", ",");
 }
 
-export async function getStudentExamAttemptResult(
-  actor: AppUser,
-  examId: string,
-  attemptId: string,
-): Promise<StudentExamAttemptResult> {
-  assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
-  const serverNow = new Date();
-  const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
-
-  if (!isTerminalExamAttemptStatus(resolvedAttempt.status)) {
-    throw new ExamAttemptResultUnavailableError();
-  }
-
-  const exam = await getExamGradingRecordOrThrow(examId);
-  const gradedAttempt = await ensureTerminalAttemptGrading(
-    resolvedAttempt,
-    exam,
-    serverNow,
-  );
-  const grading = gradedAttempt.grading;
-  const submittedAt = gradedAttempt.submittedAt;
+export function buildExamAttemptResult(
+  attempt: ExamAttemptPersistenceRecord,
+  exam: ExamGradingPersistenceRecord,
+  visibility: StudentExamAttemptResult["visibility"],
+): StudentExamAttemptResult {
+  const grading = attempt.grading;
+  const submittedAt = attempt.submittedAt;
 
   if (!grading || !submittedAt) {
     throw new ExamAttemptStateConflictError();
@@ -570,31 +603,28 @@ export async function getStudentExamAttemptResult(
       title: exam.title,
     },
     attempt: {
-      id: gradedAttempt.id,
-      attemptNumber: gradedAttempt.attemptNumber,
-      status: gradedAttempt.status,
-      startedAt: gradedAttempt.startedAt.toISOString(),
-      expiresAt: gradedAttempt.expiresAt.toISOString(),
+      id: attempt.id,
+      attemptNumber: attempt.attemptNumber,
+      status: attempt.status,
+      startedAt: attempt.startedAt.toISOString(),
+      expiresAt: attempt.expiresAt.toISOString(),
       submittedAt: submittedAt.toISOString(),
       timeUsedSeconds: Math.max(
         0,
         Math.round(
-          ((gradedAttempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED
-            ? gradedAttempt.expiresAt
+          ((attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED
+            ? attempt.expiresAt
             : submittedAt
           ).getTime() -
-            gradedAttempt.startedAt.getTime()) /
+            attempt.startedAt.getTime()) /
             1000,
         ),
       ),
     },
-    visibility: {
-      score: exam.settings.showScoreAfterSubmission,
-      answers: exam.settings.showAnswersAfterSubmission,
-    },
+    visibility,
   };
 
-  if (exam.settings.showScoreAfterSubmission) {
+  if (visibility.score) {
     result.score = {
       total: scoreHundredthsToPoints(grading.totalScoreHundredths),
       sections: {
@@ -611,8 +641,8 @@ export async function getStudentExamAttemptResult(
     };
   }
 
-  if (exam.settings.showAnswersAfterSubmission) {
-    const answers = gradedAttempt.answers ?? createEmptyAttemptAnswers();
+  if (visibility.answers) {
+    const answers = attempt.answers ?? createEmptyAttemptAnswers();
 
     result.answerReview = {
       partOne: grading.partOne.map((item, index) => ({
@@ -653,7 +683,7 @@ export async function getStudentExamAttemptResult(
           },
         };
 
-        if (exam.settings.showScoreAfterSubmission) {
+        if (visibility.score) {
           questionReview.score = scoreHundredthsToPoints(item.scoreHundredths);
         }
 
@@ -673,4 +703,30 @@ export async function getStudentExamAttemptResult(
   }
 
   return result;
+}
+
+export async function getStudentExamAttemptResult(
+  actor: AppUser,
+  examId: string,
+  attemptId: string,
+): Promise<StudentExamAttemptResult> {
+  assertStudent(actor);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const serverNow = new Date();
+  const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
+
+  if (!isTerminalExamAttemptStatus(resolvedAttempt.status)) {
+    throw new ExamAttemptResultUnavailableError();
+  }
+
+  const exam = await getExamGradingRecordOrThrow(examId);
+  const gradedAttempt = await ensureTerminalAttemptGrading(
+    resolvedAttempt,
+    exam,
+    serverNow,
+  );
+  return buildExamAttemptResult(gradedAttempt, exam, {
+    score: exam.settings.showScoreAfterSubmission,
+    answers: exam.settings.showAnswersAfterSubmission,
+  });
 }

@@ -1,10 +1,6 @@
 import { z } from "zod";
 
 import { EXAM_STRUCTURE, PART_ONE_CHOICES } from "@/lib/constants/exam";
-import {
-  isEmptyShortAnswerSlots,
-  shortAnswerSlotsToCanonicalValue,
-} from "@/lib/exam/short-answer";
 import { shortAnswerSlotsSchema } from "@/lib/validations/exam";
 import type { AttemptAnswers } from "@/types/exam-attempt";
 
@@ -15,13 +11,6 @@ const attemptPartTwoAnswerSchema = z.strictObject({
   d: z.boolean().nullable(),
 });
 
-const attemptShortAnswerSchema = shortAnswerSlotsSchema.refine(
-  (slots) =>
-    isEmptyShortAnswerSlots(slots) ||
-    shortAnswerSlotsToCanonicalValue(slots) !== null,
-  "Đáp án ngắn phải để trống hoàn toàn hoặc có giá trị hợp lệ.",
-);
-
 export const attemptAnswersSchema: z.ZodType<AttemptAnswers> = z.strictObject({
   partOne: z
     .array(z.enum(PART_ONE_CHOICES).nullable())
@@ -30,7 +19,7 @@ export const attemptAnswersSchema: z.ZodType<AttemptAnswers> = z.strictObject({
     .array(attemptPartTwoAnswerSchema)
     .length(EXAM_STRUCTURE.partTwoQuestions),
   partThree: z
-    .array(attemptShortAnswerSchema)
+    .array(shortAnswerSlotsSchema)
     .length(EXAM_STRUCTURE.partThreeQuestions),
 });
 

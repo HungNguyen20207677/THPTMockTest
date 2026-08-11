@@ -16,7 +16,7 @@
     "test:watch": "vitest",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "admin:create": "node --env-file=.env.local --conditions=react-server --import=tsx scripts/create-admin.ts",
+    "admin:create": "node --conditions=react-server --import=tsx scripts/create-admin.ts",
     "prepare": "husky"
   },
   "dependencies": {

@@ -8,6 +8,11 @@ import { ApiClientError } from "@/lib/api/client";
 import { fetchStudentExamAttemptResult } from "@/lib/api/student-exams";
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
 import { EXAM_SCORING, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
+import {
+  formatDuration,
+  scoreFormatter,
+  vietnamDateTimeFormatter as dateTimeFormatter,
+} from "@/lib/formatting";
 import { cn } from "@/lib/utils";
 import type { StudentExamAttemptResult } from "@/types/exam-attempt";
 
@@ -15,16 +20,6 @@ interface AttemptResultProps {
   examId: string;
   attemptId: string;
 }
-
-const dateTimeFormatter = new Intl.DateTimeFormat("vi-VN", {
-  dateStyle: "medium",
-  timeStyle: "medium",
-  timeZone: "Asia/Ho_Chi_Minh",
-});
-const scoreFormatter = new Intl.NumberFormat("vi-VN", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
 
 function getRequestError(error: unknown): string {
   if (error instanceof ApiClientError) {
@@ -38,24 +33,6 @@ function getRequestError(error: unknown): string {
   }
 
   return "Không thể tải kết quả bài làm. Vui lòng thử lại.";
-}
-
-function formatDuration(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const parts = [];
-
-  if (hours > 0) {
-    parts.push(`${hours} giờ`);
-  }
-
-  if (minutes > 0 || hours > 0) {
-    parts.push(`${minutes} phút`);
-  }
-
-  parts.push(`${seconds} giây`);
-  return parts.join(" ");
 }
 
 function formatBooleanAnswer(answer: boolean | null): string {
@@ -77,7 +54,7 @@ function CorrectnessBadge({ isCorrect }: { isCorrect: boolean }) {
   );
 }
 
-function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
+export function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
   if (!result.score) {
     return null;
   }
@@ -128,7 +105,7 @@ function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
   );
 }
 
-function AnswerReview({ result }: { result: StudentExamAttemptResult }) {
+export function AnswerReview({ result }: { result: StudentExamAttemptResult }) {
   const review = result.answerReview;
 
   if (!review) {
@@ -228,6 +205,7 @@ function AnswerReview({ result }: { result: StudentExamAttemptResult }) {
 export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
   const [result, setResult] = useState<StudentExamAttemptResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
     let isCurrent = true;
@@ -248,7 +226,7 @@ export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
     return () => {
       isCurrent = false;
     };
-  }, [attemptId, examId]);
+  }, [attemptId, examId, refreshVersion]);
 
   if (error) {
     return (
@@ -256,9 +234,21 @@ export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
         <p role="alert" className="text-destructive">
           {error}
         </p>
-        <Button asChild variant="outline">
-          <Link href="/student">Quay lại danh sách đề thi</Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setError(null);
+              setRefreshVersion((version) => version + 1);
+            }}
+          >
+            Thử lại
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/student">Quay lại danh sách đề thi</Link>
+          </Button>
+        </div>
       </div>
     );
   }
@@ -273,14 +263,12 @@ export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
 
   const wasAutoSubmitted =
     result.attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED;
-  const hasPublishedDetails =
-    result.visibility.score || result.visibility.answers;
 
   return (
     <div className="space-y-8">
       <header className="border-border bg-background rounded-xl border p-6 shadow-sm">
         <p className="text-primary text-sm font-semibold">KẾT QUẢ BÀI LÀM</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight">
+        <h1 className="mt-2 break-words text-3xl font-bold tracking-tight">
           {result.exam.title}
         </h1>
         <p className="text-muted-foreground mt-2">
@@ -304,9 +292,21 @@ export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
 
       <ScoreSummary result={result} />
 
-      {!hasPublishedDetails && (
+      {!result.visibility.score && !result.visibility.answers && (
         <div className="bg-muted rounded-xl p-6 text-center text-sm leading-6">
           Bài làm đã được ghi nhận. Kết quả hiện chưa được công bố.
+        </div>
+      )}
+
+      {!result.visibility.score && result.visibility.answers && (
+        <div className="bg-muted rounded-xl p-4 text-center text-sm">
+          Điểm số hiện chưa được công bố.
+        </div>
+      )}
+
+      {result.visibility.score && !result.visibility.answers && (
+        <div className="bg-muted rounded-xl p-4 text-center text-sm">
+          Đáp án và đối chiếu từng câu hiện chưa được công bố.
         </div>
       )}
 

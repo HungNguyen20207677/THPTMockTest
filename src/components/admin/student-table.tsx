@@ -6,6 +6,7 @@ import {
   tableFeatures,
   useTable,
 } from "@tanstack/react-table";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import type { StudentAccount } from "@/types/user";
@@ -40,7 +41,14 @@ export function StudentTable({
   const columns = columnHelper.columns([
     columnHelper.accessor("fullName", {
       header: "Họ và tên",
-      cell: ({ getValue }) => <span className="font-medium">{getValue()}</span>,
+      cell: ({ row, getValue }) => (
+        <Link
+          href={`/admin/students/${row.original.id}`}
+          className="font-medium underline-offset-4 hover:underline"
+        >
+          {getValue()}
+        </Link>
+      ),
     }),
     columnHelper.accessor("username", {
       header: "Tên đăng nhập",
@@ -71,6 +79,9 @@ export function StudentTable({
 
         return (
           <div className="flex min-w-72 flex-wrap gap-1">
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/admin/students/${student.id}`}>Kết quả</Link>
+            </Button>
             <Button
               type="button"
               size="sm"

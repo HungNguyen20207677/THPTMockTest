@@ -1,5 +1,7 @@
 import type { ApiErrorResponse } from "@/types/api";
 
+const API_REQUEST_TIMEOUT_MS = 30_000;
+
 export class ApiClientError extends Error {
   constructor(
     message: string,
@@ -26,12 +28,32 @@ export async function apiRequest<TResponse>(
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
 
-  const response = await fetch(input, {
-    ...init,
-    headers,
-  });
-  const body = await response.text();
+  const timeoutSignal = AbortSignal.timeout(API_REQUEST_TIMEOUT_MS);
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, timeoutSignal])
+    : timeoutSignal;
+  let response: Response;
+  let body: string;
 
+  try {
+    response = await fetch(input, {
+      ...init,
+      cache: init?.cache ?? "no-store",
+      headers,
+      signal,
+    });
+    body = await response.text();
+  } catch (error) {
+    if (timeoutSignal.aborted && !init?.signal?.aborted) {
+      throw new ApiClientError(
+        "Yêu cầu quá thời gian chờ. Vui lòng thử lại.",
+        408,
+        "REQUEST_TIMEOUT",
+      );
+    }
+
+    throw error;
+  }
   if (!response.ok) {
     const payload = parseErrorPayload(body);
 

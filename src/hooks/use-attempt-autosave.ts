@@ -35,6 +35,11 @@ interface AnswerSnapshot {
   fingerprint: string;
 }
 
+interface FlushWaiter {
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
 function createSnapshot(answers: AttemptAnswers): AnswerSnapshot {
   return {
     answers,
@@ -61,9 +66,22 @@ export function useAttemptAutosave({
   const isSavingRef = useRef(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushWaitersRef = useRef<FlushWaiter[]>([]);
   const drainRef = useRef<() => void>(() => undefined);
   const [status, setStatus] = useState<AutosaveStatus>(AUTOSAVE_STATUS.SAVED);
   const [lastSavedAt, setLastSavedAt] = useState(initialLastSavedAt);
+
+  const resolveFlushWaiters = useCallback(() => {
+    const waiters = flushWaitersRef.current;
+    flushWaitersRef.current = [];
+    waiters.forEach((waiter) => waiter.resolve());
+  }, []);
+
+  const rejectFlushWaiters = useCallback((error: unknown) => {
+    const waiters = flushWaitersRef.current;
+    flushWaitersRef.current = [];
+    waiters.forEach((waiter) => waiter.reject(error));
+  }, []);
 
   const clearDebounceTimer = useCallback(() => {
     if (debounceTimerRef.current) {
@@ -117,7 +135,7 @@ export function useAttemptAutosave({
           setStatus(AUTOSAVE_STATUS.SAVED);
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!isMountedRef.current || !enabledRef.current) {
           return;
         }
@@ -134,6 +152,7 @@ export function useAttemptAutosave({
         }
 
         setStatus(AUTOSAVE_STATUS.ERROR);
+        rejectFlushWaiters(error);
         clearRetryTimer();
         retryTimerRef.current = setTimeout(() => {
           retryTimerRef.current = null;
@@ -150,9 +169,16 @@ export function useAttemptAutosave({
           !retryTimerRef.current
         ) {
           drainRef.current();
+        } else if (!pendingSnapshotRef.current) {
+          resolveFlushWaiters();
         }
       });
-  }, [clearDebounceTimer, clearRetryTimer]);
+  }, [
+    clearDebounceTimer,
+    clearRetryTimer,
+    rejectFlushWaiters,
+    resolveFlushWaiters,
+  ]);
 
   useEffect(() => {
     drainRef.current = drain;
@@ -169,8 +195,9 @@ export function useAttemptAutosave({
       clearDebounceTimer();
       clearRetryTimer();
       pendingSnapshotRef.current = null;
+      resolveFlushWaiters();
     }
-  }, [clearDebounceTimer, clearRetryTimer, enabled]);
+  }, [clearDebounceTimer, clearRetryTimer, enabled, resolveFlushWaiters]);
 
   useEffect(() => {
     payloadValidRef.current = isPayloadValid;
@@ -179,8 +206,14 @@ export function useAttemptAutosave({
       clearDebounceTimer();
       clearRetryTimer();
       pendingSnapshotRef.current = null;
+      resolveFlushWaiters();
     }
-  }, [clearDebounceTimer, clearRetryTimer, isPayloadValid]);
+  }, [
+    clearDebounceTimer,
+    clearRetryTimer,
+    isPayloadValid,
+    resolveFlushWaiters,
+  ]);
 
   useEffect(() => {
     const snapshot = createSnapshot(answers);
@@ -226,6 +259,20 @@ export function useAttemptAutosave({
   ]);
 
   useEffect(() => {
+    if (!enabled || status === AUTOSAVE_STATUS.SAVED) {
+      return;
+    }
+
+    function warnBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [enabled, status]);
+
+  useEffect(() => {
     isMountedRef.current = true;
 
     return () => {
@@ -233,12 +280,13 @@ export function useAttemptAutosave({
       clearDebounceTimer();
       clearRetryTimer();
       pendingSnapshotRef.current = null;
+      resolveFlushWaiters();
     };
-  }, [clearDebounceTimer, clearRetryTimer]);
+  }, [clearDebounceTimer, clearRetryTimer, resolveFlushWaiters]);
 
-  function flush() {
+  function flush(): Promise<void> {
     if (!enabledRef.current || !payloadValidRef.current) {
-      return;
+      return Promise.resolve();
     }
 
     if (latestSnapshotRef.current.fingerprint !== savedFingerprintRef.current) {
@@ -247,7 +295,16 @@ export function useAttemptAutosave({
 
     clearDebounceTimer();
     clearRetryTimer();
+
+    if (!pendingSnapshotRef.current && !isSavingRef.current) {
+      return Promise.resolve();
+    }
+
+    const completion = new Promise<void>((resolve, reject) => {
+      flushWaitersRef.current.push({ resolve, reject });
+    });
     drain();
+    return completion;
   }
 
   return {

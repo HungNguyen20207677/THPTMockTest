@@ -3,18 +3,24 @@ import "server-only";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 
+import { getOptionalAuthEnvironment } from "@/lib/env/server";
 import {
   authenticateUser,
   findActiveAuthUser,
 } from "@/lib/services/auth.service";
 import { credentialsSchema } from "@/lib/validations/auth";
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+const authEnvironment = getOptionalAuthEnvironment();
+
+export const { handlers, auth } = NextAuth({
+  secret: authEnvironment.secret,
+  trustHost: authEnvironment.trustHost,
   pages: {
     signIn: "/login",
   },
   session: {
     strategy: "jwt",
+    maxAge: 8 * 60 * 60,
   },
   providers: [
     Credentials({

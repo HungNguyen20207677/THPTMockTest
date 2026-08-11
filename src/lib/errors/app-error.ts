@@ -33,6 +33,16 @@ export class StudentNotFoundError extends AppError {
   }
 }
 
+export class StudentHasAttemptsError extends AppError {
+  constructor() {
+    super(
+      "Học sinh đã có lượt làm bài nên không thể xóa. Hãy khóa tài khoản để giữ lại lịch sử kết quả.",
+      "STUDENT_HAS_ATTEMPTS",
+      409,
+    );
+  }
+}
+
 export class AdminAlreadyExistsError extends AppError {
   constructor() {
     super("Tài khoản quản trị ban đầu đã tồn tại.", "ADMIN_EXISTS", 409);
@@ -42,6 +52,22 @@ export class AdminAlreadyExistsError extends AppError {
 export class RequestValidationError extends AppError {
   constructor(message = "Dữ liệu gửi lên không hợp lệ.") {
     super(message, "VALIDATION_ERROR", 400);
+  }
+}
+
+export class UnsupportedMediaTypeError extends AppError {
+  constructor() {
+    super(
+      "Yêu cầu phải sử dụng định dạng application/json.",
+      "UNSUPPORTED_MEDIA_TYPE",
+      415,
+    );
+  }
+}
+
+export class RequestTooLargeError extends AppError {
+  constructor() {
+    super("Nội dung yêu cầu quá lớn.", "REQUEST_TOO_LARGE", 413);
   }
 }
 

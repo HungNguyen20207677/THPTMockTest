@@ -131,6 +131,16 @@ describe("THPT Math grading", () => {
     expect(grading.sectionScoresHundredths.partThree).toBe(0);
   });
 
+  it("treats a structurally saved incomplete Part III answer as incorrect", () => {
+    const answers = createEmptyAttemptAnswers();
+    answers.partThree[0] = ["-", null, null, null];
+
+    const grading = gradeAttemptAnswers(answers, createAnswerKey());
+
+    expect(grading.partThree[0].isCorrect).toBe(false);
+    expect(grading.sectionScoresHundredths.partThree).toBe(0);
+  });
+
   it("compares equivalent Part III decimal forms semantically", () => {
     const answers = createEmptyAttemptAnswers();
     const answerKey = createAnswerKey();

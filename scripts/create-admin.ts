@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 
 import { ZodError } from "zod";
@@ -6,6 +7,10 @@ import { disconnectFromDatabase } from "@/lib/db/mongoose";
 import { AppError } from "@/lib/errors/app-error";
 import { createInitialAdmin } from "@/lib/services/admin-bootstrap.service";
 import { createInitialAdminSchema } from "@/lib/validations/user";
+
+if (existsSync(".env.local")) {
+  process.loadEnvFile(".env.local");
+}
 
 function readHiddenInput(prompt: string): Promise<string> {
   const input = process.stdin;

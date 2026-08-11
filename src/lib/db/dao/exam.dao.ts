@@ -26,6 +26,7 @@ export interface ExamPersistenceRecord {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  attemptsStarted: boolean;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -53,6 +54,7 @@ export interface StudentExamPersistenceRecord {
   description?: string;
   status: ExamStatus;
   allowRetake: boolean;
+  attemptsStarted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -71,6 +73,10 @@ export interface ExamGradingPersistenceRecord {
   >;
 }
 
+export interface ExamReportingPersistenceRecord extends ExamGradingPersistenceRecord {
+  status: ExamStatus;
+}
+
 interface ExamDocumentData {
   _id: Types.ObjectId;
   title: string;
@@ -79,6 +85,7 @@ interface ExamDocumentData {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  attemptsStarted?: boolean;
   createdBy: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -90,6 +97,7 @@ interface StudentExamDocumentData {
   description?: string;
   status: ExamStatus;
   settings: { allowRetake: boolean };
+  attemptsStarted?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -106,6 +114,10 @@ interface ExamGradingDocumentData {
     ExamSettings,
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
   >;
+}
+
+interface ExamReportingDocumentData extends ExamGradingDocumentData {
+  status: ExamStatus;
 }
 
 let examIndexesPromise: Promise<void> | null = null;
@@ -190,6 +202,7 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     pdf: exam.pdf,
     settings: exam.settings,
     answerKey: exam.answerKey,
+    attemptsStarted: exam.attemptsStarted === true,
     createdBy: exam.createdBy.toString(),
     createdAt: exam.createdAt,
     updatedAt: exam.updatedAt,
@@ -205,6 +218,7 @@ function toStudentExamRecord(
     description: exam.description,
     status: exam.status,
     allowRetake: exam.settings.allowRetake,
+    attemptsStarted: exam.attemptsStarted === true,
     createdAt: exam.createdAt,
     updatedAt: exam.updatedAt,
   };
@@ -230,6 +244,15 @@ function toExamGradingRecord(
     title: exam.title,
     answerKey: exam.answerKey,
     settings: exam.settings,
+  };
+}
+
+function toExamReportingRecord(
+  exam: ExamReportingDocumentData,
+): ExamReportingPersistenceRecord {
+  return {
+    ...toExamGradingRecord(exam),
+    status: exam.status,
   };
 }
 
@@ -265,6 +288,33 @@ export async function listPublishedStudentExamRecords(): Promise<
       description: 1,
       status: 1,
       "settings.allowRetake": 1,
+      attemptsStarted: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    .sort({ createdAt: -1, _id: -1 })
+    .lean<StudentExamDocumentData[]>()
+    .exec();
+
+  return exams.map(toStudentExamRecord);
+}
+
+export async function listStudentExamRecordsByIds(
+  examIds: string[],
+): Promise<StudentExamPersistenceRecord[]> {
+  await prepareExamModel();
+
+  if (examIds.length === 0) {
+    return [];
+  }
+
+  const exams = await ExamModel.find({ _id: { $in: examIds } })
+    .select({
+      title: 1,
+      description: 1,
+      status: 1,
+      "settings.allowRetake": 1,
+      attemptsStarted: 1,
       createdAt: 1,
       updatedAt: 1,
     })
@@ -286,6 +336,7 @@ export async function findStudentExamRecordById(
       description: 1,
       status: 1,
       "settings.allowRetake": 1,
+      attemptsStarted: 1,
       "pdf.secureUrl": 1,
       "pdf.originalFilename": 1,
       createdAt: 1,
@@ -295,6 +346,26 @@ export async function findStudentExamRecordById(
     .exec();
 
   return exam ? toStudentExamWorkspaceRecord(exam) : null;
+}
+
+export async function markExamAttemptsStarted(
+  examId: string,
+  expectedUpdatedAt: Date,
+): Promise<boolean> {
+  await prepareExamModel();
+
+  const result = await ExamModel.updateOne(
+    {
+      _id: examId,
+      status: EXAM_STATUS.PUBLISHED,
+      updatedAt: expectedUpdatedAt,
+      attemptsStarted: { $ne: true },
+    },
+    { $set: { attemptsStarted: true } },
+    { runValidators: true },
+  ).exec();
+
+  return result.matchedCount === 1;
 }
 
 export async function findExamGradingRecordById(
@@ -313,6 +384,59 @@ export async function findExamGradingRecordById(
     .exec();
 
   return exam ? toExamGradingRecord(exam) : null;
+}
+
+export async function findExamReportingRecordById(
+  examId: string,
+): Promise<ExamReportingPersistenceRecord | null> {
+  await prepareExamModel();
+
+  const exam = await ExamModel.findById(examId)
+    .select({
+      title: 1,
+      status: 1,
+      answerKey: 1,
+      settings: 1,
+    })
+    .lean<ExamReportingDocumentData>()
+    .exec();
+
+  return exam ? toExamReportingRecord(exam) : null;
+}
+
+export async function findExamReportingRecordsByIds(
+  examIds: string[],
+): Promise<ExamReportingPersistenceRecord[]> {
+  await prepareExamModel();
+
+  if (examIds.length === 0) {
+    return [];
+  }
+
+  const exams = await ExamModel.find({ _id: { $in: examIds } })
+    .select({
+      title: 1,
+      status: 1,
+      answerKey: 1,
+      settings: 1,
+    })
+    .lean<ExamReportingDocumentData[]>()
+    .exec();
+
+  return exams.map(toExamReportingRecord);
+}
+
+export async function countExamRecords(): Promise<{
+  total: number;
+  published: number;
+}> {
+  await prepareExamModel();
+  const [total, published] = await Promise.all([
+    ExamModel.countDocuments().exec(),
+    ExamModel.countDocuments({ status: EXAM_STATUS.PUBLISHED }).exec(),
+  ]);
+
+  return { total, published };
 }
 
 export async function findExamRecordByPdfPublicId(
@@ -351,7 +475,11 @@ export async function updateExamRecord(
       : { $set: input };
 
   const exam = await ExamModel.findOneAndUpdate(
-    { _id: examId, updatedAt: expectedUpdatedAt },
+    {
+      _id: examId,
+      updatedAt: expectedUpdatedAt,
+      attemptsStarted: { $ne: true },
+    },
     update,
     { returnDocument: "after", runValidators: true },
   )
@@ -412,6 +540,7 @@ export async function deleteExamRecord(
   const exam = await ExamModel.findOneAndDelete({
     _id: examId,
     updatedAt: expectedUpdatedAt,
+    attemptsStarted: { $ne: true },
   })
     .lean<ExamDocumentData>()
     .exec();

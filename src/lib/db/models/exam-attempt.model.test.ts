@@ -17,6 +17,7 @@ describe("ExamAttempt model indexes", () => {
 
     await expect(attempt.validate()).resolves.toBeUndefined();
     expect(attempt.answers).toEqual(createEmptyAttemptAnswers());
+    expect(attempt.answerRevision).toBe(0);
   });
 
   it("enforces unique numbering and one active attempt per student and Exam", () => {
@@ -43,5 +44,41 @@ describe("ExamAttempt model indexes", () => {
         },
       }),
     ]);
+  });
+
+  it("indexes result history and expiration reconciliation queries", () => {
+    const indexes = ExamAttemptModel.schema.indexes();
+    const indexByName = new Map(
+      indexes.map(([fields, options]) => [options.name, fields]),
+    );
+
+    expect(indexByName.get("results_by_submission")).toEqual({
+      status: 1,
+      submittedAt: -1,
+      _id: -1,
+    });
+    expect(indexByName.get("student_results_by_submission")).toEqual({
+      studentId: 1,
+      status: 1,
+      submittedAt: -1,
+      _id: -1,
+    });
+    expect(indexByName.get("exam_results_by_submission")).toEqual({
+      examId: 1,
+      status: 1,
+      submittedAt: -1,
+      _id: -1,
+    });
+    expect(indexByName.get("student_exam_results_by_submission")).toEqual({
+      studentId: 1,
+      examId: 1,
+      status: 1,
+      submittedAt: -1,
+      _id: -1,
+    });
+    expect(indexByName.get("expired_attempts")).toEqual({
+      status: 1,
+      expiresAt: 1,
+    });
   });
 });

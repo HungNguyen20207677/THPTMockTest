@@ -46,6 +46,13 @@ describe("Auth.js callbacks", () => {
     harness.findActiveAuthUser.mockReset();
   });
 
+  it("uses an explicit bounded JWT session lifetime", () => {
+    expect(getAuthConfig().session).toMatchObject({
+      strategy: "jwt",
+      maxAge: 8 * 60 * 60,
+    });
+  });
+
   it("invalidates a JWT after the account session version changes", async () => {
     const jwtCallback = getAuthConfig().callbacks?.jwt;
 

@@ -64,6 +64,7 @@ export function StudentExamList() {
   const [exams, setExams] = useState<StudentExamSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [startError, setStartError] = useState<string | null>(null);
   const [startTarget, setStartTarget] = useState<StudentExamSummary | null>(
     null,
@@ -95,7 +96,7 @@ export function StudentExamList() {
     return () => {
       isCurrent = false;
     };
-  }, []);
+  }, [refreshVersion]);
 
   async function handleConfirmedStart() {
     if (!startTarget || isStarting) {
@@ -126,10 +127,21 @@ export function StudentExamList() {
 
   if (loadError) {
     return (
-      <div className="border-border rounded-xl border p-5">
+      <div className="border-border space-y-3 rounded-xl border p-5">
         <p role="alert" className="text-destructive text-sm">
           {loadError}
         </p>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            setIsLoading(true);
+            setLoadError(null);
+            setRefreshVersion((version) => version + 1);
+          }}
+        >
+          Thử lại
+        </Button>
       </div>
     );
   }
@@ -217,9 +229,11 @@ export function StudentExamList() {
                 )}
                 {exam.state === STUDENT_EXAM_STATE.COMPLETED && (
                   <span>
-                    {exam.allowRetake
-                      ? "Được phép làm lại"
-                      : "Không cho phép làm lại"}
+                    {!exam.isAvailable
+                      ? "Đề thi đã đóng"
+                      : exam.allowRetake
+                        ? "Được phép làm lại"
+                        : "Không cho phép làm lại"}
                   </span>
                 )}
               </div>
@@ -259,7 +273,15 @@ export function StudentExamList() {
                       </Link>
                     </Button>
                   )}
+                {exam.completedAttemptCount > 0 && (
+                  <Button asChild variant="outline">
+                    <Link href={`/student/exams/${exam.id}/history`}>
+                      Lịch sử làm bài
+                    </Link>
+                  </Button>
+                )}
                 {exam.state === STUDENT_EXAM_STATE.COMPLETED &&
+                  exam.isAvailable &&
                   exam.allowRetake && (
                     <Button
                       type="button"
