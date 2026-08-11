@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Types } from "mongoose";
 
+import { EXAM_STATUS } from "@/lib/constants/exam";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import {
   ExamModel,
@@ -39,6 +40,37 @@ export interface SaveExamRecordInput {
   answerKey: ExamAnswerKey;
 }
 
+export interface UpdateExamMetadataRecordInput {
+  title: string;
+  description?: string;
+  status: ExamStatus;
+  settings: ExamSettings;
+}
+
+export interface StudentExamPersistenceRecord {
+  id: string;
+  title: string;
+  description?: string;
+  status: ExamStatus;
+  allowRetake: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StudentExamWorkspacePersistenceRecord extends StudentExamPersistenceRecord {
+  pdf: Pick<ExamPdf, "secureUrl" | "originalFilename">;
+}
+
+export interface ExamGradingPersistenceRecord {
+  id: string;
+  title: string;
+  answerKey: ExamAnswerKey;
+  settings: Pick<
+    ExamSettings,
+    "showScoreAfterSubmission" | "showAnswersAfterSubmission"
+  >;
+}
+
 interface ExamDocumentData {
   _id: Types.ObjectId;
   title: string;
@@ -50,6 +82,30 @@ interface ExamDocumentData {
   createdBy: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
+}
+
+interface StudentExamDocumentData {
+  _id: Types.ObjectId;
+  title: string;
+  description?: string;
+  status: ExamStatus;
+  settings: { allowRetake: boolean };
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface StudentExamWorkspaceDocumentData extends StudentExamDocumentData {
+  pdf: Pick<ExamPdf, "secureUrl" | "originalFilename">;
+}
+
+interface ExamGradingDocumentData {
+  _id: Types.ObjectId;
+  title: string;
+  answerKey: ExamAnswerKey;
+  settings: Pick<
+    ExamSettings,
+    "showScoreAfterSubmission" | "showAnswersAfterSubmission"
+  >;
 }
 
 let examIndexesPromise: Promise<void> | null = null;
@@ -140,6 +196,43 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
   };
 }
 
+function toStudentExamRecord(
+  exam: StudentExamDocumentData,
+): StudentExamPersistenceRecord {
+  return {
+    id: exam._id.toString(),
+    title: exam.title,
+    description: exam.description,
+    status: exam.status,
+    allowRetake: exam.settings.allowRetake,
+    createdAt: exam.createdAt,
+    updatedAt: exam.updatedAt,
+  };
+}
+
+function toStudentExamWorkspaceRecord(
+  exam: StudentExamWorkspaceDocumentData,
+): StudentExamWorkspacePersistenceRecord {
+  return {
+    ...toStudentExamRecord(exam),
+    pdf: {
+      secureUrl: exam.pdf.secureUrl,
+      originalFilename: exam.pdf.originalFilename,
+    },
+  };
+}
+
+function toExamGradingRecord(
+  exam: ExamGradingDocumentData,
+): ExamGradingPersistenceRecord {
+  return {
+    id: exam._id.toString(),
+    title: exam.title,
+    answerKey: exam.answerKey,
+    settings: exam.settings,
+  };
+}
+
 export async function listExamRecords(): Promise<ExamPersistenceRecord[]> {
   await prepareExamModel();
 
@@ -159,6 +252,67 @@ export async function findExamRecordById(
   const exam = await ExamModel.findById(examId).lean<ExamDocumentData>().exec();
 
   return exam ? toExamRecord(exam) : null;
+}
+
+export async function listPublishedStudentExamRecords(): Promise<
+  StudentExamPersistenceRecord[]
+> {
+  await prepareExamModel();
+
+  const exams = await ExamModel.find({ status: EXAM_STATUS.PUBLISHED })
+    .select({
+      title: 1,
+      description: 1,
+      status: 1,
+      "settings.allowRetake": 1,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    .sort({ createdAt: -1, _id: -1 })
+    .lean<StudentExamDocumentData[]>()
+    .exec();
+
+  return exams.map(toStudentExamRecord);
+}
+
+export async function findStudentExamRecordById(
+  examId: string,
+): Promise<StudentExamWorkspacePersistenceRecord | null> {
+  await prepareExamModel();
+
+  const exam = await ExamModel.findById(examId)
+    .select({
+      title: 1,
+      description: 1,
+      status: 1,
+      "settings.allowRetake": 1,
+      "pdf.secureUrl": 1,
+      "pdf.originalFilename": 1,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    .lean<StudentExamWorkspaceDocumentData>()
+    .exec();
+
+  return exam ? toStudentExamWorkspaceRecord(exam) : null;
+}
+
+export async function findExamGradingRecordById(
+  examId: string,
+): Promise<ExamGradingPersistenceRecord | null> {
+  await prepareExamModel();
+
+  const exam = await ExamModel.findById(examId)
+    .select({
+      title: 1,
+      answerKey: 1,
+      "settings.showScoreAfterSubmission": 1,
+      "settings.showAnswersAfterSubmission": 1,
+    })
+    .lean<ExamGradingDocumentData>()
+    .exec();
+
+  return exam ? toExamGradingRecord(exam) : null;
 }
 
 export async function findExamRecordByPdfPublicId(
@@ -186,6 +340,30 @@ export async function createExamRecord(
 export async function updateExamRecord(
   examId: string,
   input: SaveExamRecordInput,
+  expectedUpdatedAt: Date,
+): Promise<ExamPersistenceRecord | null> {
+  await prepareExamModel();
+
+  const { description, ...requiredFields } = input;
+  const update =
+    description === undefined
+      ? { $set: requiredFields, $unset: { description: 1 } }
+      : { $set: input };
+
+  const exam = await ExamModel.findOneAndUpdate(
+    { _id: examId, updatedAt: expectedUpdatedAt },
+    update,
+    { returnDocument: "after", runValidators: true },
+  )
+    .lean<ExamDocumentData>()
+    .exec();
+
+  return exam ? toExamRecord(exam) : null;
+}
+
+export async function updateExamMetadataRecord(
+  examId: string,
+  input: UpdateExamMetadataRecordInput,
   expectedUpdatedAt: Date,
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();

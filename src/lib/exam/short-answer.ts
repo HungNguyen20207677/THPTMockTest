@@ -15,6 +15,15 @@ export function createEmptyShortAnswerSlots(): ShortAnswerSlots {
   return [null, null, null, null];
 }
 
+export function isEmptyShortAnswerSlots(
+  slots: readonly ShortAnswerSlot[],
+): boolean {
+  return (
+    slots.length === EXAM_STRUCTURE.shortAnswerSlots &&
+    slots.every((slot) => slot === null)
+  );
+}
+
 export function isShortAnswerSlotOption(
   value: unknown,
 ): value is ShortAnswerSlotOption {
@@ -27,6 +36,27 @@ export function isValidCanonicalShortAnswer(value: string): boolean {
     value.length <= EXAM_STRUCTURE.shortAnswerSlots &&
     canonicalShortAnswerPattern.test(value)
   );
+}
+
+export function normalizeCanonicalShortAnswer(value: string): string | null {
+  const match = canonicalShortAnswerPattern.exec(value);
+
+  if (!match) {
+    return null;
+  }
+
+  const isNegative = value.startsWith("-");
+  const unsignedValue = isNegative ? value.slice(1) : value;
+  const [rawInteger, rawFraction] = unsignedValue.split(".");
+  const integer = rawInteger.replace(/^0+(?=\d)/, "");
+  const fraction = rawFraction?.replace(/0+$/, "") ?? "";
+  const normalizedUnsignedValue = fraction ? `${integer}.${fraction}` : integer;
+
+  if (normalizedUnsignedValue === "0") {
+    return "0";
+  }
+
+  return isNegative ? `-${normalizedUnsignedValue}` : normalizedUnsignedValue;
 }
 
 function getOccupiedSlots(slots: readonly ShortAnswerSlot[]): string[] | null {

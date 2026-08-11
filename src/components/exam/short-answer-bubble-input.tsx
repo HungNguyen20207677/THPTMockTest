@@ -4,7 +4,10 @@ import { useId, type Ref } from "react";
 
 import { Button } from "@/components/ui/button";
 import { SHORT_ANSWER_SLOT_OPTIONS } from "@/lib/constants/exam";
-import { shortAnswerSlotsToDisplayValue } from "@/lib/exam/short-answer";
+import {
+  isEmptyShortAnswerSlots,
+  shortAnswerSlotsToDisplayValue,
+} from "@/lib/exam/short-answer";
 import { cn } from "@/lib/utils";
 import type { ShortAnswerSlotOption, ShortAnswerSlots } from "@/types/exam";
 
@@ -42,6 +45,11 @@ export function ShortAnswerBubbleInput({
   const generatedId = useId();
   const errorId = `${generatedId}-error`;
   const displayValue = shortAnswerSlotsToDisplayValue(value);
+  const answerStatus = displayValue
+    ? `Đáp án đã chọn: ${displayValue}`
+    : isEmptyShortAnswerSlots(value)
+      ? "Chưa trả lời"
+      : "Đáp án chưa hợp lệ";
 
   function updateSlot(index: number, option: ShortAnswerSlotOption) {
     const nextValue = [...value] as ShortAnswerSlots;
@@ -67,9 +75,7 @@ export function ShortAnswerBubbleInput({
     >
       <legend className="px-1 font-medium">{label}</legend>
       <div className="flex justify-end">
-        <span className="text-muted-foreground text-sm">
-          Giá trị: {displayValue ?? "chưa hợp lệ"}
-        </span>
+        <span className="text-muted-foreground text-sm">{answerStatus}</span>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -52,6 +52,22 @@ export const EXAM_SCORING = {
   totalMaximum: 10,
 } as const;
 
+export const EXAM_SCORING_HUNDREDTHS = {
+  partOnePointsPerAnswer: 25,
+  partOneMaximum: 300,
+  partTwoPointsByCorrectStatements: {
+    0: 0,
+    1: 10,
+    2: 25,
+    3: 50,
+    4: 100,
+  },
+  partTwoMaximum: 400,
+  partThreePointsPerAnswer: 50,
+  partThreeMaximum: 300,
+  totalMaximum: 1000,
+} as const;
+
 export const EXAM_PDF_MAX_BYTES = 15 * 1024 * 1024;
 export const EXAM_PDF_MIME_TYPE = "application/pdf";
 export const EXAM_PDF_CLOUDINARY_FOLDER = "thpt-mock-test/exams";

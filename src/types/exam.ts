@@ -68,6 +68,7 @@ export interface ExamSummary {
   title: string;
   status: ExamStatus;
   settings: ExamSettings;
+  hasAttempts: boolean;
   createdAt: string;
   updatedAt: string;
 }

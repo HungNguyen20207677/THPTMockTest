@@ -111,6 +111,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [currentPdf, setCurrentPdf] = useState<ExamPdf | null>(null);
   const [currentUpdatedAt, setCurrentUpdatedAt] = useState<string | null>(null);
+  const [isContentLocked, setIsContentLocked] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -139,6 +140,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           reset(toEditorValues(response.data.exam));
           setCurrentPdf(response.data.exam.pdf);
           setCurrentUpdatedAt(response.data.exam.updatedAt);
+          setIsContentLocked(response.data.exam.hasAttempts);
           setLoadError(null);
         }
       })
@@ -240,6 +242,12 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               Cấu trúc cố định: {EXAM_STRUCTURE.totalQuestions} câu, thời gian{" "}
               {EXAM_STRUCTURE.durationMinutes} phút.
             </p>
+            {isContentLocked && (
+              <p className="mt-2 text-sm font-medium text-amber-700">
+                Đề thi đã có lượt làm. Bạn vẫn có thể sửa thông tin và thiết
+                lập, nhưng tệp PDF và đáp án đã được khóa.
+              </p>
+            )}
           </div>
 
           <div className="grid gap-5 md:grid-cols-2">
@@ -304,6 +312,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 type="file"
                 accept="application/pdf,.pdf"
                 required={mode === "create"}
+                disabled={isContentLocked}
                 aria-invalid={Boolean(fileError)}
                 aria-describedby={
                   fileError ? "exam-pdf-error" : "exam-pdf-help"
@@ -315,7 +324,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 }}
               />
               <p id="exam-pdf-help" className="text-muted-foreground text-xs">
-                Chỉ nhận PDF, tối đa 15 MB.
+                {isContentLocked
+                  ? "Không thể thay tệp PDF sau khi đề đã có lượt làm."
+                  : "Chỉ nhận PDF, tối đa 15 MB."}
               </p>
               {currentPdf && (
                 <p className="text-sm">
@@ -394,6 +405,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                       className={selectClassName}
                       aria-invalid={Boolean(answerError)}
                       aria-describedby={answerError ? errorId : undefined}
+                      disabled={isContentLocked}
                       {...register(
                         `answerKey.partOne.${questionIndex}` as const,
                       )}
@@ -435,6 +447,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 <fieldset
                   key={questionIndex}
                   className="border-border rounded-lg border p-4"
+                  disabled={isContentLocked}
                 >
                   <legend className="px-1 font-medium">
                     Câu {questionIndex + 1}
@@ -529,7 +542,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                       onChange={field.onChange}
                       label={`Câu ${questionIndex + 1}`}
                       error={fieldState.error?.message}
-                      disabled={isSubmitting}
+                      disabled={isSubmitting || isContentLocked}
                       inputRef={field.ref}
                       onBlur={field.onBlur}
                     />

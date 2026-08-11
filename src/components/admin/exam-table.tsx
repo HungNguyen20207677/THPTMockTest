@@ -45,7 +45,16 @@ export function ExamTable({
   const columns = columnHelper.columns([
     columnHelper.accessor("title", {
       header: "Tên đề thi",
-      cell: ({ getValue }) => <span className="font-medium">{getValue()}</span>,
+      cell: ({ row, getValue }) => (
+        <div>
+          <span className="font-medium">{getValue()}</span>
+          {row.original.hasAttempts && (
+            <p className="mt-1 text-xs font-medium text-amber-700">
+              Nội dung đã khóa do có lượt làm
+            </p>
+          )}
+        </div>
+      ),
     }),
     columnHelper.accessor("status", {
       header: "Trạng thái",
@@ -99,20 +108,32 @@ export function ExamTable({
       id: "actions",
       header: "Thao tác",
       cell: ({ row }) => (
-        <div className="flex min-w-36 flex-wrap gap-1">
-          <Button asChild size="sm" variant="outline">
-            <Link href={`/admin/exams/${row.original.id}/edit`}>Sửa</Link>
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="destructive"
-            disabled={isBusy}
-            aria-label={`Xóa đề thi ${row.original.title}`}
-            onClick={(event) => onDelete(row.original, event.currentTarget)}
-          >
-            Xóa
-          </Button>
+        <div className="min-w-44 space-y-2">
+          <div className="flex flex-wrap gap-1">
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/admin/exams/${row.original.id}/edit`}>Sửa</Link>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={isBusy || row.original.hasAttempts}
+              title={
+                row.original.hasAttempts
+                  ? "Đề đã có lượt làm. Hãy chuyển đề sang trạng thái Đã ẩn."
+                  : undefined
+              }
+              aria-label={`Xóa đề thi ${row.original.title}`}
+              onClick={(event) => onDelete(row.original, event.currentTarget)}
+            >
+              Xóa
+            </Button>
+          </div>
+          {row.original.hasAttempts && (
+            <p className="text-muted-foreground text-xs">
+              Không thể xóa; có thể chuyển sang Đã ẩn.
+            </p>
+          )}
         </div>
       ),
     }),

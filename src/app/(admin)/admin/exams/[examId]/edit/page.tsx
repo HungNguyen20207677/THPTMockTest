@@ -27,7 +27,7 @@ export default async function EditExamPage({ params }: EditExamPageProps) {
       <div className="mb-7">
         <h1 className="text-3xl font-bold tracking-tight">Chỉnh sửa đề thi</h1>
         <p className="text-muted-foreground mt-2">
-          Cập nhật tệp PDF, thiết lập và đáp án của đề thi.
+          Cập nhật thông tin, thiết lập và nội dung của đề thi khi được phép.
         </p>
       </div>
       <ExamForm mode="edit" examId={parsedExamId.data} />

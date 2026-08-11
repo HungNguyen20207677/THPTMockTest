@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
   listExamRecords: vi.fn(),
   releaseExamPdfOperationLease: vi.fn(),
   updateExamRecord: vi.fn(),
+  updateExamMetadataRecord: vi.fn(),
   updateExamRecordStatus: vi.fn(),
+  findExamIdsWithAttemptRecords: vi.fn(),
+  hasExamAttemptRecords: vi.fn(),
 }));
 
 vi.mock("@/lib/cloudinary/exam-pdf", () => ({
@@ -37,7 +40,13 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
   listExamRecords: mocks.listExamRecords,
   releaseExamPdfOperationLease: mocks.releaseExamPdfOperationLease,
   updateExamRecord: mocks.updateExamRecord,
+  updateExamMetadataRecord: mocks.updateExamMetadataRecord,
   updateExamRecordStatus: mocks.updateExamRecordStatus,
+}));
+
+vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
+  findExamIdsWithAttemptRecords: mocks.findExamIdsWithAttemptRecords,
+  hasExamAttemptRecords: mocks.hasExamAttemptRecords,
 }));
 
 import { EXAM_STATUS, EXAM_STRUCTURE } from "@/lib/constants/exam";
@@ -153,7 +162,12 @@ describe("exam service", () => {
     mocks.releaseExamPdfOperationLease.mockReset();
     mocks.releaseExamPdfOperationLease.mockResolvedValue(undefined);
     mocks.updateExamRecord.mockReset();
+    mocks.updateExamMetadataRecord.mockReset();
     mocks.updateExamRecordStatus.mockReset();
+    mocks.findExamIdsWithAttemptRecords.mockReset();
+    mocks.findExamIdsWithAttemptRecords.mockResolvedValue(new Set<string>());
+    mocks.hasExamAttemptRecords.mockReset();
+    mocks.hasExamAttemptRecords.mockResolvedValue(false);
   });
 
   it("publishes a complete exam", async () => {
@@ -421,5 +435,111 @@ describe("exam service", () => {
     expect(mocks.deleteExamPdf.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.releaseExamPdfOperationLease.mock.invocationCallOrder[0],
     );
+  });
+
+  it("rejects a PDF replacement after the Exam has attempts", async () => {
+    const currentExam = createStoredExam();
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+    mocks.discardExamPdfUpload.mockResolvedValue(undefined);
+
+    await expect(
+      editExam(
+        admin,
+        currentExam.id,
+        {
+          ...createValidInput(),
+          expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+        },
+        replacementPdfUpload,
+      ),
+    ).rejects.toMatchObject({
+      code: "EXAM_CONTENT_LOCKED",
+      statusCode: 409,
+    });
+    expect(mocks.verifyExamPdfAsset).not.toHaveBeenCalled();
+    expect(mocks.updateExamRecord).not.toHaveBeenCalled();
+    expect(mocks.discardExamPdfUpload).toHaveBeenCalledWith(
+      replacementPdfUpload,
+    );
+  });
+
+  it("rejects answer-key changes after the Exam has attempts", async () => {
+    const currentExam = createStoredExam();
+    const input = createValidInput();
+    input.answerKey.partOne[0] = "B";
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+
+    await expect(
+      editExam(admin, currentExam.id, {
+        ...input,
+        expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+      }),
+    ).rejects.toMatchObject({
+      code: "EXAM_CONTENT_LOCKED",
+      statusCode: 409,
+    });
+    expect(mocks.updateExamRecord).not.toHaveBeenCalled();
+    expect(mocks.updateExamMetadataRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects hard deletion after the Exam has attempts", async () => {
+    const currentExam = createStoredExam();
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+
+    await expect(
+      deleteExam(admin, currentExam.id, currentExam.updatedAt.toISOString()),
+    ).rejects.toMatchObject({
+      code: "EXAM_HAS_ATTEMPTS",
+      statusCode: 409,
+    });
+    expect(mocks.deleteExamRecord).not.toHaveBeenCalled();
+    expect(mocks.deleteExamPdf).not.toHaveBeenCalled();
+  });
+
+  it("updates only metadata and settings after the Exam has attempts", async () => {
+    const currentExam = createStoredExam();
+    const input = {
+      ...createValidInput(),
+      title: "Đề thi thử Toán đã đổi tên",
+      description: "Mô tả mới",
+      settings: {
+        ...currentExam.settings,
+        allowRetake: false,
+      },
+    };
+    const updatedExam = createStoredExam({
+      title: input.title,
+      description: input.description,
+      settings: input.settings,
+    });
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+    mocks.updateExamMetadataRecord.mockResolvedValue(updatedExam);
+
+    const result = await editExam(admin, currentExam.id, {
+      ...input,
+      expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+    });
+
+    expect(result).toMatchObject({
+      title: input.title,
+      description: input.description,
+      settings: input.settings,
+      hasAttempts: true,
+    });
+    expect(mocks.updateExamMetadataRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      {
+        title: input.title,
+        description: input.description,
+        status: input.status,
+        settings: input.settings,
+      },
+      currentExam.updatedAt,
+    );
+    expect(mocks.updateExamRecord).not.toHaveBeenCalled();
   });
 });

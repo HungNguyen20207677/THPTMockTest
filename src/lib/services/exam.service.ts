@@ -11,6 +11,10 @@ import {
 import { EXAM_STATUS } from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
+  findExamIdsWithAttemptRecords,
+  hasExamAttemptRecords,
+} from "@/lib/db/dao/exam-attempt.dao";
+import {
   acquireExamPdfOperationLease,
   createExamRecord,
   deleteExamRecord,
@@ -19,6 +23,7 @@ import {
   listExamRecords,
   releaseExamPdfOperationLease,
   updateExamRecord,
+  updateExamMetadataRecord,
   updateExamRecordStatus,
   type ExamPdfOperationLease,
   type ExamPersistenceRecord,
@@ -26,6 +31,8 @@ import {
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import {
   ExamConflictError,
+  ExamContentLockedError,
+  ExamHasAttemptsError,
   ExamNotFoundError,
   ExamPdfAlreadyAttachedError,
   ExamPdfOperationConflictError,
@@ -55,20 +62,27 @@ function assertAdmin(actor: AppUser): void {
   }
 }
 
-function toExamSummary(exam: ExamPersistenceRecord): ExamSummary {
+function toExamSummary(
+  exam: ExamPersistenceRecord,
+  hasAttempts: boolean,
+): ExamSummary {
   return {
     id: exam.id,
     title: exam.title,
     status: exam.status,
     settings: exam.settings,
+    hasAttempts,
     createdAt: exam.createdAt.toISOString(),
     updatedAt: exam.updatedAt.toISOString(),
   };
 }
 
-function toExamDetail(exam: ExamPersistenceRecord): ExamDetail {
+function toExamDetail(
+  exam: ExamPersistenceRecord,
+  hasAttempts: boolean,
+): ExamDetail {
   return {
-    ...toExamSummary(exam),
+    ...toExamSummary(exam, hasAttempts),
     description: exam.description,
     pdf: exam.pdf,
     answerKey: exam.answerKey,
@@ -207,7 +221,12 @@ function normalizePdfOwnershipError(error: unknown): unknown {
 export async function listExams(actor: AppUser): Promise<ExamSummary[]> {
   assertAdmin(actor);
   const exams = await listExamRecords();
-  return exams.map(toExamSummary);
+  const examIdsWithAttempts = await findExamIdsWithAttemptRecords(
+    exams.map((exam) => exam.id),
+  );
+  return exams.map((exam) =>
+    toExamSummary(exam, examIdsWithAttempts.has(exam.id)),
+  );
 }
 
 export async function getExam(
@@ -221,7 +240,7 @@ export async function getExam(
     throw new ExamNotFoundError();
   }
 
-  return toExamDetail(exam);
+  return toExamDetail(exam, await hasExamAttemptRecords(examId));
 }
 
 export function issueExamPdfUploadTicket(
@@ -254,7 +273,7 @@ export async function createExam(
     }
 
     const exam = await createExamRecord({ ...input, pdf }, actor.id);
-    return toExamDetail(exam);
+    return toExamDetail(exam, false);
   } catch (error) {
     await discardPdfUploadWhileLeasedBestEffort(pdfUpload);
     throw normalizePdfOwnershipError(error);
@@ -280,6 +299,26 @@ export async function editExam(
     throw new ExamNotFoundError();
   }
 
+  if (currentExam.updatedAt.toISOString() !== input.expectedUpdatedAt) {
+    if (replacementPdfUpload) {
+      await discardPdfUploadBestEffort(replacementPdfUpload);
+    }
+
+    throw new ExamConflictError();
+  }
+
+  const hasAttempts = await hasExamAttemptRecords(examId);
+  const answerKeyChanged =
+    JSON.stringify(currentExam.answerKey) !== JSON.stringify(input.answerKey);
+
+  if (hasAttempts && (replacementPdfUpload || answerKeyChanged)) {
+    if (replacementPdfUpload) {
+      await discardPdfUploadBestEffort(replacementPdfUpload);
+    }
+
+    throw new ExamContentLockedError();
+  }
+
   const examInput: UpsertExamInput = {
     title: input.title,
     description: input.description,
@@ -294,10 +333,6 @@ export async function editExam(
     : [];
 
   try {
-    if (currentExam.updatedAt.toISOString() !== input.expectedUpdatedAt) {
-      throw new ExamConflictError();
-    }
-
     if (examInput.status === EXAM_STATUS.PUBLISHED) {
       assertPublishableContent(examInput);
     }
@@ -319,11 +354,22 @@ export async function editExam(
       });
     }
 
-    const updatedExam = await updateExamRecord(
-      examId,
-      { ...examInput, pdf: newPdf },
-      currentExam.updatedAt,
-    );
+    const updatedExam = hasAttempts
+      ? await updateExamMetadataRecord(
+          examId,
+          {
+            title: examInput.title,
+            description: examInput.description,
+            status: examInput.status,
+            settings: examInput.settings,
+          },
+          currentExam.updatedAt,
+        )
+      : await updateExamRecord(
+          examId,
+          { ...examInput, pdf: newPdf },
+          currentExam.updatedAt,
+        );
 
     if (!updatedExam) {
       throw new ExamConflictError();
@@ -333,7 +379,7 @@ export async function editExam(
       await deletePdfBestEffort(currentExam.pdf.publicId);
     }
 
-    return toExamDetail(updatedExam);
+    return toExamDetail(updatedExam, hasAttempts);
   } catch (error) {
     if (replacementPdfUpload) {
       await discardPdfUploadWhileLeasedBestEffort(replacementPdfUpload);
@@ -376,7 +422,7 @@ export async function changeExamStatus(
     throw new ExamConflictError();
   }
 
-  return toExamDetail(updatedExam);
+  return toExamDetail(updatedExam, await hasExamAttemptRecords(examId));
 }
 
 export async function deleteExam(
@@ -393,6 +439,10 @@ export async function deleteExam(
 
   if (currentExam.updatedAt.toISOString() !== expectedUpdatedAt) {
     throw new ExamConflictError();
+  }
+
+  if (await hasExamAttemptRecords(examId)) {
+    throw new ExamHasAttemptsError();
   }
 
   const leases = await acquirePdfOperationLeases([currentExam.pdf.publicId]);
