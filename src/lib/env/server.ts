@@ -3,10 +3,22 @@ import "server-only";
 import { z } from "zod";
 
 const requiredEnvironmentValue = z.string().trim().min(1);
-const mongoDbUriSchema = requiredEnvironmentValue.refine(
-  (value) => /^mongodb(?:\+srv)?:\/\//.test(value),
-  "MongoDB URI must use mongodb:// or mongodb+srv://.",
-);
+const mongoDbUriSchema = requiredEnvironmentValue
+  .refine(
+    (value) => /^mongodb(?:\+srv)?:\/\//.test(value),
+    "MongoDB URI must use mongodb:// or mongodb+srv://.",
+  )
+  .refine((value) => {
+    const authorityStart = value.indexOf("://") + 3;
+    const pathStart = value.indexOf("/", authorityStart);
+    const queryStart = value.indexOf("?", pathStart);
+    const databaseName = value.slice(
+      pathStart + 1,
+      queryStart === -1 ? undefined : queryStart,
+    );
+
+    return pathStart >= authorityStart && databaseName.length > 0;
+  }, "MongoDB URI must include a database name.");
 const cloudinaryValueSchema = requiredEnvironmentValue.refine(
   (value) => !value.startsWith("replace-with-"),
   "Placeholder values are not allowed.",

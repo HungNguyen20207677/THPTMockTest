@@ -11,11 +11,17 @@ describe("server environment validation", () => {
     vi.unstubAllEnvs();
   });
 
-  it("accepts supported MongoDB URI schemes and rejects unrelated URLs", () => {
+  it("requires a supported MongoDB URI with a database name", () => {
     vi.stubEnv("MONGODB_URI", "mongodb+srv://example.invalid/app");
     expect(getMongoDbUri()).toBe("mongodb+srv://example.invalid/app");
 
     vi.stubEnv("MONGODB_URI", "https://example.invalid/database");
+    expect(() => getMongoDbUri()).toThrow("MONGODB_URI");
+
+    vi.stubEnv(
+      "MONGODB_URI",
+      "mongodb+srv://example.invalid/?retryWrites=true",
+    );
     expect(() => getMongoDbUri()).toThrow("MONGODB_URI");
   });
 
