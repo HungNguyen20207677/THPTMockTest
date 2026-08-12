@@ -51,10 +51,7 @@ export default function HomePage() {
 
         {/* Right */}
         <section className="relative mx-auto w-full max-w-xl lg:max-w-none">
-          <div
-            aria-hidden="true"
-            className="absolute inset-8 "
-          />
+          <div aria-hidden="true" className="absolute inset-8 " />
 
           <div className="relative overflow-hidden p-3">
             <Image
