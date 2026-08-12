@@ -1,15 +1,24 @@
 import Link from "next/link";
+import Image from "next/image";
 
 export function SiteHeader() {
   return (
     <header className="border-border bg-background/95 h-16 border-b">
       <div className="mx-auto flex h-full max-w-5xl items-center justify-between px-6">
-        <Link href="/" className="font-semibold tracking-tight">
-          THPTMockTest
+        <Link
+          href="/"
+          aria-label="THPTMockTest - Trang chủ"
+          className="flex items-center"
+        >
+          <Image
+            src="/logo.png"
+            alt="THPTMockTest"
+            width={240}
+            height={72}
+            priority
+            className="h-10 w-auto object-contain"
+          />
         </Link>
-        <span className="bg-secondary text-secondary-foreground rounded-full px-3 py-1 text-xs font-medium">
-          Công cụ học tập cá nhân
-        </span>
       </div>
     </header>
   );
