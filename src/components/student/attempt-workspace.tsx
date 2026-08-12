@@ -115,20 +115,26 @@ function wait(milliseconds: number): Promise<void> {
 }
 
 function QuestionStatusLink({
-  href,
+  targetId,
   questionNumber,
   answered,
   sectionLabel,
+  onSelect,
 }: {
-  href: string;
+  targetId: string;
   questionNumber: number;
   answered: boolean;
   sectionLabel: string;
+  onSelect: (targetId: string) => void;
 }) {
   return (
     <a
-      href={href}
+      href={`#${targetId}`}
       aria-label={`${sectionLabel}, câu ${questionNumber}, ${answered ? "đã trả lời" : "chưa trả lời"}`}
+      onClick={(event) => {
+        event.preventDefault();
+        onSelect(targetId);
+      }}
       className={cn(
         "focus-visible:border-ring focus-visible:ring-ring/50 flex size-8 items-center justify-center rounded-md border text-xs font-semibold outline-none focus-visible:ring-3",
         answered
@@ -141,7 +147,13 @@ function QuestionStatusLink({
   );
 }
 
-function QuestionOverview({ progress }: { progress: AttemptAnswerProgress }) {
+function QuestionOverview({
+  progress,
+  onQuestionSelect,
+}: {
+  progress: AttemptAnswerProgress;
+  onQuestionSelect: (targetId: string) => void;
+}) {
   const sections = [
     {
       label: "Phần I",
@@ -171,10 +183,11 @@ function QuestionOverview({ progress }: { progress: AttemptAnswerProgress }) {
             {section.questions.map((answered, questionIndex) => (
               <QuestionStatusLink
                 key={questionIndex}
-                href={`#${section.idPrefix}-${questionIndex + 1}`}
+                targetId={`${section.idPrefix}-${questionIndex + 1}`}
                 questionNumber={questionIndex + 1}
                 answered={answered}
                 sectionLabel={section.label}
+                onSelect={onQuestionSelect}
               />
             ))}
           </div>
@@ -520,6 +533,8 @@ function ActiveAttemptWorkspace({
   const expirationStartedRef = useRef(false);
   const isMountedRef = useRef(true);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const answerSheetRef = useRef<HTMLElement>(null);
+  const answerSheetHeaderRef = useRef<HTMLDivElement>(null);
   const autoSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -556,6 +571,37 @@ function ActiveAttemptWorkspace({
     },
   });
   const progress = getAttemptAnswerProgress(answers);
+
+  function navigateToQuestion(targetId: string) {
+    const answerSheet = answerSheetRef.current;
+    const target = document.getElementById(targetId);
+
+    if (!answerSheet || !target || !answerSheet.contains(target)) {
+      return;
+    }
+
+    const answerSheetScrollsIndependently =
+      window.getComputedStyle(answerSheet).overflowY === "auto";
+
+    if (!answerSheetScrollsIndependently) {
+      target.scrollIntoView({ block: "start" });
+      return;
+    }
+
+    if (answerSheet.scrollHeight <= answerSheet.clientHeight) {
+      return;
+    }
+
+    const targetTop =
+      answerSheet.scrollTop +
+      target.getBoundingClientRect().top -
+      answerSheet.getBoundingClientRect().top;
+    const stickyHeaderHeight = answerSheetHeaderRef.current?.offsetHeight ?? 0;
+
+    answerSheet.scrollTo({
+      top: Math.max(0, targetTop - stickyHeaderHeight - 12),
+    });
+  }
 
   async function adoptTerminalAttemptIfAvailable(): Promise<boolean> {
     try {
@@ -1018,10 +1064,14 @@ function ActiveAttemptWorkspace({
           </section>
 
           <section
+            ref={answerSheetRef}
             aria-labelledby="answer-sheet-heading"
-            className="border-border bg-background min-h-0 overflow-y-auto rounded-xl border shadow-sm lg:h-full"
+            className="border-border bg-background min-h-0 rounded-xl border shadow-sm lg:h-full lg:overflow-y-auto lg:overscroll-contain"
           >
-            <div className="border-border bg-background/95 z-10 space-y-3 border-b p-4 backdrop-blur-sm lg:sticky lg:top-0">
+            <div
+              ref={answerSheetHeaderRef}
+              className="border-border bg-background/95 z-10 space-y-3 border-b p-4 backdrop-blur-sm lg:sticky lg:top-0"
+            >
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 id="answer-sheet-heading" className="font-semibold">
@@ -1035,7 +1085,10 @@ function ActiveAttemptWorkspace({
                   {progress.answeredQuestions}/{progress.totalQuestions}
                 </span>
               </div>
-              <QuestionOverview progress={progress} />
+              <QuestionOverview
+                progress={progress}
+                onQuestionSelect={navigateToQuestion}
+              />
               {!answerPayloadIsValid && (
                 <p role="alert" className="text-destructive text-xs leading-5">
                   Có đáp án Phần III chưa hợp lệ. Hãy hoàn thành giá trị hoặc
