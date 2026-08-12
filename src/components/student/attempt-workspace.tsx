@@ -244,7 +244,7 @@ function PartOneSection({
                 <label
                   key={choice}
                   className={cn(
-                    "focus-within:border-ring focus-within:ring-ring/50 flex h-9 cursor-pointer items-center justify-center rounded-md border text-sm font-semibold transition-colors focus-within:ring-3",
+                    "focus-within:border-ring focus-within:ring-ring/50 relative flex h-9 cursor-pointer items-center justify-center rounded-md border text-sm font-semibold transition-colors focus-within:ring-3",
                     selectedAnswer === choice
                       ? "border-primary bg-primary text-primary-foreground"
                       : "border-input bg-background hover:border-primary",
@@ -348,7 +348,7 @@ function PartTwoSection({
                         <label
                           key={option.label}
                           className={cn(
-                            "focus-within:border-ring focus-within:ring-ring/50 flex h-8 min-w-16 cursor-pointer items-center justify-center rounded-md border px-2 text-xs font-medium focus-within:ring-3",
+                            "focus-within:border-ring focus-within:ring-ring/50 relative flex h-8 min-w-16 cursor-pointer items-center justify-center rounded-md border px-2 text-xs font-medium focus-within:ring-3",
                             answer[statement] === option.value
                               ? "border-primary bg-primary text-primary-foreground"
                               : "border-input bg-background hover:border-primary",

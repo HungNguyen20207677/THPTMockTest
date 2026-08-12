@@ -119,7 +119,7 @@ export function ShortAnswerBubbleInput({
                     <label
                       key={option}
                       className={cn(
-                        "flex size-8 cursor-pointer items-center justify-center rounded-full border text-xs font-semibold transition-colors",
+                        "relative flex size-8 cursor-pointer items-center justify-center rounded-full border text-xs font-semibold transition-colors",
                         selectedOption === option
                           ? "border-primary bg-primary text-primary-foreground"
                           : "border-input bg-background hover:border-primary",
