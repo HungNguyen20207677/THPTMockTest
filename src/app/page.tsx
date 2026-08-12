@@ -63,7 +63,11 @@ export default function HomePage() {
             }}
             className="mt-8 flex flex-wrap items-center gap-4"
           >
-            <Button asChild size="lg" className="px-6 animate-wiggle-cycle hover:animate-none active:animate-none">
+            <Button
+              asChild
+              size="lg"
+              className="px-6 animate-wiggle-cycle hover:animate-none active:animate-none"
+            >
               <Link href="/login">Đăng nhập</Link>
             </Button>
           </motion.div>
