@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import type { Types } from "mongoose";
+import type { ClientSession, Types } from "mongoose";
 
 import { EXAM_STATUS } from "@/lib/constants/exam";
 import { connectToDatabase } from "@/lib/db/mongoose";
@@ -368,6 +368,24 @@ export async function markExamAttemptsStarted(
   return result.matchedCount === 1;
 }
 
+export async function reserveExamForAttemptCreation(
+  examId: string,
+  session: ClientSession,
+): Promise<boolean> {
+  await prepareExamModel();
+
+  const result = await ExamModel.updateOne(
+    { _id: examId, status: EXAM_STATUS.PUBLISHED },
+    {
+      $set: { attemptsStarted: true },
+      $inc: { attemptOperationVersion: 1 },
+    },
+    { runValidators: true, session, timestamps: false },
+  ).exec();
+
+  return result.matchedCount === 1;
+}
+
 export async function findExamGradingRecordById(
   examId: string,
 ): Promise<ExamGradingPersistenceRecord | null> {
@@ -534,14 +552,14 @@ export async function updateExamRecordStatus(
 export async function deleteExamRecord(
   examId: string,
   expectedUpdatedAt: Date,
+  session: ClientSession,
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();
 
-  const exam = await ExamModel.findOneAndDelete({
-    _id: examId,
-    updatedAt: expectedUpdatedAt,
-    attemptsStarted: { $ne: true },
-  })
+  const exam = await ExamModel.findOneAndDelete(
+    { _id: examId, updatedAt: expectedUpdatedAt },
+    { session },
+  )
     .lean<ExamDocumentData>()
     .exec();
 

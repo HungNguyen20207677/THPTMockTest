@@ -19,6 +19,7 @@ export interface UserRecord {
   isActive: boolean;
   sessionVersion: number;
   attemptsStarted: boolean;
+  attemptOperationVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -69,6 +70,13 @@ const userSchema = new Schema<UserRecord>(
       type: Boolean,
       default: false,
       required: true,
+      select: false,
+    },
+    attemptOperationVersion: {
+      type: Number,
+      default: 0,
+      required: true,
+      min: 0,
       select: false,
     },
   },

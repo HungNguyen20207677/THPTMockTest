@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   hash: vi.fn(),
-  hasStudentExamAttemptRecords: vi.fn(),
   createUser: vi.fn(),
+  deleteExamAttemptRecordsByStudentId: vi.fn(),
+  deleteExamRecord: vi.fn(),
   deleteStudentUser: vi.fn(),
   findUserById: vi.fn(),
   findUserByUsername: vi.fn(),
@@ -11,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   updateStudentActiveStatus: vi.fn(),
   updateStudentDetails: vi.fn(),
   updateStudentPassword: vi.fn(),
+  transactionSession: { id: "transaction-session" },
+  withMongoTransaction: vi.fn(),
 }));
 
 vi.mock("bcryptjs", () => ({
@@ -18,7 +21,8 @@ vi.mock("bcryptjs", () => ({
 }));
 
 vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
-  hasStudentExamAttemptRecords: mocks.hasStudentExamAttemptRecords,
+  deleteExamAttemptRecordsByStudentId:
+    mocks.deleteExamAttemptRecordsByStudentId,
 }));
 
 vi.mock("@/lib/db/dao/user.dao", () => ({
@@ -30,6 +34,14 @@ vi.mock("@/lib/db/dao/user.dao", () => ({
   updateStudentActiveStatus: mocks.updateStudentActiveStatus,
   updateStudentDetails: mocks.updateStudentDetails,
   updateStudentPassword: mocks.updateStudentPassword,
+}));
+
+vi.mock("@/lib/db/dao/exam.dao", () => ({
+  deleteExamRecord: mocks.deleteExamRecord,
+}));
+
+vi.mock("@/lib/db/mongoose", () => ({
+  withMongoTransaction: mocks.withMongoTransaction,
 }));
 
 import { USER_ROLE } from "@/lib/constants/roles";
@@ -60,8 +72,10 @@ const studentActor: AppUser = {
 describe("student service", () => {
   beforeEach(() => {
     mocks.hash.mockReset();
-    mocks.hasStudentExamAttemptRecords.mockReset();
     mocks.createUser.mockReset();
+    mocks.deleteExamAttemptRecordsByStudentId.mockReset();
+    mocks.deleteExamAttemptRecordsByStudentId.mockResolvedValue(0);
+    mocks.deleteExamRecord.mockReset();
     mocks.deleteStudentUser.mockReset();
     mocks.findUserById.mockReset();
     mocks.findUserByUsername.mockReset();
@@ -71,7 +85,11 @@ describe("student service", () => {
     mocks.updateStudentPassword.mockReset();
 
     mocks.hash.mockResolvedValue("hashed-password");
-    mocks.hasStudentExamAttemptRecords.mockResolvedValue(false);
+    mocks.withMongoTransaction.mockReset();
+    mocks.withMongoTransaction.mockImplementation(
+      (operation: (session: unknown) => Promise<unknown>) =>
+        operation(mocks.transactionSession),
+    );
   });
 
   it("allows an ADMIN to create a STUDENT with a hashed password", async () => {
@@ -159,7 +177,7 @@ describe("student service", () => {
     expect(mocks.deleteStudentUser).not.toHaveBeenCalled();
   });
 
-  it("preserves result history by rejecting deletion after any attempt", async () => {
+  it("cascades a Student's ExamAttempts before deleting the account", async () => {
     mocks.findUserById.mockResolvedValue({
       id: "student-id",
       username: "student-one",
@@ -169,19 +187,25 @@ describe("student service", () => {
       createdAt,
       updatedAt,
     });
-    mocks.hasStudentExamAttemptRecords.mockResolvedValue(true);
+    mocks.deleteExamAttemptRecordsByStudentId.mockResolvedValue(2);
+    mocks.deleteStudentUser.mockResolvedValue(true);
 
-    await expect(deleteStudent(admin, "student-id")).rejects.toMatchObject({
-      code: "STUDENT_HAS_ATTEMPTS",
-      statusCode: 409,
-    });
-    expect(mocks.hasStudentExamAttemptRecords).toHaveBeenCalledWith(
+    await deleteStudent(admin, "student-id");
+
+    expect(mocks.deleteExamAttemptRecordsByStudentId).toHaveBeenCalledWith(
       "student-id",
+      mocks.transactionSession,
     );
-    expect(mocks.deleteStudentUser).not.toHaveBeenCalled();
+    expect(mocks.deleteStudentUser).toHaveBeenCalledWith(
+      "student-id",
+      mocks.transactionSession,
+    );
+    expect(
+      mocks.deleteExamAttemptRecordsByStudentId.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.deleteStudentUser.mock.invocationCallOrder[0]);
   });
 
-  it("rejects deletion when an attempt start reserved the student concurrently", async () => {
+  it("does not change Exams when deleting a Student", async () => {
     mocks.findUserById.mockResolvedValue({
       id: "student-id",
       username: "student-one",
@@ -191,12 +215,53 @@ describe("student service", () => {
       createdAt,
       updatedAt,
     });
-    mocks.hasStudentExamAttemptRecords.mockResolvedValue(false);
-    mocks.deleteStudentUser.mockResolvedValue(false);
+    mocks.deleteStudentUser.mockResolvedValue(true);
 
-    await expect(deleteStudent(admin, "student-id")).rejects.toMatchObject({
-      code: "STUDENT_HAS_ATTEMPTS",
-      statusCode: 409,
+    await deleteStudent(admin, "student-id");
+
+    expect(mocks.deleteExamRecord).not.toHaveBeenCalled();
+    expect(mocks.withMongoTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("does not leave partially deleted Student data when the transaction fails", async () => {
+    const databaseState = {
+      studentExists: true,
+      attemptIds: ["in-progress-attempt", "submitted-attempt"],
+    };
+    mocks.findUserById.mockResolvedValue({
+      id: "student-id",
+      username: "student-one",
+      fullName: "Nguyen Van An",
+      role: USER_ROLE.STUDENT,
+      isActive: true,
+      createdAt,
+      updatedAt,
+    });
+    mocks.deleteExamAttemptRecordsByStudentId.mockImplementation(async () => {
+      databaseState.attemptIds = [];
+      return 2;
+    });
+    mocks.deleteStudentUser.mockRejectedValue(new Error("User delete failed"));
+    mocks.withMongoTransaction.mockImplementation(
+      async (operation: (session: unknown) => Promise<unknown>) => {
+        const snapshot = structuredClone(databaseState);
+
+        try {
+          return await operation(mocks.transactionSession);
+        } catch (error) {
+          databaseState.studentExists = snapshot.studentExists;
+          databaseState.attemptIds = snapshot.attemptIds;
+          throw error;
+        }
+      },
+    );
+
+    await expect(deleteStudent(admin, "student-id")).rejects.toThrow(
+      "User delete failed",
+    );
+    expect(databaseState).toEqual({
+      studentExists: true,
+      attemptIds: ["in-progress-attempt", "submitted-attempt"],
     });
   });
 });

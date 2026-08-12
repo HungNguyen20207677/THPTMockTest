@@ -33,16 +33,6 @@ export class StudentNotFoundError extends AppError {
   }
 }
 
-export class StudentHasAttemptsError extends AppError {
-  constructor() {
-    super(
-      "Học sinh đã có lượt làm bài nên không thể xóa. Hãy khóa tài khoản để giữ lại lịch sử kết quả.",
-      "STUDENT_HAS_ATTEMPTS",
-      409,
-    );
-  }
-}
-
 export class AdminAlreadyExistsError extends AppError {
   constructor() {
     super("Tài khoản quản trị ban đầu đã tồn tại.", "ADMIN_EXISTS", 409);
@@ -168,16 +158,6 @@ export class ExamContentLockedError extends AppError {
     super(
       "Đề thi đã có lượt làm nên không thể thay đổi tệp PDF hoặc đáp án.",
       "EXAM_CONTENT_LOCKED",
-      409,
-    );
-  }
-}
-
-export class ExamHasAttemptsError extends AppError {
-  constructor() {
-    super(
-      "Đề thi đã có lượt làm nên không thể xóa. Hãy chuyển đề sang trạng thái Đã ẩn.",
-      "EXAM_HAS_ATTEMPTS",
       409,
     );
   }

@@ -17,6 +17,10 @@ const mocks = vi.hoisted(() => ({
   listStudentExamRecordsByIds: vi.fn(),
   markExamAttemptsStarted: vi.fn(),
   markStudentAttemptsStarted: vi.fn(),
+  reserveExamForAttemptCreation: vi.fn(),
+  reserveStudentForAttemptCreation: vi.fn(),
+  transactionSession: { id: "transaction-session" },
+  withMongoTransaction: vi.fn(),
 }));
 
 vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
@@ -40,10 +44,16 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
   listPublishedStudentExamRecords: mocks.listPublishedStudentExamRecords,
   listStudentExamRecordsByIds: mocks.listStudentExamRecordsByIds,
   markExamAttemptsStarted: mocks.markExamAttemptsStarted,
+  reserveExamForAttemptCreation: mocks.reserveExamForAttemptCreation,
 }));
 
 vi.mock("@/lib/db/dao/user.dao", () => ({
   markStudentAttemptsStarted: mocks.markStudentAttemptsStarted,
+  reserveStudentForAttemptCreation: mocks.reserveStudentForAttemptCreation,
+}));
+
+vi.mock("@/lib/db/mongoose", () => ({
+  withMongoTransaction: mocks.withMongoTransaction,
 }));
 
 import {
@@ -177,7 +187,9 @@ describe("ExamAttempt service", () => {
     vi.setSystemTime(serverNow);
 
     for (const mock of Object.values(mocks)) {
-      mock.mockReset();
+      if (vi.isMockFunction(mock)) {
+        mock.mockReset();
+      }
     }
 
     mocks.findStudentExamRecordById.mockResolvedValue(createStudentExam());
@@ -187,6 +199,12 @@ describe("ExamAttempt service", () => {
     mocks.findExamAttemptRecordById.mockResolvedValue(null);
     mocks.markExamAttemptsStarted.mockResolvedValue(true);
     mocks.markStudentAttemptsStarted.mockResolvedValue(true);
+    mocks.reserveExamForAttemptCreation.mockResolvedValue(true);
+    mocks.reserveStudentForAttemptCreation.mockResolvedValue(true);
+    mocks.withMongoTransaction.mockImplementation(
+      (operation: (session: unknown) => Promise<unknown>) =>
+        operation(mocks.transactionSession),
+    );
     mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(null);
     mocks.setOwnedTerminalExamAttemptGradingIfMissing.mockResolvedValue(null);
     mocks.listPublishedStudentExamRecords.mockResolvedValue([]);
@@ -213,16 +231,27 @@ describe("ExamAttempt service", () => {
     expect(
       mocks.markStudentAttemptsStarted.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.createExamAttemptRecord.mock.invocationCallOrder[0]);
-    expect(mocks.createExamAttemptRecord).toHaveBeenCalledWith({
-      examId: "exam-id",
-      studentId: student.id,
-      attemptNumber: 1,
-      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-      startedAt: serverNow,
-      expiresAt: new Date(
-        serverNow.getTime() + EXAM_STRUCTURE.durationMinutes * 60 * 1000,
-      ),
-    });
+    expect(mocks.createExamAttemptRecord).toHaveBeenCalledWith(
+      {
+        examId: "exam-id",
+        studentId: student.id,
+        attemptNumber: 1,
+        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+        startedAt: serverNow,
+        expiresAt: new Date(
+          serverNow.getTime() + EXAM_STRUCTURE.durationMinutes * 60 * 1000,
+        ),
+      },
+      mocks.transactionSession,
+    );
+    expect(mocks.reserveExamForAttemptCreation).toHaveBeenCalledWith(
+      "exam-id",
+      mocks.transactionSession,
+    );
+    expect(mocks.reserveStudentForAttemptCreation).toHaveBeenCalledWith(
+      student.id,
+      mocks.transactionSession,
+    );
     expect(result.attempt).toMatchObject({
       id: "attempt-1",
       attemptNumber: 1,
@@ -256,6 +285,25 @@ describe("ExamAttempt service", () => {
 
   it("does not create an attempt after the student account is deactivated", async () => {
     mocks.markStudentAttemptsStarted.mockResolvedValue(false);
+
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
+  it("does not create an orphan attempt when the Exam is deleted concurrently", async () => {
+    mocks.reserveExamForAttemptCreation.mockResolvedValue(false);
+
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code: "EXAM_NOT_PUBLISHED", statusCode: 409 });
+    expect(mocks.reserveStudentForAttemptCreation).not.toHaveBeenCalled();
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
+  it("does not create an orphan attempt when the Student is deleted concurrently", async () => {
+    mocks.reserveStudentForAttemptCreation.mockResolvedValue(false);
 
     await expect(
       startOrResumeExamAttempt(student, "exam-id"),
@@ -304,6 +352,7 @@ describe("ExamAttempt service", () => {
     expect(result.attempt.attemptNumber).toBe(2);
     expect(mocks.createExamAttemptRecord).toHaveBeenCalledWith(
       expect.objectContaining({ attemptNumber: 2 }),
+      mocks.transactionSession,
     );
     expect(oldAttempt.grading).toEqual(oldGrading);
   });

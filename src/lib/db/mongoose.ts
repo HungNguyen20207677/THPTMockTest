@@ -1,6 +1,6 @@
 import "server-only";
 
-import mongoose from "mongoose";
+import mongoose, { type ClientSession } from "mongoose";
 
 import { getMongoDbUri } from "@/lib/env/server";
 
@@ -40,6 +40,19 @@ export async function connectToDatabase(): Promise<typeof mongoose> {
 
   cache.connection = await cache.promise;
   return cache.connection;
+}
+
+export async function withMongoTransaction<T>(
+  operation: (session: ClientSession) => Promise<T>,
+): Promise<T> {
+  const database = await connectToDatabase();
+  const session = await database.startSession();
+
+  try {
+    return await session.withTransaction(() => operation(session));
+  } finally {
+    await session.endSession();
+  }
 }
 
 export async function disconnectFromDatabase(): Promise<void> {

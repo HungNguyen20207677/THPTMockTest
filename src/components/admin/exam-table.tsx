@@ -122,23 +122,13 @@ export function ExamTable({
               type="button"
               size="sm"
               variant="destructive"
-              disabled={isBusy || row.original.hasAttempts}
-              title={
-                row.original.hasAttempts
-                  ? "Đề đã có lượt làm. Hãy chuyển đề sang trạng thái Đã ẩn."
-                  : undefined
-              }
+              disabled={isBusy}
               aria-label={`Xóa đề thi ${row.original.title}`}
               onClick={(event) => onDelete(row.original, event.currentTarget)}
             >
               Xóa
             </Button>
           </div>
-          {row.original.hasAttempts && (
-            <p className="text-muted-foreground text-xs">
-              Không thể xóa; có thể chuyển sang Đã ẩn.
-            </p>
-          )}
         </div>
       ),
     }),

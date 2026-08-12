@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Types } from "mongoose";
+import type { ClientSession, Types } from "mongoose";
 
 import { USER_ROLE, type UserRole } from "@/lib/constants/roles";
 import { connectToDatabase } from "@/lib/db/mongoose";
@@ -281,14 +281,38 @@ export async function markStudentAttemptsStarted(
   return result.matchedCount === 1;
 }
 
-export async function deleteStudentUser(studentId: string): Promise<boolean> {
+export async function reserveStudentForAttemptCreation(
+  studentId: string,
+  session: ClientSession,
+): Promise<boolean> {
   await prepareUserModel();
 
-  const result = await UserModel.deleteOne({
-    _id: studentId,
-    role: USER_ROLE.STUDENT,
-    attemptsStarted: { $ne: true },
-  }).exec();
+  const result = await UserModel.updateOne(
+    {
+      _id: studentId,
+      role: USER_ROLE.STUDENT,
+      isActive: true,
+    },
+    {
+      $set: { attemptsStarted: true },
+      $inc: { attemptOperationVersion: 1 },
+    },
+    { runValidators: true, session, timestamps: false },
+  ).exec();
+
+  return result.matchedCount === 1;
+}
+
+export async function deleteStudentUser(
+  studentId: string,
+  session: ClientSession,
+): Promise<boolean> {
+  await prepareUserModel();
+
+  const result = await UserModel.deleteOne(
+    { _id: studentId, role: USER_ROLE.STUDENT },
+    { session },
+  ).exec();
 
   return result.deletedCount === 1;
 }

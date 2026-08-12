@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Types } from "mongoose";
+import type { ClientSession, Types } from "mongoose";
 
 import {
   EXAM_ATTEMPT_STATUS,
@@ -249,10 +249,12 @@ export async function listAllExamAttemptRecordsForStudent(
 
 export async function createExamAttemptRecord(
   input: CreateExamAttemptRecordInput,
+  session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord> {
   await prepareExamAttemptModel();
 
-  const attempt = await ExamAttemptModel.create(input);
+  const attempt = new ExamAttemptModel(input);
+  await attempt.save({ session });
   return toExamAttemptRecord(attempt.toObject() as ExamAttemptDocumentData);
 }
 
@@ -381,11 +383,22 @@ export async function hasExamAttemptRecords(examId: string): Promise<boolean> {
   return Boolean(await ExamAttemptModel.exists({ examId }));
 }
 
-export async function hasStudentExamAttemptRecords(
-  studentId: string,
-): Promise<boolean> {
+export async function deleteExamAttemptRecordsByExamId(
+  examId: string,
+  session: ClientSession,
+): Promise<number> {
   await prepareExamAttemptModel();
-  return Boolean(await ExamAttemptModel.exists({ studentId }));
+  const result = await ExamAttemptModel.deleteMany({ examId }, { session });
+  return result.deletedCount;
+}
+
+export async function deleteExamAttemptRecordsByStudentId(
+  studentId: string,
+  session: ClientSession,
+): Promise<number> {
+  await prepareExamAttemptModel();
+  const result = await ExamAttemptModel.deleteMany({ studentId }, { session });
+  return result.deletedCount;
 }
 
 export async function listExpiredExamAttemptRecords(

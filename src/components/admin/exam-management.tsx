@@ -189,8 +189,11 @@ export function ExamManagement() {
             <AlertDialogHeader>
               <AlertDialogTitle>Xác nhận xóa đề thi</AlertDialogTitle>
               <AlertDialogDescription>
-                Xóa vĩnh viễn “{deleteTarget.title}” và tệp PDF đính kèm? Thao
-                tác này không thể hoàn tác.
+                Xóa vĩnh viễn “{deleteTarget.title}”, toàn bộ lượt làm bài, câu
+                trả lời, điểm số, dữ liệu chấm bài, lịch sử, thống kê liên quan
+                và tệp PDF đính kèm? Tất cả dữ liệu này sẽ bị xóa vĩnh viễn và
+                không thể khôi phục. Nếu chỉ muốn ngừng hiển thị đề, hãy chuyển
+                đề sang trạng thái Đã ẩn.
               </AlertDialogDescription>
             </AlertDialogHeader>
             {actionError && (

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   deleteExamPdf: vi.fn(),
   acquireExamPdfOperationLease: vi.fn(),
   createExamRecord: vi.fn(),
+  deleteExamAttemptRecordsByExamId: vi.fn(),
   deleteExamRecord: vi.fn(),
   findExamRecordById: vi.fn(),
   findExamRecordByPdfPublicId: vi.fn(),
@@ -19,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   updateExamRecordStatus: vi.fn(),
   findExamIdsWithAttemptRecords: vi.fn(),
   hasExamAttemptRecords: vi.fn(),
+  transactionSession: { id: "transaction-session" },
+  withMongoTransaction: vi.fn(),
 }));
 
 vi.mock("@/lib/cloudinary/exam-pdf", () => ({
@@ -45,8 +48,13 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
 }));
 
 vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
+  deleteExamAttemptRecordsByExamId: mocks.deleteExamAttemptRecordsByExamId,
   findExamIdsWithAttemptRecords: mocks.findExamIdsWithAttemptRecords,
   hasExamAttemptRecords: mocks.hasExamAttemptRecords,
+}));
+
+vi.mock("@/lib/db/mongoose", () => ({
+  withMongoTransaction: mocks.withMongoTransaction,
 }));
 
 import { EXAM_STATUS, EXAM_STRUCTURE } from "@/lib/constants/exam";
@@ -155,6 +163,8 @@ describe("exam service", () => {
       Promise.resolve({ publicId, token: `lease-${publicId}` }),
     );
     mocks.createExamRecord.mockReset();
+    mocks.deleteExamAttemptRecordsByExamId.mockReset();
+    mocks.deleteExamAttemptRecordsByExamId.mockResolvedValue(0);
     mocks.deleteExamRecord.mockReset();
     mocks.findExamRecordById.mockReset();
     mocks.findExamRecordByPdfPublicId.mockReset();
@@ -169,6 +179,11 @@ describe("exam service", () => {
     mocks.findExamIdsWithAttemptRecords.mockResolvedValue(new Set<string>());
     mocks.hasExamAttemptRecords.mockReset();
     mocks.hasExamAttemptRecords.mockResolvedValue(false);
+    mocks.withMongoTransaction.mockReset();
+    mocks.withMongoTransaction.mockImplementation(
+      (operation: (session: unknown) => Promise<unknown>) =>
+        operation(mocks.transactionSession),
+    );
   });
 
   it("publishes a complete exam", async () => {
@@ -417,9 +432,10 @@ describe("exam service", () => {
     expect(mocks.releaseExamPdfOperationLease).not.toHaveBeenCalled();
   });
 
-  it("holds the stored PDF lease through Exam deletion and asset cleanup", async () => {
-    const currentExam = createStoredExam();
+  it("cascades ExamAttempts before deleting an Exam in one transaction", async () => {
+    const currentExam = createStoredExam({ attemptsStarted: true });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.deleteExamAttemptRecordsByExamId.mockResolvedValue(3);
     mocks.deleteExamRecord.mockResolvedValue(currentExam);
     mocks.deleteExamPdf.mockResolvedValue(undefined);
 
@@ -431,6 +447,21 @@ describe("exam service", () => {
 
     expect(mocks.acquireExamPdfOperationLease).toHaveBeenCalledWith(
       oldPdf.publicId,
+    );
+    expect(mocks.deleteExamAttemptRecordsByExamId).toHaveBeenCalledWith(
+      currentExam.id,
+      mocks.transactionSession,
+    );
+    expect(mocks.deleteExamRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      currentExam.updatedAt,
+      mocks.transactionSession,
+    );
+    expect(
+      mocks.deleteExamAttemptRecordsByExamId.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.deleteExamRecord.mock.invocationCallOrder[0]);
+    expect(mocks.deleteExamRecord.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deleteExamPdf.mock.invocationCallOrder[0],
     );
     expect(mocks.deleteExamPdf).toHaveBeenCalledWith(oldPdf.publicId);
     expect(mocks.deleteExamPdf.mock.invocationCallOrder[0]).toBeLessThan(
@@ -505,30 +536,90 @@ describe("exam service", () => {
     expect(mocks.updateExamMetadataRecord).not.toHaveBeenCalled();
   });
 
-  it("rejects hard deletion after the Exam has attempts", async () => {
-    const currentExam = createStoredExam();
+  it("does not leave partially deleted Exam data when the transaction fails", async () => {
+    const currentExam = createStoredExam({ attemptsStarted: true });
+    const databaseState = {
+      examExists: true,
+      attemptIds: ["in-progress-attempt", "submitted-attempt"],
+    };
     mocks.findExamRecordById.mockResolvedValue(currentExam);
-    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+    mocks.deleteExamAttemptRecordsByExamId.mockImplementation(async () => {
+      databaseState.attemptIds = [];
+      return 2;
+    });
+    mocks.deleteExamRecord.mockRejectedValue(new Error("Exam delete failed"));
+    mocks.withMongoTransaction.mockImplementation(
+      async (operation: (session: unknown) => Promise<unknown>) => {
+        const snapshot = structuredClone(databaseState);
+
+        try {
+          return await operation(mocks.transactionSession);
+        } catch (error) {
+          databaseState.examExists = snapshot.examExists;
+          databaseState.attemptIds = snapshot.attemptIds;
+          throw error;
+        }
+      },
+    );
 
     await expect(
       deleteExam(admin, currentExam.id, currentExam.updatedAt.toISOString()),
-    ).rejects.toMatchObject({
-      code: "EXAM_HAS_ATTEMPTS",
-      statusCode: 409,
+    ).rejects.toThrow("Exam delete failed");
+    expect(databaseState).toEqual({
+      examExists: true,
+      attemptIds: ["in-progress-attempt", "submitted-attempt"],
     });
-    expect(mocks.deleteExamRecord).not.toHaveBeenCalled();
     expect(mocks.deleteExamPdf).not.toHaveBeenCalled();
   });
 
-  it("rejects hard deletion while the first attempt is being created", async () => {
-    const currentExam = createStoredExam({ attemptsStarted: true });
+  it("cleans up the Exam PDF only after the database transaction commits", async () => {
+    const currentExam = createStoredExam();
+    let finishCommit: (() => void) | undefined;
+    const commit = new Promise<void>((resolve) => {
+      finishCommit = resolve;
+    });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.deleteExamRecord.mockResolvedValue(currentExam);
+    mocks.deleteExamPdf.mockResolvedValue(undefined);
+    mocks.withMongoTransaction.mockImplementation(
+      async (operation: (session: unknown) => Promise<unknown>) => {
+        const result = await operation(mocks.transactionSession);
+        await commit;
+        return result;
+      },
+    );
+
+    const deletion = deleteExam(
+      admin,
+      currentExam.id,
+      currentExam.updatedAt.toISOString(),
+    );
+
+    await vi.waitFor(() => expect(mocks.deleteExamRecord).toHaveBeenCalled());
+    expect(mocks.deleteExamPdf).not.toHaveBeenCalled();
+    finishCommit?.();
+    await deletion;
+    expect(mocks.deleteExamPdf).toHaveBeenCalledWith(oldPdf.publicId);
+  });
+
+  it("keeps the committed Exam deletion when Cloudinary cleanup fails", async () => {
+    const currentExam = createStoredExam();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.deleteExamRecord.mockResolvedValue(currentExam);
+    mocks.deleteExamPdf.mockRejectedValue(new Error("Cloudinary unavailable"));
 
     await expect(
       deleteExam(admin, currentExam.id, currentExam.updatedAt.toISOString()),
-    ).rejects.toMatchObject({ code: "EXAM_HAS_ATTEMPTS" });
-    expect(mocks.hasExamAttemptRecords).not.toHaveBeenCalled();
-    expect(mocks.deleteExamRecord).not.toHaveBeenCalled();
+    ).resolves.toBeUndefined();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Could not delete a Cloudinary PDF.",
+      { publicId: oldPdf.publicId, errorName: "Error" },
+    );
+    expect(mocks.releaseExamPdfOperationLease).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("updates only metadata and settings after the Exam has attempts", async () => {

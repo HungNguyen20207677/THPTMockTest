@@ -25,6 +25,7 @@ export interface ExamRecord {
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
   attemptsStarted: boolean;
+  attemptOperationVersion: number;
   createdBy: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -123,6 +124,13 @@ const examSchema = new Schema<ExamRecord>(
     settings: { type: settingsSchema, required: true },
     answerKey: { type: answerKeySchema, required: true },
     attemptsStarted: { type: Boolean, required: true, default: false },
+    attemptOperationVersion: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0,
+      select: false,
+    },
     createdBy: {
       type: Schema.Types.ObjectId,
       ref: "User",

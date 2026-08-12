@@ -11,6 +11,7 @@ import {
 import { EXAM_STATUS } from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
+  deleteExamAttemptRecordsByExamId,
   findExamIdsWithAttemptRecords,
   hasExamAttemptRecords,
 } from "@/lib/db/dao/exam-attempt.dao";
@@ -29,10 +30,10 @@ import {
   type ExamPersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
+import { withMongoTransaction } from "@/lib/db/mongoose";
 import {
   ExamConflictError,
   ExamContentLockedError,
-  ExamHasAttemptsError,
   ExamNotFoundError,
   ExamPdfAlreadyAttachedError,
   ExamPdfOperationConflictError,
@@ -456,18 +457,23 @@ export async function deleteExam(
     throw new ExamConflictError();
   }
 
-  if (currentExam.attemptsStarted || (await hasExamAttemptRecords(examId))) {
-    throw new ExamHasAttemptsError();
-  }
-
   const leases = await acquirePdfOperationLeases([currentExam.pdf.publicId]);
 
   try {
-    const deletedExam = await deleteExamRecord(examId, currentExam.updatedAt);
+    const deletedExam = await withMongoTransaction(async (session) => {
+      await deleteExamAttemptRecordsByExamId(examId, session);
+      const deleted = await deleteExamRecord(
+        examId,
+        currentExam.updatedAt,
+        session,
+      );
 
-    if (!deletedExam) {
-      throw new ExamConflictError();
-    }
+      if (!deleted) {
+        throw new ExamConflictError();
+      }
+
+      return deleted;
+    });
 
     await deletePdfBestEffort(deletedExam.pdf.publicId);
   } finally {

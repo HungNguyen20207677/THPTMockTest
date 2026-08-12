@@ -8,7 +8,7 @@ grading, result-history, and reporting flows.
 
 - Node.js 22.x (22.13 or newer)
 - npm
-- MongoDB
+- MongoDB replica set or sharded cluster (required for transactions)
 - Cloudinary account
 
 ## Local setup

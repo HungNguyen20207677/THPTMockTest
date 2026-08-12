@@ -26,11 +26,16 @@ import {
   listPublishedStudentExamRecords,
   listStudentExamRecordsByIds,
   markExamAttemptsStarted,
+  reserveExamForAttemptCreation,
   type ExamGradingPersistenceRecord,
   type StudentExamWorkspacePersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
-import { markStudentAttemptsStarted } from "@/lib/db/dao/user.dao";
+import {
+  markStudentAttemptsStarted,
+  reserveStudentForAttemptCreation,
+} from "@/lib/db/dao/user.dao";
+import { withMongoTransaction } from "@/lib/db/mongoose";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import {
   gradeAttemptAnswers,
@@ -277,13 +282,26 @@ export async function startOrResumeExamAttempt(
     const expiresAt = new Date(startedAt.getTime() + ATTEMPT_DURATION_MS);
 
     try {
-      const attempt = await createExamAttemptRecord({
-        examId,
-        studentId: actor.id,
-        attemptNumber: (latestAttempt?.attemptNumber ?? 0) + 1,
-        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-        startedAt,
-        expiresAt,
+      const attempt = await withMongoTransaction(async (session) => {
+        if (!(await reserveExamForAttemptCreation(examId, session))) {
+          throw new ExamNotPublishedError();
+        }
+
+        if (!(await reserveStudentForAttemptCreation(actor.id, session))) {
+          throw new ForbiddenError("Tài khoản học sinh không còn hoạt động.");
+        }
+
+        return createExamAttemptRecord(
+          {
+            examId,
+            studentId: actor.id,
+            attemptNumber: (latestAttempt?.attemptNumber ?? 0) + 1,
+            status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+            startedAt,
+            expiresAt,
+          },
+          session,
+        );
       });
 
       return toFreshAttemptContext(exam, attempt);

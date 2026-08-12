@@ -227,9 +227,10 @@ export function StudentManagement() {
               <AlertDialogTitle>Xác nhận xóa tài khoản</AlertDialogTitle>
               <AlertDialogDescription>
                 Xóa vĩnh viễn tài khoản {deleteTarget.fullName} (@
-                {deleteTarget.username})? Thao tác này không thể hoàn tác. Tài
-                khoản đã có lượt làm bài sẽ không thể xóa; hãy khóa tài khoản để
-                giữ lại lịch sử kết quả.
+                {deleteTarget.username}) cùng toàn bộ lượt làm bài, lịch sử và
+                kết quả của học sinh này? Tài khoản và tất cả dữ liệu liên quan
+                sẽ bị xóa vĩnh viễn, không thể khôi phục. Nếu chỉ muốn ngăn đăng
+                nhập và giữ lại dữ liệu, hãy khóa tài khoản.
               </AlertDialogDescription>
             </AlertDialogHeader>
             {actionError && (
