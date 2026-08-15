@@ -193,8 +193,8 @@ export function StudentExamList() {
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {startTarget.state === STUDENT_EXAM_STATE.IN_PROGRESS
-                  ? "Thời gian làm bài vẫn đang tiếp tục. Sau khi xác nhận, trình duyệt sẽ thử mở chế độ toàn màn hình và đưa bạn trở lại bài thi."
-                  : "Thời gian làm bài là 90 phút. Sau khi xác nhận, thời gian bắt đầu tính ngay và trình duyệt sẽ thử mở chế độ toàn màn hình. Tải lại trang hoặc đóng trình duyệt không làm dừng thời gian."}
+                  ? "Thời gian làm bài vẫn đang tiếp tục. Sau khi xác nhận, trình duyệt sẽ thử mở chế độ toàn màn hình và đưa bạn trở lại bài thi. Thoát bằng Esc hoặc điều khiển của trình duyệt sẽ tự động nộp bài ngay."
+                  : "Thời gian làm bài là 90 phút. Sau khi xác nhận, thời gian bắt đầu tính ngay và trình duyệt sẽ thử mở chế độ toàn màn hình. Tải lại trang hoặc đóng trình duyệt không làm dừng thời gian. Thoát bằng Esc hoặc điều khiển của trình duyệt sẽ tự động nộp bài ngay."}
               </AlertDialogDescription>
             </AlertDialogHeader>
             {startError && (

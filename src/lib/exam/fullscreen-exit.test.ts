@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   advanceExamFullscreenTracking,
   createExamFullscreenTrackingState,
-  EXAM_FULLSCREEN_EXIT_ACTION,
-  resolveExamFullscreenExitAction,
 } from "@/lib/exam/fullscreen-exit";
 
 describe("exam fullscreen exit tracking", () => {
@@ -25,7 +23,7 @@ describe("exam fullscreen exit tracking", () => {
     expect(transition.shouldHandleExit).toBe(false);
   });
 
-  it("reports exactly one fullscreen to non-fullscreen transition", () => {
+  it("reports exactly one exit for immediate fallback submission", () => {
     let state = createExamFullscreenTrackingState();
     state = advanceExamFullscreenTracking(state, true).state;
     const exit = advanceExamFullscreenTracking(state, false);
@@ -33,20 +31,5 @@ describe("exam fullscreen exit tracking", () => {
 
     expect(exit.shouldHandleExit).toBe(true);
     expect(duplicateExit.shouldHandleExit).toBe(false);
-  });
-
-  it("requests confirmation instead of silently submitting an unconfirmed exit", () => {
-    expect(
-      resolveExamFullscreenExitAction({
-        canFinalize: true,
-        isConfirmedExit: false,
-      }),
-    ).toBe(EXAM_FULLSCREEN_EXIT_ACTION.REQUEST_CONFIRMATION);
-    expect(
-      resolveExamFullscreenExitAction({
-        canFinalize: true,
-        isConfirmedExit: true,
-      }),
-    ).toBe(EXAM_FULLSCREEN_EXIT_ACTION.SUBMIT);
   });
 });

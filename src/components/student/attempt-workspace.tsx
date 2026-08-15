@@ -47,8 +47,6 @@ import {
 import {
   advanceExamFullscreenTracking,
   createExamFullscreenTrackingState,
-  EXAM_FULLSCREEN_EXIT_ACTION,
-  resolveExamFullscreenExitAction,
 } from "@/lib/exam/fullscreen-exit";
 import {
   exitDocumentFullscreen,
@@ -84,7 +82,6 @@ const FINAL_AUTOSAVE_WAIT_MS = 2000;
 const PDF_LOAD_TIMEOUT_MS = 15_000;
 
 type ExamEnvironmentWarning = "FULLSCREEN_SUBMIT" | "PAGE_HIDDEN";
-type FullscreenExitConfirmation = "BEFORE_EXIT" | "AFTER_EXIT";
 
 interface AttemptWorkspaceProps {
   examId: string;
@@ -642,18 +639,18 @@ function ActiveAttemptWorkspace({
   const [fullscreenSubmissionError, setFullscreenSubmissionError] = useState<
     string | null
   >(null);
-  const [fullscreenExitConfirmation, setFullscreenExitConfirmation] =
-    useState<FullscreenExitConfirmation | null>(null);
+  const [isFullscreenExitDialogOpen, setIsFullscreenExitDialogOpen] =
+    useState(false);
   const [isChangingFullscreenForExit, setIsChangingFullscreenForExit] =
     useState(false);
   const autoSubmitInFlightRef = useRef(false);
   const finalSubmissionInFlightRef = useRef(false);
-  const confirmedFullscreenExitRef = useRef(false);
   const expirationStartedRef = useRef(false);
   const isMountedRef = useRef(true);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const fullscreenExitCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const environmentDialogDescriptionRef = useRef<HTMLParagraphElement>(null);
   const answerSheetRef = useRef<HTMLElement>(null);
   const answerSheetHeaderRef = useRef<HTMLDivElement>(null);
   const fullscreenTrackingRef = useRef(createExamFullscreenTrackingState());
@@ -733,7 +730,7 @@ function ActiveAttemptWorkspace({
     setFullscreenError(null);
 
     if (isFullscreen) {
-      setFullscreenExitConfirmation("BEFORE_EXIT");
+      setIsFullscreenExitDialogOpen(true);
       return;
     }
 
@@ -748,28 +745,21 @@ function ActiveAttemptWorkspace({
 
   async function handleConfirmedFullscreenExit() {
     if (isChangingFullscreenForExit || expirationStartedRef.current) {
-      setFullscreenExitConfirmation(null);
+      setIsFullscreenExitDialogOpen(false);
       return;
     }
 
     setFullscreenError(null);
 
-    if (
-      fullscreenExitConfirmation === "AFTER_EXIT" ||
-      !isDocumentElementFullscreen()
-    ) {
-      confirmedFullscreenExitRef.current = false;
-      setFullscreenExitConfirmation(null);
-      beginFullscreenExitSubmission(answers);
+    if (!isDocumentElementFullscreen()) {
+      setIsFullscreenExitDialogOpen(false);
       return;
     }
 
-    confirmedFullscreenExitRef.current = true;
     setIsChangingFullscreenForExit(true);
 
     try {
       if (!(await exitDocumentFullscreen())) {
-        confirmedFullscreenExitRef.current = false;
         setFullscreenError(
           "Trình duyệt không thể thoát chế độ toàn màn hình. Bài thi chưa được nộp.",
         );
@@ -779,38 +769,9 @@ function ActiveAttemptWorkspace({
     }
   }
 
-  async function handleCancelFullscreenExit() {
-    if (isChangingFullscreenForExit || expirationStartedRef.current) {
-      setFullscreenExitConfirmation(null);
-      return;
-    }
-
+  function handleCancelFullscreenExit() {
     setFullscreenError(null);
-
-    if (
-      fullscreenExitConfirmation === "BEFORE_EXIT" &&
-      isDocumentElementFullscreen()
-    ) {
-      setFullscreenExitConfirmation(null);
-      return;
-    }
-
-    setIsChangingFullscreenForExit(true);
-
-    try {
-      if (await requestDocumentFullscreen()) {
-        confirmedFullscreenExitRef.current = false;
-        fullscreenTrackingRef.current = createExamFullscreenTrackingState(true);
-        setFullscreenExitConfirmation(null);
-        setIsFullscreen(true);
-      } else {
-        setFullscreenError(
-          "Trình duyệt không thể quay lại chế độ toàn màn hình. Bài thi chưa được nộp.",
-        );
-      }
-    } finally {
-      setIsChangingFullscreenForExit(false);
-    }
+    setIsFullscreenExitDialogOpen(false);
   }
 
   async function handleReturnToFullscreen() {
@@ -889,36 +850,23 @@ function ActiveAttemptWorkspace({
     fullscreenExitAnswersRef.current = answerSnapshot;
     setIsSubmitting(true);
     setIsSubmitDialogOpen(false);
-    setFullscreenExitConfirmation(null);
+    setIsFullscreenExitDialogOpen(false);
     setEnvironmentWarning("FULLSCREEN_SUBMIT");
     setFullscreenSubmissionError(null);
     void submitFullscreenExitAnswers(answerSnapshot);
   }
 
   const handleFullscreenExitTransition = useEffectEvent(() => {
-    const action = resolveExamFullscreenExitAction({
-      canFinalize:
-        context.attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
-        context.canEditAnswers &&
-        !expirationStartedRef.current &&
-        !finalSubmissionInFlightRef.current,
-      isConfirmedExit: confirmedFullscreenExitRef.current,
-    });
-    confirmedFullscreenExitRef.current = false;
-
-    if (action === EXAM_FULLSCREEN_EXIT_ACTION.IGNORE) {
+    if (
+      context.attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS ||
+      !context.canEditAnswers ||
+      expirationStartedRef.current ||
+      finalSubmissionInFlightRef.current
+    ) {
       return;
     }
 
-    if (action === EXAM_FULLSCREEN_EXIT_ACTION.SUBMIT) {
-      beginFullscreenExitSubmission(answers);
-      return;
-    }
-
-    setFullscreenError(null);
-    setIsSubmitDialogOpen(false);
-    setSubmissionError(null);
-    setFullscreenExitConfirmation("AFTER_EXIT");
+    beginFullscreenExitSubmission(answers);
   });
 
   function navigateToQuestion(targetId: string) {
@@ -1088,7 +1036,7 @@ function ActiveAttemptWorkspace({
     clearAutoSubmitRetry();
     setIsExpirationPending(true);
     setIsSubmitDialogOpen(false);
-    setFullscreenExitConfirmation(null);
+    setIsFullscreenExitDialogOpen(false);
     setSubmissionError(null);
 
     if (finalSubmissionInFlightRef.current) {
@@ -1266,15 +1214,14 @@ function ActiveAttemptWorkspace({
   return (
     <>
       <AlertDialog
-        open={Boolean(fullscreenExitConfirmation)}
+        open={isFullscreenExitDialogOpen}
         onOpenChange={(open) => {
-          if (
-            !open &&
-            !isChangingFullscreenForExit &&
-            isDocumentElementFullscreen()
-          ) {
-            setFullscreenExitConfirmation(null);
-            setFullscreenError(null);
+          if (!isChangingFullscreenForExit) {
+            setIsFullscreenExitDialogOpen(open);
+
+            if (!open) {
+              setFullscreenError(null);
+            }
           }
         }}
       >
@@ -1289,15 +1236,12 @@ function ActiveAttemptWorkspace({
           }}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {fullscreenExitConfirmation === "AFTER_EXIT"
-                ? "Bạn đã thoát chế độ toàn màn hình"
-                : "Thoát toàn màn hình và nộp bài?"}
-            </AlertDialogTitle>
+            <AlertDialogTitle>Thoát toàn màn hình và nộp bài?</AlertDialogTitle>
             <AlertDialogDescription>
-              {fullscreenExitConfirmation === "AFTER_EXIT"
-                ? "Bài thi chưa được nộp. Chọn xác nhận để nộp toàn bộ câu trả lời hiện tại, hoặc quay lại toàn màn hình để tiếp tục làm bài."
-                : "Nếu xác nhận, hệ thống sẽ thoát chế độ toàn màn hình và nộp ngay toàn bộ câu trả lời hiện tại. Sau khi nộp, bạn không thể chỉnh sửa câu trả lời."}
+              Nếu xác nhận, hệ thống sẽ thoát chế độ toàn màn hình và nộp ngay
+              toàn bộ câu trả lời hiện tại. Sau khi nộp, bạn không thể chỉnh sửa
+              câu trả lời. Nếu thoát bằng Esc hoặc điều khiển của trình duyệt,
+              hệ thống cũng sẽ tự động nộp bài ngay.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {fullscreenError && (
@@ -1311,11 +1255,9 @@ function ActiveAttemptWorkspace({
               type="button"
               variant="outline"
               disabled={isChangingFullscreenForExit}
-              onClick={() => void handleCancelFullscreenExit()}
+              onClick={handleCancelFullscreenExit}
             >
-              {fullscreenExitConfirmation === "AFTER_EXIT"
-                ? "Quay lại toàn màn hình"
-                : "Hủy"}
+              Hủy
             </Button>
             <Button
               type="button"
@@ -1325,9 +1267,7 @@ function ActiveAttemptWorkspace({
             >
               {isChangingFullscreenForExit
                 ? "Đang xử lý..."
-                : fullscreenExitConfirmation === "AFTER_EXIT"
-                  ? "Xác nhận nộp bài"
-                  : "Thoát và nộp bài"}
+                : "Thoát và nộp bài"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1337,7 +1277,7 @@ function ActiveAttemptWorkspace({
         open={
           Boolean(environmentWarning) &&
           !isSubmitDialogOpen &&
-          !fullscreenExitConfirmation
+          !isFullscreenExitDialogOpen
         }
         onOpenChange={(open) => {
           if (!open && environmentWarning === "PAGE_HIDDEN") {
@@ -1347,6 +1287,10 @@ function ActiveAttemptWorkspace({
         }}
       >
         <AlertDialogContent
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            environmentDialogDescriptionRef.current?.focus();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             fullscreenButtonRef.current?.focus();
@@ -1358,7 +1302,10 @@ function ActiveAttemptWorkspace({
                 ? "Đang nộp bài do thoát toàn màn hình"
                 : "Bạn đã rời màn hình làm bài"}
             </AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogDescription
+              ref={environmentDialogDescriptionRef}
+              tabIndex={-1}
+            >
               {environmentWarning === "FULLSCREEN_SUBMIT"
                 ? "Bạn đã thoát chế độ toàn màn hình. Phiếu trả lời hiện tại đã được khóa và đang được gửi để nộp bài."
                 : "Trang thi đã bị ẩn khi bạn chuyển tab, cửa sổ hoặc ứng dụng. Lượt làm bài và đồng hồ vẫn tiếp tục bình thường; hệ thống không tự động nộp bài hoặc thay đổi điểm."}
@@ -1531,7 +1478,7 @@ function ActiveAttemptWorkspace({
 
         {fullscreenError &&
           !environmentWarning &&
-          !fullscreenExitConfirmation && (
+          !isFullscreenExitDialogOpen && (
             <p
               role="alert"
               className="border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
