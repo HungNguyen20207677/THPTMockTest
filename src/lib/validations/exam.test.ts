@@ -5,7 +5,10 @@ import {
   EXAM_STRUCTURE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
-import { examUpsertSchema } from "@/lib/validations/exam";
+import {
+  examUpsertSchema,
+  updateExamRequestSchema,
+} from "@/lib/validations/exam";
 
 function createValidExamInput() {
   return {
@@ -94,5 +97,27 @@ describe("exam answer-key validation", () => {
 
     expect(examUpsertSchema.safeParse(invalidCount).success).toBe(false);
     expect(examUpsertSchema.safeParse(invalidAnswer).success).toBe(false);
+  });
+
+  it("accepts only an explicit true answer-key correction confirmation", () => {
+    const request = {
+      exam: {
+        ...createValidExamInput(),
+        expectedUpdatedAt: "2026-08-10T12:00:00.000Z",
+      },
+    };
+
+    expect(
+      updateExamRequestSchema.safeParse({
+        ...request,
+        confirmAnswerKeyCorrection: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      updateExamRequestSchema.safeParse({
+        ...request,
+        confirmAnswerKeyCorrection: false,
+      }).success,
+    ).toBe(false);
   });
 });

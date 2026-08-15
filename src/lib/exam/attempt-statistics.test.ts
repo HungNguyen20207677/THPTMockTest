@@ -12,6 +12,7 @@ import type { AttemptGradingSnapshot } from "@/types/exam-attempt";
 
 function createGrading(score: number): AttemptGradingSnapshot {
   return {
+    answerKeyRevision: 1,
     totalScoreHundredths: score,
     sectionScoresHundredths: {
       partOne: score,

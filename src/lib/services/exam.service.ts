@@ -14,6 +14,8 @@ import {
   deleteExamAttemptRecordsByExamId,
   findExamIdsWithAttemptRecords,
   hasExamAttemptRecords,
+  listTerminalExamAttemptRegradeSources,
+  replaceTerminalExamAttemptGradings,
 } from "@/lib/db/dao/exam-attempt.dao";
 import {
   acquireExamPdfOperationLease,
@@ -23,6 +25,7 @@ import {
   findExamRecordByPdfPublicId,
   listExamRecords,
   releaseExamPdfOperationLease,
+  updateExamAnswerKeyRecord,
   updateExamRecord,
   updateExamMetadataRecord,
   updateExamRecordStatus,
@@ -31,7 +34,10 @@ import {
 } from "@/lib/db/dao/exam.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { withMongoTransaction } from "@/lib/db/mongoose";
+import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
+import { gradeAttemptAnswers } from "@/lib/exam/grading";
 import {
+  ExamAnswerKeyConfirmationRequiredError,
   ExamConflictError,
   ExamContentLockedError,
   ExamNotFoundError,
@@ -303,6 +309,7 @@ export async function editExam(
   examId: string,
   input: UpdateExamInput,
   replacementPdfUpload?: ExamPdfUploadReference,
+  confirmAnswerKeyCorrection = false,
 ): Promise<ExamDetail> {
   assertAdmin(actor);
   const currentExam = await findExamRecordById(examId);
@@ -325,20 +332,23 @@ export async function editExam(
 
   const hasAttempts =
     currentExam.attemptsStarted || (await hasExamAttemptRecords(examId));
-  const answerKeyChanged =
-    JSON.stringify(currentExam.answerKey) !== JSON.stringify(input.answerKey);
+  const answerKeyChanged = !areExamAnswerKeysEqual(
+    currentExam.answerKey,
+    input.answerKey,
+  );
   const part3InputModeChanged =
     currentExam.part3InputMode !== input.part3InputMode;
 
-  if (
-    hasAttempts &&
-    (replacementPdfUpload || answerKeyChanged || part3InputModeChanged)
-  ) {
+  if (hasAttempts && (replacementPdfUpload || part3InputModeChanged)) {
     if (replacementPdfUpload) {
       await discardPdfUploadBestEffort(replacementPdfUpload);
     }
 
     throw new ExamContentLockedError();
+  }
+
+  if (hasAttempts && answerKeyChanged && !confirmAnswerKeyCorrection) {
+    throw new ExamAnswerKeyConfirmationRequiredError();
   }
 
   const examInput: UpsertExamInput = {
@@ -378,22 +388,74 @@ export async function editExam(
       });
     }
 
-    const updatedExam = hasAttempts
-      ? await updateExamMetadataRecord(
-          examId,
-          {
-            title: examInput.title,
-            description: examInput.description,
-            status: examInput.status,
-            settings: examInput.settings,
-          },
-          currentExam.updatedAt,
-        )
-      : await updateExamRecord(
-          examId,
-          { ...examInput, pdf: newPdf },
-          currentExam.updatedAt,
-        );
+    const nextAnswerKeyRevision = answerKeyChanged
+      ? currentExam.answerKeyRevision + 1
+      : currentExam.answerKeyRevision;
+    const updatedExam =
+      hasAttempts && answerKeyChanged
+        ? await withMongoTransaction(async (session) => {
+            const correctedExam = await updateExamAnswerKeyRecord(
+              examId,
+              {
+                title: examInput.title,
+                description: examInput.description,
+                status: examInput.status,
+                settings: examInput.settings,
+                answerKey: examInput.answerKey,
+              },
+              currentExam.updatedAt,
+              currentExam.answerKeyRevision,
+              nextAnswerKeyRevision,
+              session,
+            );
+
+            if (!correctedExam) {
+              throw new ExamConflictError();
+            }
+
+            const regradeSources = await listTerminalExamAttemptRegradeSources(
+              examId,
+              session,
+            );
+            const gradedAt = new Date();
+            const replacements = regradeSources.map((attempt) => ({
+              attemptId: attempt.id,
+              grading: gradeAttemptAnswers(
+                attempt.answers,
+                correctedExam.answerKey,
+                correctedExam.answerKeyRevision,
+              ),
+            }));
+            const matchedCount = await replaceTerminalExamAttemptGradings(
+              examId,
+              replacements,
+              gradedAt,
+              session,
+            );
+
+            if (matchedCount !== replacements.length) {
+              throw new ExamConflictError();
+            }
+
+            return correctedExam;
+          })
+        : hasAttempts
+          ? await updateExamMetadataRecord(
+              examId,
+              {
+                title: examInput.title,
+                description: examInput.description,
+                status: examInput.status,
+                settings: examInput.settings,
+              },
+              currentExam.updatedAt,
+            )
+          : await updateExamRecord(
+              examId,
+              { ...examInput, pdf: newPdf },
+              currentExam.updatedAt,
+              nextAnswerKeyRevision,
+            );
 
     if (!updatedExam) {
       throw new ExamConflictError();

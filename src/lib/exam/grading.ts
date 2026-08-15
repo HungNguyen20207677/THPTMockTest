@@ -1,5 +1,6 @@
 import {
   EXAM_SCORING_HUNDREDTHS,
+  INITIAL_ANSWER_KEY_REVISION,
   PART_TWO_STATEMENTS,
 } from "@/lib/constants/exam";
 import {
@@ -21,11 +22,17 @@ export function scoreHundredthsToPoints(scoreHundredths: number): number {
 export function gradeAttemptAnswers(
   answersInput: AttemptAnswers,
   answerKeyInput: ExamAnswerKey,
+  answerKeyRevision = INITIAL_ANSWER_KEY_REVISION,
 ): AttemptGradingSnapshot {
   const parsedAnswers = attemptAnswersSchema.safeParse(answersInput);
   const parsedAnswerKey = examAnswerKeySchema.safeParse(answerKeyInput);
 
-  if (!parsedAnswers.success || !parsedAnswerKey.success) {
+  if (
+    !parsedAnswers.success ||
+    !parsedAnswerKey.success ||
+    !Number.isInteger(answerKeyRevision) ||
+    answerKeyRevision < INITIAL_ANSWER_KEY_REVISION
+  ) {
     throw new Error("Cannot grade malformed attempt or answer-key data.");
   }
 
@@ -85,6 +92,7 @@ export function gradeAttemptAnswers(
     EXAM_SCORING_HUNDREDTHS.partThreePointsPerAnswer;
 
   return {
+    answerKeyRevision,
     totalScoreHundredths: partOneScore + partTwoScore + partThreeScore,
     sectionScoresHundredths: {
       partOne: partOneScore,

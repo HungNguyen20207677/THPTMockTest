@@ -156,8 +156,18 @@ export class ExamAttemptConflictError extends AppError {
 export class ExamContentLockedError extends AppError {
   constructor() {
     super(
-      "Đề thi đã có lượt làm nên không thể thay đổi tệp PDF hoặc đáp án.",
+      "Đề thi đã có lượt làm nên không thể thay đổi tệp PDF hoặc cách nhập Phần III.",
       "EXAM_CONTENT_LOCKED",
+      409,
+    );
+  }
+}
+
+export class ExamAnswerKeyConfirmationRequiredError extends AppError {
+  constructor() {
+    super(
+      "Cần xác nhận chấm lại các bài đã hoàn thành trước khi thay đổi đáp án.",
+      "ANSWER_KEY_CORRECTION_CONFIRMATION_REQUIRED",
       409,
     );
   }

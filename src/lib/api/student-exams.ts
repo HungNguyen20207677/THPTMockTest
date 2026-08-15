@@ -27,10 +27,11 @@ export function fetchStudentExams(): Promise<
 
 export function startStudentExamAttempt(
   examId: string,
+  resumeAttemptId?: string,
 ): Promise<ApiSuccessResponse<{ context: StudentExamAttemptContext }>> {
   return apiRequest(
     `${STUDENT_EXAMS_ENDPOINT}/${examId}/attempts`,
-    jsonRequest("POST", {}),
+    jsonRequest("POST", { resumeAttemptId }),
   );
 }
 

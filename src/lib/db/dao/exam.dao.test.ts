@@ -64,6 +64,7 @@ describe("Exam DAO compatibility", () => {
     const exam = await findExamRecordById("legacy-exam-id");
 
     expect(exam?.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
+    expect(exam?.answerKeyRevision).toBe(1);
   });
 
   it("maps the legacy student workspace safely to BUBBLE", async () => {

@@ -32,6 +32,16 @@ describe("attempt grading snapshot validation", () => {
     expect(attemptGradingSnapshotSchema.safeParse(grading).success).toBe(true);
   });
 
+  it("normalizes a legacy snapshot without a revision to revision 1", () => {
+    const { answerKeyRevision: _revision, ...legacyGrading } =
+      gradeAttemptAnswers(createEmptyAttemptAnswers(), createAnswerKey());
+
+    expect(_revision).toBe(1);
+    expect(attemptGradingSnapshotSchema.parse(legacyGrading)).toMatchObject({
+      answerKeyRevision: 1,
+    });
+  });
+
   it("rejects contradictory totals and Part II details", () => {
     const grading = gradeAttemptAnswers(
       createEmptyAttemptAnswers(),

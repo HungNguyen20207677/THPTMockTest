@@ -36,6 +36,7 @@ export interface AttemptAnswerProgress {
 }
 
 export interface AttemptGradingSnapshot {
+  answerKeyRevision: number;
   totalScoreHundredths: number;
   sectionScoresHundredths: {
     partOne: number;

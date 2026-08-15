@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { EXAM_SCORING_HUNDREDTHS, EXAM_STRUCTURE } from "@/lib/constants/exam";
+import {
+  EXAM_SCORING_HUNDREDTHS,
+  EXAM_STRUCTURE,
+  INITIAL_ANSWER_KEY_REVISION,
+} from "@/lib/constants/exam";
 import type { AttemptGradingSnapshot } from "@/types/exam-attempt";
 
 const scoreHundredthsSchema = z
@@ -18,6 +22,11 @@ const statementCorrectnessSchema = z.strictObject({
 
 export const attemptGradingSnapshotSchema: z.ZodType<AttemptGradingSnapshot> = z
   .strictObject({
+    answerKeyRevision: z
+      .number()
+      .int()
+      .min(INITIAL_ANSWER_KEY_REVISION)
+      .default(INITIAL_ANSWER_KEY_REVISION),
     totalScoreHundredths: scoreHundredthsSchema,
     sectionScoresHundredths: z.strictObject({
       partOne: scoreHundredthsSchema.max(

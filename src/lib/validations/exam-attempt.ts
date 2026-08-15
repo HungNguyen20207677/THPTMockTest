@@ -6,3 +6,7 @@ export const attemptIdSchema = z
   .transform((attemptId) => attemptId.toLowerCase());
 
 export const emptyAttemptMutationSchema = z.strictObject({});
+
+export const startAttemptMutationSchema = z.strictObject({
+  resumeAttemptId: attemptIdSchema.optional(),
+});

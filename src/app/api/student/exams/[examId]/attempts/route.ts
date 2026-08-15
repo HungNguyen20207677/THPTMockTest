@@ -5,7 +5,7 @@ import { toErrorResponse } from "@/lib/api/route-error";
 import { requireApiRole } from "@/lib/auth/authorization";
 import { USER_ROLE } from "@/lib/constants/roles";
 import { startOrResumeExamAttempt } from "@/lib/services/exam-attempt.service";
-import { emptyAttemptMutationSchema } from "@/lib/validations/exam-attempt";
+import { startAttemptMutationSchema } from "@/lib/validations/exam-attempt";
 import { examIdSchema } from "@/lib/validations/exam";
 import type { ApiSuccessResponse } from "@/types/api";
 import type { StudentExamAttemptContext } from "@/types/exam-attempt";
@@ -22,9 +22,13 @@ export async function POST(
 ) {
   try {
     const student = await requireApiRole(USER_ROLE.STUDENT);
-    await parseJsonRequest(request, emptyAttemptMutationSchema);
+    const input = await parseJsonRequest(request, startAttemptMutationSchema);
     const examId = examIdSchema.parse((await context.params).examId);
-    const attemptContext = await startOrResumeExamAttempt(student, examId);
+    const attemptContext = await startOrResumeExamAttempt(
+      student,
+      examId,
+      input.resumeAttemptId,
+    );
     const response = {
       data: { context: attemptContext },
     } satisfies ApiSuccessResponse<{ context: StudentExamAttemptContext }>;

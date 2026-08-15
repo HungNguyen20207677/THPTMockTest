@@ -141,6 +141,7 @@ export async function updateExamRecord(
   examId: string,
   input: UpdateExamInput,
   replacementPdf?: File,
+  confirmAnswerKeyCorrection = false,
 ): Promise<ApiSuccessResponse<{ exam: ExamDetail }>> {
   const replacementPdfUpload = replacementPdf
     ? await uploadExamPdfDirectly(replacementPdf)
@@ -149,7 +150,11 @@ export async function updateExamRecord(
   try {
     return await apiRequest(
       `${EXAMS_ENDPOINT}/${examId}`,
-      jsonRequest("PATCH", { exam: input, replacementPdfUpload }),
+      jsonRequest("PATCH", {
+        exam: input,
+        replacementPdfUpload,
+        confirmAnswerKeyCorrection: confirmAnswerKeyCorrection || undefined,
+      }),
     );
   } catch (error) {
     if (replacementPdfUpload) {

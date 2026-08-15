@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   findOwnedExamAttemptRecord: vi.fn(),
   listAllExamAttemptRecordsForStudent: vi.fn(),
   saveOwnedActiveExamAttemptAnswers: vi.fn(),
-  setOwnedTerminalExamAttemptGradingIfMissing: vi.fn(),
+  setOwnedTerminalExamAttemptGradingForRevision: vi.fn(),
   submitOwnedActiveExamAttempt: vi.fn(),
   findExamGradingRecordById: vi.fn(),
   findStudentExamRecordById: vi.fn(),
@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   markExamAttemptsStarted: vi.fn(),
   markStudentAttemptsStarted: vi.fn(),
   reserveExamForAttemptCreation: vi.fn(),
+  reserveExamForAttemptGrading: vi.fn(),
   reserveStudentForAttemptCreation: vi.fn(),
   transactionSession: { id: "transaction-session" },
   withMongoTransaction: vi.fn(),
@@ -33,8 +34,8 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   listAllExamAttemptRecordsForStudent:
     mocks.listAllExamAttemptRecordsForStudent,
   saveOwnedActiveExamAttemptAnswers: mocks.saveOwnedActiveExamAttemptAnswers,
-  setOwnedTerminalExamAttemptGradingIfMissing:
-    mocks.setOwnedTerminalExamAttemptGradingIfMissing,
+  setOwnedTerminalExamAttemptGradingForRevision:
+    mocks.setOwnedTerminalExamAttemptGradingForRevision,
   submitOwnedActiveExamAttempt: mocks.submitOwnedActiveExamAttempt,
 }));
 
@@ -45,6 +46,7 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
   listStudentExamRecordsByIds: mocks.listStudentExamRecordsByIds,
   markExamAttemptsStarted: mocks.markExamAttemptsStarted,
   reserveExamForAttemptCreation: mocks.reserveExamForAttemptCreation,
+  reserveExamForAttemptGrading: mocks.reserveExamForAttemptGrading,
 }));
 
 vi.mock("@/lib/db/dao/user.dao", () => ({
@@ -139,7 +141,9 @@ function createGradingExam(
   return {
     id: "exam-id",
     title: "Đề thi thử Toán số 1",
+    status: EXAM_STATUS.PUBLISHED,
     answerKey: createAnswerKey(),
+    answerKeyRevision: 1,
     settings: {
       showScoreAfterSubmission: true,
       showAnswersAfterSubmission: true,
@@ -205,13 +209,14 @@ describe("ExamAttempt service", () => {
     mocks.markExamAttemptsStarted.mockResolvedValue(true);
     mocks.markStudentAttemptsStarted.mockResolvedValue(true);
     mocks.reserveExamForAttemptCreation.mockResolvedValue(true);
+    mocks.reserveExamForAttemptGrading.mockResolvedValue(createGradingExam());
     mocks.reserveStudentForAttemptCreation.mockResolvedValue(true);
     mocks.withMongoTransaction.mockImplementation(
       (operation: (session: unknown) => Promise<unknown>) =>
         operation(mocks.transactionSession),
     );
     mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(null);
-    mocks.setOwnedTerminalExamAttemptGradingIfMissing.mockResolvedValue(null);
+    mocks.setOwnedTerminalExamAttemptGradingForRevision.mockResolvedValue(null);
     mocks.listPublishedStudentExamRecords.mockResolvedValue([]);
     mocks.listStudentExamRecordsByIds.mockResolvedValue([]);
     mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([]);
@@ -327,6 +332,56 @@ describe("ExamAttempt service", () => {
     expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
   });
 
+  it("resumes the exact active attempt even after the Exam is hidden", async () => {
+    const activeAttempt = createAttempt();
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ status: EXAM_STATUS.HIDDEN }),
+    );
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+
+    const result = await startOrResumeExamAttempt(
+      student,
+      "exam-id",
+      activeAttempt.id,
+    );
+
+    expect(result.attempt.id).toBe(activeAttempt.id);
+    expect(mocks.findOwnedExamAttemptRecord).toHaveBeenCalledWith(
+      activeAttempt.id,
+      activeAttempt.examId,
+      student.id,
+    );
+    expect(mocks.findActiveExamAttemptRecord).not.toHaveBeenCalled();
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
+  it("does not turn a stale resume confirmation into a retake", async () => {
+    const expiresAt = new Date("2026-08-11T02:59:00.000Z");
+    const expiredAttempt = createAttempt({ expiresAt });
+    const autoSubmittedAttempt = createAttempt({
+      expiresAt,
+      status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+      submittedAt: expiresAt,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(expiredAttempt);
+    mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(
+      autoSubmittedAttempt,
+    );
+
+    const result = await startOrResumeExamAttempt(
+      student,
+      "exam-id",
+      expiredAttempt.id,
+    );
+
+    expect(result.attempt).toMatchObject({
+      id: expiredAttempt.id,
+      status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+    });
+    expect(mocks.findLatestExamAttemptRecord).not.toHaveBeenCalled();
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
   it("recovers a duplicate-key start race to the concurrent active attempt", async () => {
     const concurrentAttempt = createAttempt({ id: "winning-attempt" });
     mocks.findActiveExamAttemptRecord
@@ -426,6 +481,7 @@ describe("ExamAttempt service", () => {
         createAnswerKey(),
       ),
       serverNow,
+      mocks.transactionSession,
     );
     expect(result.attempt).toMatchObject({
       status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
@@ -678,6 +734,7 @@ describe("ExamAttempt service", () => {
         createAnswerKey(),
       ),
       serverNow,
+      mocks.transactionSession,
     );
     expect(mocks.saveOwnedActiveExamAttemptAnswers).not.toHaveBeenCalled();
   });
@@ -705,14 +762,21 @@ describe("ExamAttempt service", () => {
       submittedAnswers,
     );
 
-    expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledWith({
-      attemptId: activeAttempt.id,
-      examId: "exam-id",
-      studentId: student.id,
-      answers: submittedAnswers,
-      grading,
-      now: serverNow,
-    });
+    expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledWith(
+      {
+        attemptId: activeAttempt.id,
+        examId: "exam-id",
+        studentId: student.id,
+        answers: submittedAnswers,
+        grading,
+        now: serverNow,
+      },
+      mocks.transactionSession,
+    );
+    expect(mocks.reserveExamForAttemptGrading).toHaveBeenCalledWith(
+      activeAttempt.examId,
+      mocks.transactionSession,
+    );
     expect(result.attempt).toMatchObject({
       status: EXAM_ATTEMPT_STATUS.SUBMITTED,
       submittedAt: serverNow.toISOString(),
@@ -761,6 +825,7 @@ describe("ExamAttempt service", () => {
       expiredAttempt.answerRevision,
       gradeAttemptAnswers(persistedAnswers, createAnswerKey()),
       serverNow,
+      mocks.transactionSession,
     );
     expect(result.attempt.status).toBe(EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED);
     expect(result.attempt.submittedAt).toBe(expiresAt.toISOString());
@@ -865,6 +930,7 @@ describe("ExamAttempt service", () => {
       refreshedAttempt.answerRevision,
       latestGrading,
       serverNow,
+      mocks.transactionSession,
     );
     expect(result.attempt.answers).toEqual(latestAnswers);
   });
@@ -912,7 +978,7 @@ describe("ExamAttempt service", () => {
       gradedAt: serverNow,
     });
     mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
-    mocks.setOwnedTerminalExamAttemptGradingIfMissing.mockResolvedValue(
+    mocks.setOwnedTerminalExamAttemptGradingForRevision.mockResolvedValue(
       gradedAttempt,
     );
 
@@ -923,15 +989,69 @@ describe("ExamAttempt service", () => {
     );
 
     expect(
-      mocks.setOwnedTerminalExamAttemptGradingIfMissing,
+      mocks.setOwnedTerminalExamAttemptGradingForRevision,
     ).toHaveBeenCalledWith(
       terminalAttempt.id,
       terminalAttempt.examId,
       terminalAttempt.studentId,
       grading,
       serverNow,
+      mocks.transactionSession,
     );
     expect(result.score?.total).toBe(0.25);
+  });
+
+  it("regrades a terminal snapshot when the answer-key revision changes", async () => {
+    const answers = createEmptyAttemptAnswers();
+    answers.partOne[0] = "A";
+    const oldGrading = gradeAttemptAnswers(answers, createAnswerKey(), 1);
+    const correctedAnswerKey = createAnswerKey();
+    correctedAnswerKey.partOne[0] = "B";
+    const correctedExam = createGradingExam({
+      answerKey: correctedAnswerKey,
+      answerKeyRevision: 2,
+    });
+    const correctedGrading = gradeAttemptAnswers(
+      answers,
+      correctedAnswerKey,
+      2,
+    );
+    const terminalAttempt = createAttempt({
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      submittedAt: serverNow,
+      answers,
+      grading: oldGrading,
+      gradedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    const regradedAttempt = createAttempt({
+      ...terminalAttempt,
+      grading: correctedGrading,
+      gradedAt: serverNow,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
+    mocks.findExamGradingRecordById.mockResolvedValue(correctedExam);
+    mocks.reserveExamForAttemptGrading.mockResolvedValue(correctedExam);
+    mocks.setOwnedTerminalExamAttemptGradingForRevision.mockResolvedValue(
+      regradedAttempt,
+    );
+
+    const result = await getStudentExamAttemptResult(
+      student,
+      "exam-id",
+      terminalAttempt.id,
+    );
+
+    expect(
+      mocks.setOwnedTerminalExamAttemptGradingForRevision,
+    ).toHaveBeenCalledWith(
+      terminalAttempt.id,
+      terminalAttempt.examId,
+      terminalAttempt.studentId,
+      expect.objectContaining({ answerKeyRevision: 2 }),
+      serverNow,
+      mocks.transactionSession,
+    );
+    expect(result.score?.total).toBe(0);
   });
 
   it("reuses an existing immutable grading snapshot on repeated result access", async () => {
@@ -960,7 +1080,7 @@ describe("ExamAttempt service", () => {
 
     expect(firstResult.score).toEqual(secondResult.score);
     expect(
-      mocks.setOwnedTerminalExamAttemptGradingIfMissing,
+      mocks.setOwnedTerminalExamAttemptGradingForRevision,
     ).not.toHaveBeenCalled();
   });
 

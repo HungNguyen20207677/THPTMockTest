@@ -208,4 +208,22 @@ describe("Exam API client", () => {
     expect(request.method).toBe("PATCH");
     expect(JSON.parse(request.body as string)).toEqual({ exam: input });
   });
+
+  it("sends explicit answer-key correction confirmation", async () => {
+    const input: UpdateExamInput = {
+      ...createValidInput(),
+      expectedUpdatedAt: "2026-08-10T12:00:00.000Z",
+    };
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ data: { exam: { id: "exam-id" } } }),
+    );
+
+    await updateExamRecord("exam-id", input, undefined, true);
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(request.body as string)).toEqual({
+      exam: input,
+      confirmAnswerKeyCorrection: true,
+    });
+  });
 });

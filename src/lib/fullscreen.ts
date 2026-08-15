@@ -6,13 +6,24 @@ export function isFullscreenSupported(): boolean {
   );
 }
 
+export function isDocumentElementFullscreen(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    document.fullscreenElement === document.documentElement
+  );
+}
+
 export async function requestDocumentFullscreen(): Promise<boolean> {
   if (typeof document === "undefined") {
     return false;
   }
 
-  if (document.fullscreenElement) {
+  if (isDocumentElementFullscreen()) {
     return true;
+  }
+
+  if (document.fullscreenElement) {
+    return false;
   }
 
   if (!isFullscreenSupported()) {
@@ -30,6 +41,10 @@ export async function requestDocumentFullscreen(): Promise<boolean> {
 export async function exitDocumentFullscreen(): Promise<boolean> {
   if (typeof document === "undefined" || !document.fullscreenElement) {
     return true;
+  }
+
+  if (!isDocumentElementFullscreen()) {
+    return false;
   }
 
   try {

@@ -21,8 +21,10 @@ import {
   startStudentExamAttempt,
 } from "@/lib/api/student-exams";
 import { STUDENT_EXAM_STATE } from "@/lib/constants/exam-attempt";
+import { createConfirmedExamStart } from "@/lib/exam/start-flow";
 import {
   exitDocumentFullscreen,
+  isDocumentElementFullscreen,
   requestDocumentFullscreen,
 } from "@/lib/fullscreen";
 import type {
@@ -76,6 +78,7 @@ export function StudentExamList() {
   );
   const [isStarting, setIsStarting] = useState(false);
   const startTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const startInFlightRef = useRef(false);
 
   useEffect(() => {
     let isCurrent = true;
@@ -104,36 +107,35 @@ export function StudentExamList() {
   }, [refreshVersion]);
 
   async function handleConfirmedStart() {
-    if (!startTarget || isStarting) {
+    if (!startTarget || startInFlightRef.current) {
       return;
     }
 
-    const wasFullscreen = Boolean(document.fullscreenElement);
-    const fullscreenRequest = requestDocumentFullscreen();
+    startInFlightRef.current = true;
+    const target = startTarget;
+    const confirmStart = createConfirmedExamStart({
+      wasDocumentFullscreen: isDocumentElementFullscreen(),
+      requestFullscreen: requestDocumentFullscreen,
+      startAttempt: () =>
+        startStudentExamAttempt(
+          target.id,
+          target.state === STUDENT_EXAM_STATE.IN_PROGRESS
+            ? target.activeAttemptId
+            : undefined,
+        ),
+      exitFullscreen: exitDocumentFullscreen,
+    });
     setIsStarting(true);
     setStartError(null);
 
     try {
-      if (
-        startTarget.state === STUDENT_EXAM_STATE.IN_PROGRESS &&
-        startTarget.activeAttemptId
-      ) {
-        router.push(
-          getAttemptHref(startTarget.id, startTarget.activeAttemptId),
-        );
-        return;
-      }
-
-      const response = await startStudentExamAttempt(startTarget.id);
+      const response = await confirmStart();
       const { attempt } = response.data.context;
-      router.push(getAttemptHref(startTarget.id, attempt.id));
+      router.push(getAttemptHref(target.id, attempt.id));
     } catch (error) {
       setStartError(getRequestError(error));
-
-      if (!wasFullscreen && (await fullscreenRequest)) {
-        await exitDocumentFullscreen();
-      }
     } finally {
+      startInFlightRef.current = false;
       setIsStarting(false);
     }
   }

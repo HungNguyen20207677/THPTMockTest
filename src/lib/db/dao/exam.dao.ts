@@ -4,7 +4,11 @@ import { randomUUID } from "node:crypto";
 
 import type { ClientSession, Types } from "mongoose";
 
-import { EXAM_STATUS, PART3_INPUT_MODE } from "@/lib/constants/exam";
+import {
+  EXAM_STATUS,
+  INITIAL_ANSWER_KEY_REVISION,
+  PART3_INPUT_MODE,
+} from "@/lib/constants/exam";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import {
   ExamModel,
@@ -28,6 +32,7 @@ export interface ExamPersistenceRecord {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  answerKeyRevision: number;
   attemptsStarted: boolean;
   createdBy: string;
   createdAt: Date;
@@ -51,6 +56,10 @@ export interface UpdateExamMetadataRecordInput {
   settings: ExamSettings;
 }
 
+export interface UpdateExamAnswerKeyRecordInput extends UpdateExamMetadataRecordInput {
+  answerKey: ExamAnswerKey;
+}
+
 export interface StudentExamPersistenceRecord {
   id: string;
   title: string;
@@ -70,16 +79,16 @@ export interface StudentExamWorkspacePersistenceRecord extends StudentExamPersis
 export interface ExamGradingPersistenceRecord {
   id: string;
   title: string;
+  status: ExamStatus;
   answerKey: ExamAnswerKey;
+  answerKeyRevision: number;
   settings: Pick<
     ExamSettings,
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
   >;
 }
 
-export interface ExamReportingPersistenceRecord extends ExamGradingPersistenceRecord {
-  status: ExamStatus;
-}
+export type ExamReportingPersistenceRecord = ExamGradingPersistenceRecord;
 
 interface ExamDocumentData {
   _id: Types.ObjectId;
@@ -90,6 +99,7 @@ interface ExamDocumentData {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  answerKeyRevision?: number;
   attemptsStarted?: boolean;
   createdBy: Types.ObjectId;
   createdAt: Date;
@@ -115,16 +125,16 @@ interface StudentExamWorkspaceDocumentData extends StudentExamDocumentData {
 interface ExamGradingDocumentData {
   _id: Types.ObjectId;
   title: string;
+  status: ExamStatus;
   answerKey: ExamAnswerKey;
+  answerKeyRevision?: number;
   settings: Pick<
     ExamSettings,
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
   >;
 }
 
-interface ExamReportingDocumentData extends ExamGradingDocumentData {
-  status: ExamStatus;
-}
+type ExamReportingDocumentData = ExamGradingDocumentData;
 
 let examIndexesPromise: Promise<void> | null = null;
 const EXAM_PDF_OPERATION_LEASE_DURATION_MS = 60 * 60 * 1000;
@@ -209,6 +219,7 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     pdf: exam.pdf,
     settings: exam.settings,
     answerKey: exam.answerKey,
+    answerKeyRevision: exam.answerKeyRevision ?? INITIAL_ANSWER_KEY_REVISION,
     attemptsStarted: exam.attemptsStarted === true,
     createdBy: exam.createdBy.toString(),
     createdAt: exam.createdAt,
@@ -250,7 +261,9 @@ function toExamGradingRecord(
   return {
     id: exam._id.toString(),
     title: exam.title,
+    status: exam.status,
     answerKey: exam.answerKey,
+    answerKeyRevision: exam.answerKeyRevision ?? INITIAL_ANSWER_KEY_REVISION,
     settings: exam.settings,
   };
 }
@@ -258,10 +271,18 @@ function toExamGradingRecord(
 function toExamReportingRecord(
   exam: ExamReportingDocumentData,
 ): ExamReportingPersistenceRecord {
-  return {
-    ...toExamGradingRecord(exam),
-    status: exam.status,
-  };
+  return toExamGradingRecord(exam);
+}
+
+function getAnswerKeyRevisionFilter(expectedRevision: number) {
+  return expectedRevision === INITIAL_ANSWER_KEY_REVISION
+    ? {
+        $or: [
+          { answerKeyRevision: INITIAL_ANSWER_KEY_REVISION },
+          { answerKeyRevision: { $exists: false } },
+        ],
+      }
+    : { answerKeyRevision: expectedRevision };
 }
 
 export async function listExamRecords(): Promise<ExamPersistenceRecord[]> {
@@ -395,6 +416,36 @@ export async function reserveExamForAttemptCreation(
   return result.matchedCount === 1;
 }
 
+export async function reserveExamForAttemptGrading(
+  examId: string,
+  session: ClientSession,
+): Promise<ExamGradingPersistenceRecord | null> {
+  await prepareExamModel();
+
+  const exam = await ExamModel.findOneAndUpdate(
+    { _id: examId },
+    { $inc: { attemptOperationVersion: 1 } },
+    {
+      returnDocument: "after",
+      runValidators: true,
+      session,
+      timestamps: false,
+    },
+  )
+    .select({
+      title: 1,
+      status: 1,
+      answerKey: 1,
+      answerKeyRevision: 1,
+      "settings.showScoreAfterSubmission": 1,
+      "settings.showAnswersAfterSubmission": 1,
+    })
+    .lean<ExamGradingDocumentData>()
+    .exec();
+
+  return exam ? toExamGradingRecord(exam) : null;
+}
+
 export async function findExamGradingRecordById(
   examId: string,
 ): Promise<ExamGradingPersistenceRecord | null> {
@@ -403,7 +454,9 @@ export async function findExamGradingRecordById(
   const exam = await ExamModel.findById(examId)
     .select({
       title: 1,
+      status: 1,
       answerKey: 1,
+      answerKeyRevision: 1,
       "settings.showScoreAfterSubmission": 1,
       "settings.showAnswersAfterSubmission": 1,
     })
@@ -423,6 +476,7 @@ export async function findExamReportingRecordById(
       title: 1,
       status: 1,
       answerKey: 1,
+      answerKeyRevision: 1,
       settings: 1,
     })
     .lean<ExamReportingDocumentData>()
@@ -445,6 +499,7 @@ export async function findExamReportingRecordsByIds(
       title: 1,
       status: 1,
       answerKey: 1,
+      answerKeyRevision: 1,
       settings: 1,
     })
     .lean<ExamReportingDocumentData[]>()
@@ -492,14 +547,19 @@ export async function updateExamRecord(
   examId: string,
   input: SaveExamRecordInput,
   expectedUpdatedAt: Date,
+  answerKeyRevision: number,
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();
 
   const { description, ...requiredFields } = input;
+  const requiredFieldsWithRevision = {
+    ...requiredFields,
+    answerKeyRevision,
+  };
   const update =
     description === undefined
-      ? { $set: requiredFields, $unset: { description: 1 } }
-      : { $set: input };
+      ? { $set: requiredFieldsWithRevision, $unset: { description: 1 } }
+      : { $set: { ...input, answerKeyRevision } };
 
   const exam = await ExamModel.findOneAndUpdate(
     {
@@ -509,6 +569,41 @@ export async function updateExamRecord(
     },
     update,
     { returnDocument: "after", runValidators: true },
+  )
+    .lean<ExamDocumentData>()
+    .exec();
+
+  return exam ? toExamRecord(exam) : null;
+}
+
+export async function updateExamAnswerKeyRecord(
+  examId: string,
+  input: UpdateExamAnswerKeyRecordInput,
+  expectedUpdatedAt: Date,
+  expectedAnswerKeyRevision: number,
+  nextAnswerKeyRevision: number,
+  session: ClientSession,
+): Promise<ExamPersistenceRecord | null> {
+  await prepareExamModel();
+
+  const { description, ...requiredFields } = input;
+  const requiredFieldsWithRevision = {
+    ...requiredFields,
+    answerKeyRevision: nextAnswerKeyRevision,
+  };
+  const update =
+    description === undefined
+      ? { $set: requiredFieldsWithRevision, $unset: { description: 1 } }
+      : { $set: { ...input, answerKeyRevision: nextAnswerKeyRevision } };
+
+  const exam = await ExamModel.findOneAndUpdate(
+    {
+      _id: examId,
+      updatedAt: expectedUpdatedAt,
+      ...getAnswerKeyRevisionFilter(expectedAnswerKeyRevision),
+    },
+    update,
+    { returnDocument: "after", runValidators: true, session },
   )
     .lean<ExamDocumentData>()
     .exec();

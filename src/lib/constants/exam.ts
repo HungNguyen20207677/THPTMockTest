@@ -47,6 +47,8 @@ export const EXAM_STRUCTURE = {
   shortAnswerSlots: 4,
 } as const;
 
+export const INITIAL_ANSWER_KEY_REVISION = 1;
+
 export const EXAM_SCORING = {
   partOnePointsPerAnswer: 0.25,
   partOneMaximum: 3,

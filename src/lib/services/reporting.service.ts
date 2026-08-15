@@ -73,6 +73,7 @@ interface PreparedTerminalAttempt extends ExamAttemptPersistenceRecord {
 }
 
 const REPORTING_WRITE_BATCH_SIZE = 20;
+const REPORTING_RECONCILIATION_MAX_RETRIES = 3;
 
 function assertAdmin(actor: AppUser): void {
   if (actor.role !== USER_ROLE.ADMIN) {
@@ -228,7 +229,7 @@ async function reconcileExpiredAttempts(
       throw new ExamNotFoundError();
     }
 
-    return resolveAttemptExpiration(attempt, now, 0, exam);
+    return resolveAttemptExpiration(attempt, now);
   });
 }
 
@@ -237,28 +238,50 @@ async function prepareTerminalAttempts(
   examMap: Map<string, ExamReportingPersistenceRecord>,
   now: Date,
 ): Promise<PreparedTerminalAttempt[]> {
-  return mapInBatches(attempts, async (attempt) => {
-    if (!isTerminalExamAttemptStatus(attempt.status)) {
-      throw new ExamAttemptStateConflictError();
-    }
+  for (
+    let retry = 0;
+    retry < REPORTING_RECONCILIATION_MAX_RETRIES;
+    retry += 1
+  ) {
+    const prepared = await mapInBatches(attempts, async (attempt) => {
+      if (!isTerminalExamAttemptStatus(attempt.status)) {
+        throw new ExamAttemptStateConflictError();
+      }
 
-    if (attempt.grading) {
-      return toPreparedTerminalAttempt(attempt);
-    }
+      const exam = examMap.get(attempt.examId);
 
-    const exam = examMap.get(attempt.examId);
+      if (!exam) {
+        throw new ExamNotFoundError();
+      }
 
-    if (!exam) {
-      throw new ExamNotFoundError();
-    }
+      if (attempt.grading?.answerKeyRevision === exam.answerKeyRevision) {
+        return toPreparedTerminalAttempt(attempt);
+      }
 
-    const gradedAttempt = await ensureTerminalAttemptGrading(
-      attempt,
-      exam,
-      now,
+      const graded = await ensureTerminalAttemptGrading(attempt, exam, now);
+      const latestExam = examMap.get(attempt.examId);
+
+      if (
+        !latestExam ||
+        graded.exam.answerKeyRevision >= latestExam.answerKeyRevision
+      ) {
+        examMap.set(attempt.examId, graded.exam);
+      }
+
+      return toPreparedTerminalAttempt(graded.attempt);
+    });
+    const isConsistent = prepared.every(
+      (attempt) =>
+        attempt.grading.answerKeyRevision ===
+        examMap.get(attempt.examId)?.answerKeyRevision,
     );
-    return toPreparedTerminalAttempt(gradedAttempt);
-  });
+
+    if (isConsistent) {
+      return prepared;
+    }
+  }
+
+  throw new ExamAttemptStateConflictError();
 }
 
 function toAdminResultSummary(
@@ -352,7 +375,7 @@ export async function getAdminAttemptDetail(
   const resolvedAttempt =
     storedAttempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
     now.getTime() >= storedAttempt.expiresAt.getTime()
-      ? await resolveAttemptExpiration(storedAttempt, now, 0, exam ?? undefined)
+      ? await resolveAttemptExpiration(storedAttempt, now)
       : storedAttempt;
   const studentMap = await getStudentMap([resolvedAttempt.studentId]);
   const student = studentMap.get(resolvedAttempt.studentId);
@@ -377,17 +400,15 @@ export async function getAdminAttemptDetail(
     throw new ExamNotFoundError();
   }
 
-  const [preparedAttempt] = await prepareTerminalAttempts(
-    [resolvedAttempt],
-    new Map([[exam.id, exam]]),
-    now,
-  );
-  const result = buildExamAttemptResult(preparedAttempt, exam, {
+  const graded = await ensureTerminalAttemptGrading(resolvedAttempt, exam, now);
+  const preparedAttempt = toPreparedTerminalAttempt(graded.attempt);
+  const result = buildExamAttemptResult(preparedAttempt, graded.exam, {
     score: true,
     answers: true,
   });
 
   detail.attempt = result.attempt;
+  detail.exam = toExamIdentity(graded.exam);
   detail.score = result.score;
   detail.answerReview = result.answerReview;
   return detail;
@@ -486,9 +507,10 @@ export async function getAdminExamResults(
     listTerminalExamAttemptRecords({ examId }),
     listActiveExamAttemptRecords({ examId }),
   ]);
+  const examMap = new Map([[exam.id, exam]]);
   const terminalAttempts = await prepareTerminalAttempts(
     storedTerminalAttempts,
-    new Map([[exam.id, exam]]),
+    examMap,
     now,
   );
   const studentMap = await getStudentMap(
@@ -525,8 +547,10 @@ export async function getAdminExamResults(
     (attempt) => attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
   ).length;
 
+  const currentExam = examMap.get(exam.id) ?? exam;
+
   return {
-    exam: toExamIdentity(exam),
+    exam: toExamIdentity(currentExam),
     activeAttemptCount: activeAttempts.length,
     completedAttemptCount: terminalAttempts.length,
     distinctStudentCount: attemptsByStudent.size,
@@ -566,20 +590,18 @@ export async function getStudentExamAttemptHistory(
     query.page,
     query.pageSize,
   );
-  const attempts = await prepareTerminalAttempts(
-    page.attempts,
-    new Map([[exam.id, exam]]),
-    now,
-  );
+  const examMap = new Map([[exam.id, exam]]);
+  const attempts = await prepareTerminalAttempts(page.attempts, examMap, now);
+  const currentExam = examMap.get(exam.id) ?? exam;
 
   return {
     exam: {
-      id: exam.id,
-      title: exam.title,
+      id: currentExam.id,
+      title: currentExam.title,
     },
     visibility: {
-      score: exam.settings.showScoreAfterSubmission,
-      answers: exam.settings.showAnswersAfterSubmission,
+      score: currentExam.settings.showScoreAfterSubmission,
+      answers: currentExam.settings.showAnswersAfterSubmission,
     },
     attempts: attempts.map((attempt) => ({
       id: attempt.id,
@@ -588,7 +610,7 @@ export async function getStudentExamAttemptHistory(
       startedAt: attempt.startedAt.toISOString(),
       submittedAt: attempt.submittedAt.toISOString(),
       timeUsedSeconds: getAttemptTimeUsedSeconds(attempt),
-      ...(exam.settings.showScoreAfterSubmission
+      ...(currentExam.settings.showScoreAfterSubmission
         ? {
             score: scoreHundredthsToPoints(
               attempt.grading.totalScoreHundredths,

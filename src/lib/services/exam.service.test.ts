@@ -10,12 +10,15 @@ const mocks = vi.hoisted(() => ({
   acquireExamPdfOperationLease: vi.fn(),
   createExamRecord: vi.fn(),
   deleteExamAttemptRecordsByExamId: vi.fn(),
+  listTerminalExamAttemptRegradeSources: vi.fn(),
+  replaceTerminalExamAttemptGradings: vi.fn(),
   deleteExamRecord: vi.fn(),
   findExamRecordById: vi.fn(),
   findExamRecordByPdfPublicId: vi.fn(),
   listExamRecords: vi.fn(),
   releaseExamPdfOperationLease: vi.fn(),
   updateExamRecord: vi.fn(),
+  updateExamAnswerKeyRecord: vi.fn(),
   updateExamMetadataRecord: vi.fn(),
   updateExamRecordStatus: vi.fn(),
   findExamIdsWithAttemptRecords: vi.fn(),
@@ -43,6 +46,7 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
   listExamRecords: mocks.listExamRecords,
   releaseExamPdfOperationLease: mocks.releaseExamPdfOperationLease,
   updateExamRecord: mocks.updateExamRecord,
+  updateExamAnswerKeyRecord: mocks.updateExamAnswerKeyRecord,
   updateExamMetadataRecord: mocks.updateExamMetadataRecord,
   updateExamRecordStatus: mocks.updateExamRecordStatus,
 }));
@@ -51,6 +55,9 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   deleteExamAttemptRecordsByExamId: mocks.deleteExamAttemptRecordsByExamId,
   findExamIdsWithAttemptRecords: mocks.findExamIdsWithAttemptRecords,
   hasExamAttemptRecords: mocks.hasExamAttemptRecords,
+  listTerminalExamAttemptRegradeSources:
+    mocks.listTerminalExamAttemptRegradeSources,
+  replaceTerminalExamAttemptGradings: mocks.replaceTerminalExamAttemptGradings,
 }));
 
 vi.mock("@/lib/db/mongoose", () => ({
@@ -72,6 +79,8 @@ import {
   listExams,
 } from "@/lib/services/exam.service";
 import type { ExamPersistenceRecord } from "@/lib/db/dao/exam.dao";
+import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
+import { gradeAttemptAnswers } from "@/lib/exam/grading";
 import type { UpsertExamInput } from "@/lib/validations/exam";
 import type { AppUser } from "@/types/user";
 import type { ExamPdfUploadReference } from "@/types/exam";
@@ -147,6 +156,7 @@ function createStoredExam(
     id: "exam-id",
     ...input,
     pdf: oldPdf,
+    answerKeyRevision: 1,
     createdBy: admin.id,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-02T00:00:00.000Z"),
@@ -170,6 +180,10 @@ describe("exam service", () => {
     mocks.createExamRecord.mockReset();
     mocks.deleteExamAttemptRecordsByExamId.mockReset();
     mocks.deleteExamAttemptRecordsByExamId.mockResolvedValue(0);
+    mocks.listTerminalExamAttemptRegradeSources.mockReset();
+    mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([]);
+    mocks.replaceTerminalExamAttemptGradings.mockReset();
+    mocks.replaceTerminalExamAttemptGradings.mockResolvedValue(0);
     mocks.deleteExamRecord.mockReset();
     mocks.findExamRecordById.mockReset();
     mocks.findExamRecordByPdfPublicId.mockReset();
@@ -178,6 +192,7 @@ describe("exam service", () => {
     mocks.releaseExamPdfOperationLease.mockReset();
     mocks.releaseExamPdfOperationLease.mockResolvedValue(undefined);
     mocks.updateExamRecord.mockReset();
+    mocks.updateExamAnswerKeyRecord.mockReset();
     mocks.updateExamMetadataRecord.mockReset();
     mocks.updateExamRecordStatus.mockReset();
     mocks.findExamIdsWithAttemptRecords.mockReset();
@@ -295,6 +310,7 @@ describe("exam service", () => {
       currentExam.id,
       expect.objectContaining({ pdf: newPdf }),
       currentExam.updatedAt,
+      currentExam.answerKeyRevision,
     );
     expect(mocks.deleteExamPdf).toHaveBeenCalledWith(oldPdf.publicId);
     expect(mocks.updateExamRecord.mock.invocationCallOrder[0]).toBeLessThan(
@@ -521,7 +537,7 @@ describe("exam service", () => {
     expect(mocks.updateExamRecord).not.toHaveBeenCalled();
   });
 
-  it("rejects answer-key changes after the Exam has attempts", async () => {
+  it("requires explicit confirmation before changing an answer key after attempts", async () => {
     const currentExam = createStoredExam();
     const input = createValidInput();
     input.answerKey.partOne[0] = "B";
@@ -534,11 +550,151 @@ describe("exam service", () => {
         expectedUpdatedAt: currentExam.updatedAt.toISOString(),
       }),
     ).rejects.toMatchObject({
-      code: "EXAM_CONTENT_LOCKED",
+      code: "ANSWER_KEY_CORRECTION_CONFIRMATION_REQUIRED",
       statusCode: 409,
     });
     expect(mocks.updateExamRecord).not.toHaveBeenCalled();
     expect(mocks.updateExamMetadataRecord).not.toHaveBeenCalled();
+  });
+
+  it("atomically corrects the answer key and regrades all terminal attempts", async () => {
+    const currentExam = createStoredExam();
+    const input = createValidInput();
+    input.answerKey.partOne[0] = "B";
+    const correctedExam = createStoredExam({
+      answerKey: input.answerKey,
+      answerKeyRevision: 2,
+    });
+    const submittedAnswers = createEmptyAttemptAnswers();
+    submittedAnswers.partOne[0] = "B";
+    const autoSubmittedAnswers = createEmptyAttemptAnswers();
+    autoSubmittedAnswers.partOne[0] = "A";
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+    mocks.updateExamAnswerKeyRecord.mockResolvedValue(correctedExam);
+    mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([
+      { id: "submitted-attempt", answers: submittedAnswers },
+      { id: "auto-submitted-attempt", answers: autoSubmittedAnswers },
+    ]);
+    mocks.replaceTerminalExamAttemptGradings.mockResolvedValue(2);
+
+    const result = await editExam(
+      admin,
+      currentExam.id,
+      { ...input, expectedUpdatedAt: currentExam.updatedAt.toISOString() },
+      undefined,
+      true,
+    );
+
+    expect(result.answerKey).toEqual(input.answerKey);
+    expect(mocks.updateExamAnswerKeyRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      expect.objectContaining({ answerKey: input.answerKey }),
+      currentExam.updatedAt,
+      1,
+      2,
+      mocks.transactionSession,
+    );
+    expect(mocks.listTerminalExamAttemptRegradeSources).toHaveBeenCalledWith(
+      currentExam.id,
+      mocks.transactionSession,
+    );
+    const replacements = mocks.replaceTerminalExamAttemptGradings.mock
+      .calls[0][1] as Array<{
+      attemptId: string;
+      grading: ReturnType<typeof gradeAttemptAnswers>;
+    }>;
+    expect(replacements.map((replacement) => replacement.attemptId)).toEqual([
+      "submitted-attempt",
+      "auto-submitted-attempt",
+    ]);
+    expect(
+      replacements.every(
+        (replacement) => replacement.grading.answerKeyRevision === 2,
+      ),
+    ).toBe(true);
+    expect(replacements[0].grading.totalScoreHundredths).toBe(25);
+    expect(replacements[1].grading.totalScoreHundredths).toBe(0);
+  });
+
+  it("rolls back the corrected key and regrades when the transaction fails", async () => {
+    const currentExam = createStoredExam();
+    const input = createValidInput();
+    input.answerKey.partOne[0] = "B";
+    const answers = createEmptyAttemptAnswers();
+    const databaseState = {
+      answerKey: structuredClone(currentExam.answerKey),
+      answerKeyRevision: currentExam.answerKeyRevision,
+      gradingRevision: currentExam.answerKeyRevision,
+    };
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+    mocks.updateExamAnswerKeyRecord.mockImplementation(async () => {
+      databaseState.answerKey = structuredClone(input.answerKey);
+      databaseState.answerKeyRevision = 2;
+      return createStoredExam({
+        answerKey: input.answerKey,
+        answerKeyRevision: 2,
+      });
+    });
+    mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([
+      { id: "submitted-attempt", answers },
+    ]);
+    mocks.replaceTerminalExamAttemptGradings.mockImplementation(async () => {
+      databaseState.gradingRevision = 2;
+      throw new Error("Regrade failed");
+    });
+    mocks.withMongoTransaction.mockImplementation(
+      async (operation: (session: unknown) => Promise<unknown>) => {
+        const snapshot = structuredClone(databaseState);
+
+        try {
+          return await operation(mocks.transactionSession);
+        } catch (error) {
+          databaseState.answerKey = snapshot.answerKey;
+          databaseState.answerKeyRevision = snapshot.answerKeyRevision;
+          databaseState.gradingRevision = snapshot.gradingRevision;
+          throw error;
+        }
+      },
+    );
+
+    await expect(
+      editExam(
+        admin,
+        currentExam.id,
+        { ...input, expectedUpdatedAt: currentExam.updatedAt.toISOString() },
+        undefined,
+        true,
+      ),
+    ).rejects.toThrow("Regrade failed");
+    expect(databaseState).toEqual({
+      answerKey: currentExam.answerKey,
+      answerKeyRevision: 1,
+      gradingRevision: 1,
+    });
+  });
+
+  it("increments the answer-key revision before attempts exist", async () => {
+    const currentExam = createStoredExam();
+    const input = createValidInput();
+    input.answerKey.partOne[0] = "B";
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.updateExamRecord.mockResolvedValue(
+      createStoredExam({ answerKey: input.answerKey, answerKeyRevision: 2 }),
+    );
+
+    await editExam(admin, currentExam.id, {
+      ...input,
+      expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+    });
+
+    expect(mocks.updateExamRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      expect.objectContaining({ answerKey: input.answerKey }),
+      currentExam.updatedAt,
+      2,
+    );
   });
 
   it("allows changing the Part III input mode before attempts exist", async () => {
@@ -565,6 +721,7 @@ describe("exam service", () => {
         part3InputMode: PART3_INPUT_MODE.TEXT,
       }),
       currentExam.updatedAt,
+      currentExam.answerKeyRevision,
     );
   });
 

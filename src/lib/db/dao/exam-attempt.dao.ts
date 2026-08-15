@@ -68,6 +68,16 @@ export interface ExamAttemptStatusCounts {
   autoSubmitted: number;
 }
 
+export interface ExamAttemptRegradeSource {
+  id: string;
+  answers: AttemptAnswers;
+}
+
+export interface ExamAttemptGradingReplacement {
+  attemptId: string;
+  grading: AttemptGradingSnapshot;
+}
+
 interface ExamAttemptDocumentData {
   _id: Types.ObjectId;
   examId: Types.ObjectId;
@@ -221,16 +231,21 @@ export async function findOwnedExamAttemptRecord(
   attemptId: string,
   examId: string,
   studentId: string,
+  session?: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
 
-  const attempt = await ExamAttemptModel.findOne({
+  let query = ExamAttemptModel.findOne({
     _id: attemptId,
     examId,
     studentId,
-  })
-    .lean<ExamAttemptDocumentData>()
-    .exec();
+  });
+
+  if (session) {
+    query = query.session(session);
+  }
+
+  const attempt = await query.lean<ExamAttemptDocumentData>().exec();
 
   return attempt ? toExamAttemptRecord(attempt) : null;
 }
@@ -288,6 +303,7 @@ export async function saveOwnedActiveExamAttemptAnswers(
 
 export async function submitOwnedActiveExamAttempt(
   input: FinalizeOwnedExamAttemptInput,
+  session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
 
@@ -309,7 +325,7 @@ export async function submitOwnedActiveExamAttempt(
         gradedAt: input.now,
       },
     },
-    { returnDocument: "after", runValidators: true },
+    { returnDocument: "after", runValidators: true, session },
   )
     .lean<ExamAttemptDocumentData>()
     .exec();
@@ -324,6 +340,7 @@ export async function autoSubmitExpiredExamAttemptRecord(
   expectedAnswerRevision: number,
   grading: AttemptGradingSnapshot,
   now: Date,
+  session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
 
@@ -344,7 +361,7 @@ export async function autoSubmitExpiredExamAttemptRecord(
       expiresAt: { $lte: now },
     },
     getAutoSubmitUpdate(now, grading),
-    { returnDocument: "after" },
+    { returnDocument: "after", session },
   )
     .lean<ExamAttemptDocumentData>()
     .exec();
@@ -352,12 +369,13 @@ export async function autoSubmitExpiredExamAttemptRecord(
   return attempt ? toExamAttemptRecord(attempt) : null;
 }
 
-export async function setOwnedTerminalExamAttemptGradingIfMissing(
+export async function setOwnedTerminalExamAttemptGradingForRevision(
   attemptId: string,
   examId: string,
   studentId: string,
   grading: AttemptGradingSnapshot,
   gradedAt: Date,
+  session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
 
@@ -367,15 +385,93 @@ export async function setOwnedTerminalExamAttemptGradingIfMissing(
       examId,
       studentId,
       status: { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
-      grading: { $exists: false },
+      $or: [
+        { grading: { $exists: false } },
+        { "grading.answerKeyRevision": { $exists: false } },
+        {
+          "grading.answerKeyRevision": {
+            $lt: grading.answerKeyRevision,
+          },
+        },
+      ],
     },
     { $set: { grading, gradedAt } },
-    { returnDocument: "after", runValidators: true },
+    { returnDocument: "after", runValidators: true, session },
   )
     .lean<ExamAttemptDocumentData>()
     .exec();
 
   return attempt ? toExamAttemptRecord(attempt) : null;
+}
+
+export async function listTerminalExamAttemptRegradeSources(
+  examId: string,
+  session: ClientSession,
+): Promise<ExamAttemptRegradeSource[]> {
+  await prepareExamAttemptModel();
+
+  const attempts = await ExamAttemptModel.find({
+    examId,
+    status: { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
+  })
+    .select({ answers: 1 })
+    .session(session)
+    .lean<Array<Pick<ExamAttemptDocumentData, "_id" | "answers">>>()
+    .exec();
+
+  return attempts.map((attempt) => {
+    const parsedAnswers = attemptAnswersSchema.safeParse(
+      attempt.answers ?? createEmptyAttemptAnswers(),
+    );
+
+    if (!parsedAnswers.success) {
+      throw new Error("Stored ExamAttempt answers are malformed.");
+    }
+
+    return {
+      id: attempt._id.toString(),
+      answers: parsedAnswers.data,
+    };
+  });
+}
+
+export async function replaceTerminalExamAttemptGradings(
+  examId: string,
+  replacements: ExamAttemptGradingReplacement[],
+  gradedAt: Date,
+  session: ClientSession,
+): Promise<number> {
+  await prepareExamAttemptModel();
+
+  if (replacements.length === 0) {
+    return 0;
+  }
+
+  const validatedReplacements = replacements.map((replacement) => ({
+    ...replacement,
+    grading: attemptGradingSnapshotSchema.parse(replacement.grading),
+  }));
+  const result = await ExamAttemptModel.bulkWrite(
+    validatedReplacements.map((replacement) => ({
+      updateOne: {
+        filter: {
+          _id: replacement.attemptId,
+          examId,
+          status: { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
+        },
+        update: {
+          $set: {
+            grading: replacement.grading,
+            gradedAt,
+            updatedAt: gradedAt,
+          },
+        },
+      },
+    })),
+    { ordered: true, session },
+  );
+
+  return result.matchedCount;
 }
 
 export async function hasExamAttemptRecords(examId: string): Promise<boolean> {

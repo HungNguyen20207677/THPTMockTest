@@ -95,6 +95,7 @@ function createAnswerKey(): ExamAnswerKey {
 
 function createGrading(score = 750): AttemptGradingSnapshot {
   return {
+    answerKeyRevision: 1,
     totalScoreHundredths: score,
     sectionScoresHundredths: {
       partOne: Math.min(score, 300),
@@ -115,6 +116,7 @@ function createExam(
     title: "Đề thi thử Toán số 1",
     status: EXAM_STATUS.PUBLISHED,
     answerKey: createAnswerKey(),
+    answerKeyRevision: 1,
     settings: {
       showScoreAfterSubmission: true,
       showAnswersAfterSubmission: true,
@@ -201,7 +203,10 @@ describe("reporting service", () => {
       (attempt: ExamAttemptPersistenceRecord) => Promise.resolve(attempt),
     );
     mocks.ensureTerminalAttemptGrading.mockImplementation(
-      (attempt: ExamAttemptPersistenceRecord) => Promise.resolve(attempt),
+      (
+        attempt: ExamAttemptPersistenceRecord,
+        exam: ExamReportingPersistenceRecord,
+      ) => Promise.resolve({ attempt, exam }),
     );
   });
 
@@ -234,8 +239,6 @@ describe("reporting service", () => {
     expect(mocks.resolveAttemptExpiration).toHaveBeenCalledWith(
       expiredAttempt,
       now,
-      0,
-      expect.objectContaining({ id: expiredAttempt.examId }),
     );
     expect(summary).toEqual({
       activeStudentCount: 2,
@@ -293,7 +296,10 @@ describe("reporting service", () => {
       attempts: [legacyAttempt],
       totalItems: 1,
     });
-    mocks.ensureTerminalAttemptGrading.mockResolvedValue(gradedAttempt);
+    mocks.ensureTerminalAttemptGrading.mockResolvedValue({
+      attempt: gradedAttempt,
+      exam: createExam(),
+    });
 
     const result = await listAdminResults(admin, { page: 1, pageSize: 20 });
 
@@ -304,6 +310,48 @@ describe("reporting service", () => {
     );
     expect(mocks.ensureTerminalAttemptGrading).toHaveBeenCalledTimes(1);
     expect(result.results[0].score.total).toBe(7.5);
+  });
+
+  it("uses refreshed visibility settings with a concurrently revised grading", async () => {
+    const initialExam = createExam({
+      title: "Tên đề cũ",
+      answerKeyRevision: 1,
+      settings: {
+        showScoreAfterSubmission: true,
+        showAnswersAfterSubmission: false,
+      },
+    });
+    const correctedExam = createExam({
+      title: "Tên đề đã sửa",
+      answerKeyRevision: 2,
+      settings: {
+        showScoreAfterSubmission: false,
+        showAnswersAfterSubmission: false,
+      },
+    });
+    const revisedGrading = createGrading();
+    revisedGrading.answerKeyRevision = 2;
+    const revisedAttempt = createAttempt({ grading: revisedGrading });
+    mocks.findExamReportingRecordById.mockResolvedValue(initialExam);
+    mocks.findLatestExamAttemptRecord.mockResolvedValue(revisedAttempt);
+    mocks.listTerminalExamAttemptRecordPage.mockResolvedValue({
+      attempts: [revisedAttempt],
+      totalItems: 1,
+    });
+    mocks.ensureTerminalAttemptGrading.mockResolvedValue({
+      attempt: revisedAttempt,
+      exam: correctedExam,
+    });
+
+    const history = await getStudentExamAttemptHistory(
+      studentActor,
+      initialExam.id,
+      { page: 1, pageSize: 20 },
+    );
+
+    expect(history.exam.title).toBe(correctedExam.title);
+    expect(history.visibility).toEqual({ score: false, answers: false });
+    expect(history.attempts[0]).not.toHaveProperty("score");
   });
 
   it("does not expose answers for an unexpired active ADMIN detail", async () => {

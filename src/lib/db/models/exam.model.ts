@@ -5,6 +5,7 @@ import { model, models, Schema, type Model, type Types } from "mongoose";
 import {
   EXAM_STATUSES,
   EXAM_STRUCTURE,
+  INITIAL_ANSWER_KEY_REVISION,
   PART3_INPUT_MODE,
   PART3_INPUT_MODES,
   PART_ONE_CHOICES,
@@ -28,6 +29,7 @@ export interface ExamRecord {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  answerKeyRevision: number;
   attemptsStarted: boolean;
   attemptOperationVersion: number;
   createdBy: Types.ObjectId;
@@ -133,6 +135,16 @@ const examSchema = new Schema<ExamRecord>(
     pdf: { type: pdfSchema, required: true },
     settings: { type: settingsSchema, required: true },
     answerKey: { type: answerKeySchema, required: true },
+    answerKeyRevision: {
+      type: Number,
+      required: true,
+      default: INITIAL_ANSWER_KEY_REVISION,
+      min: INITIAL_ANSWER_KEY_REVISION,
+      validate: {
+        validator: Number.isInteger,
+        message: "Answer-key revision must be an integer.",
+      },
+    },
     attemptsStarted: { type: Boolean, required: true, default: false },
     attemptOperationVersion: {
       type: Number,

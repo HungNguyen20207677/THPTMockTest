@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type Dispatch,
@@ -44,7 +45,12 @@ import {
   getAttemptAnswerProgress,
 } from "@/lib/exam/attempt-answers";
 import {
+  advanceExamFullscreenTracking,
+  createExamFullscreenTrackingState,
+} from "@/lib/exam/fullscreen-exit";
+import {
   exitDocumentFullscreen,
+  isDocumentElementFullscreen,
   isFullscreenSupported,
   requestDocumentFullscreen,
 } from "@/lib/fullscreen";
@@ -75,7 +81,7 @@ const submittedAtFormatter = new Intl.DateTimeFormat("vi-VN", {
 const FINAL_AUTOSAVE_WAIT_MS = 2000;
 const PDF_LOAD_TIMEOUT_MS = 15_000;
 
-type ExamEnvironmentWarning = "FULLSCREEN_EXIT" | "PAGE_HIDDEN";
+type ExamEnvironmentWarning = "FULLSCREEN_SUBMIT" | "PAGE_HIDDEN";
 
 interface AttemptWorkspaceProps {
   examId: string;
@@ -580,6 +586,24 @@ function FullscreenIcon({ active }: { active: boolean }) {
   );
 }
 
+function ClockIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="text-muted-foreground size-4 motion-safe:animate-[pulse_3s_ease-in-out_infinite] motion-reduce:animate-none"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </svg>
+  );
+}
+
 function ActiveAttemptWorkspace({
   initialContext,
 }: {
@@ -612,14 +636,19 @@ function ActiveAttemptWorkspace({
   const [fullscreenError, setFullscreenError] = useState<string | null>(null);
   const [environmentWarning, setEnvironmentWarning] =
     useState<ExamEnvironmentWarning | null>(null);
+  const [fullscreenSubmissionError, setFullscreenSubmissionError] = useState<
+    string | null
+  >(null);
   const autoSubmitInFlightRef = useRef(false);
+  const finalSubmissionInFlightRef = useRef(false);
   const expirationStartedRef = useRef(false);
   const isMountedRef = useRef(true);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const answerSheetRef = useRef<HTMLElement>(null);
   const answerSheetHeaderRef = useRef<HTMLDivElement>(null);
-  const wasFullscreenRef = useRef(false);
+  const fullscreenTrackingRef = useRef(createExamFullscreenTrackingState());
+  const fullscreenExitAnswersRef = useRef<AttemptAnswers | null>(null);
   const leftExamScreenRef = useRef(false);
   const autoSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -642,6 +671,10 @@ function ActiveAttemptWorkspace({
     isPayloadValid: answerPayloadIsValid,
     hasLocalDraft: hasInvalidPartThreeText,
     saveAnswers: async (latestAnswers) => {
+      if (finalSubmissionInFlightRef.current) {
+        return {};
+      }
+
       try {
         const response = await saveStudentExamAttemptAnswers(
           exam.id,
@@ -703,6 +736,79 @@ function ActiveAttemptWorkspace({
       "Trình duyệt không thể mở toàn màn hình. Bạn vẫn có thể tiếp tục làm bài.",
     );
   }
+
+  async function submitFullscreenExitAnswers(answerSnapshot: AttemptAnswers) {
+    if (finalSubmissionInFlightRef.current) {
+      return;
+    }
+
+    finalSubmissionInFlightRef.current = true;
+    setIsSubmitting(true);
+    setIsSubmitDialogOpen(false);
+    setEnvironmentWarning("FULLSCREEN_SUBMIT");
+    setFullscreenSubmissionError(null);
+
+    try {
+      const response = await submitStudentExamAttempt(
+        exam.id,
+        initialAttempt.id,
+        answerSnapshot,
+      );
+      const result = response.data;
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setAnswers(result.attempt.answers);
+      setContext((currentContext) => ({
+        ...currentContext,
+        attempt: result.attempt,
+        serverNow: result.serverNow,
+        canEditAnswers: result.canEditAnswers,
+      }));
+      router.replace(getResultHref(exam.id, initialAttempt.id));
+    } catch (error) {
+      const errorMessage = getRequestError(
+        error,
+        "Không thể nộp bài sau khi thoát toàn màn hình. Vui lòng thử lại.",
+      );
+      const adoptedTerminalAttempt = await adoptTerminalAttemptIfAvailable();
+
+      if (!isMountedRef.current || adoptedTerminalAttempt) {
+        return;
+      }
+
+      finalSubmissionInFlightRef.current = false;
+      setFullscreenSubmissionError(errorMessage);
+    }
+  }
+
+  function retryFullscreenExitSubmission() {
+    const answerSnapshot = fullscreenExitAnswersRef.current;
+
+    if (answerSnapshot) {
+      void submitFullscreenExitAnswers(answerSnapshot);
+    }
+  }
+
+  const handleQualifiedFullscreenExit = useEffectEvent(() => {
+    if (
+      context.attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS ||
+      !context.canEditAnswers ||
+      expirationStartedRef.current
+    ) {
+      return;
+    }
+
+    const answerSnapshot = answers;
+    fullscreenExitAnswersRef.current = answerSnapshot;
+    setIsSubmitting(true);
+    setIsSubmitDialogOpen(false);
+    setEnvironmentWarning("FULLSCREEN_SUBMIT");
+    setFullscreenSubmissionError(null);
+    void submitFullscreenExitAnswers(answerSnapshot);
+  });
 
   function navigateToQuestion(targetId: string) {
     const answerSheet = answerSheetRef.current;
@@ -788,7 +894,11 @@ function ActiveAttemptWorkspace({
   }
 
   async function finalizeAfterExpiration() {
-    if (!isMountedRef.current || autoSubmitInFlightRef.current) {
+    if (
+      !isMountedRef.current ||
+      autoSubmitInFlightRef.current ||
+      finalSubmissionInFlightRef.current
+    ) {
       return;
     }
 
@@ -868,6 +978,13 @@ function ActiveAttemptWorkspace({
     setIsExpirationPending(true);
     setIsSubmitDialogOpen(false);
     setSubmissionError(null);
+
+    if (finalSubmissionInFlightRef.current) {
+      setHasCountdownExpired(true);
+      setIsExpirationPending(false);
+      return;
+    }
+
     const finalSave = autosave.flush().catch(() => undefined);
     await Promise.race([finalSave, wait(FINAL_AUTOSAVE_WAIT_MS)]);
 
@@ -882,6 +999,8 @@ function ActiveAttemptWorkspace({
 
   async function handleManualSubmit() {
     if (
+      finalSubmissionInFlightRef.current ||
+      expirationStartedRef.current ||
       isSubmitting ||
       hasCountdownExpired ||
       isExpirationPending ||
@@ -890,6 +1009,7 @@ function ActiveAttemptWorkspace({
       return;
     }
 
+    finalSubmissionInFlightRef.current = true;
     setIsSubmitting(true);
     setSubmissionError(null);
 
@@ -931,8 +1051,21 @@ function ActiveAttemptWorkspace({
         return;
       }
 
-      setSubmissionError(errorMessage);
-      setIsSubmitting(false);
+      finalSubmissionInFlightRef.current = false;
+
+      if (fullscreenTrackingRef.current.exitHandled) {
+        fullscreenExitAnswersRef.current = answers;
+        setIsSubmitDialogOpen(false);
+        setEnvironmentWarning("FULLSCREEN_SUBMIT");
+        setFullscreenSubmissionError(errorMessage);
+      } else {
+        setSubmissionError(errorMessage);
+        setIsSubmitting(false);
+
+        if (expirationStartedRef.current) {
+          void finalizeAfterExpiration();
+        }
+      }
     }
   }
 
@@ -946,23 +1079,26 @@ function ActiveAttemptWorkspace({
   }, []);
 
   useEffect(() => {
-    wasFullscreenRef.current = Boolean(document.fullscreenElement);
+    const initialIsFullscreen = isDocumentElementFullscreen();
+    fullscreenTrackingRef.current =
+      createExamFullscreenTrackingState(initialIsFullscreen);
     leftExamScreenRef.current = document.hidden;
 
     function handleFullscreenChange() {
-      const nextIsFullscreen = Boolean(document.fullscreenElement);
-
-      if (wasFullscreenRef.current && !nextIsFullscreen && !document.hidden) {
-        setEnvironmentWarning((currentWarning) =>
-          currentWarning === "PAGE_HIDDEN" ? currentWarning : "FULLSCREEN_EXIT",
-        );
-      }
-
-      wasFullscreenRef.current = nextIsFullscreen;
+      const nextIsFullscreen = isDocumentElementFullscreen();
+      const transition = advanceExamFullscreenTracking(
+        fullscreenTrackingRef.current,
+        nextIsFullscreen,
+      );
+      fullscreenTrackingRef.current = transition.state;
       setIsFullscreen(nextIsFullscreen);
 
       if (nextIsFullscreen) {
         setFullscreenError(null);
+      }
+
+      if (transition.shouldSubmit) {
+        handleQualifiedFullscreenExit();
       }
     }
 
@@ -974,16 +1110,18 @@ function ActiveAttemptWorkspace({
 
       if (leftExamScreenRef.current) {
         leftExamScreenRef.current = false;
-        setEnvironmentWarning("PAGE_HIDDEN");
+        setEnvironmentWarning((currentWarning) =>
+          currentWarning === "FULLSCREEN_SUBMIT"
+            ? currentWarning
+            : "PAGE_HIDDEN",
+        );
       }
     }
 
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     const initialStateFrame = window.requestAnimationFrame(() => {
-      const initialIsFullscreen = Boolean(document.fullscreenElement);
-      wasFullscreenRef.current = initialIsFullscreen;
-      setIsFullscreen(initialIsFullscreen);
+      setIsFullscreen(isDocumentElementFullscreen());
       setFullscreenSupported(isFullscreenSupported());
     });
 
@@ -1018,7 +1156,7 @@ function ActiveAttemptWorkspace({
       <AlertDialog
         open={Boolean(environmentWarning) && !isSubmitDialogOpen}
         onOpenChange={(open) => {
-          if (!open) {
+          if (!open && environmentWarning === "PAGE_HIDDEN") {
             setEnvironmentWarning(null);
             setFullscreenError(null);
           }
@@ -1032,31 +1170,46 @@ function ActiveAttemptWorkspace({
         >
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {environmentWarning === "PAGE_HIDDEN"
-                ? "Bạn đã rời màn hình làm bài"
-                : "Bạn đã thoát chế độ toàn màn hình"}
+              {environmentWarning === "FULLSCREEN_SUBMIT"
+                ? "Đang nộp bài do thoát toàn màn hình"
+                : "Bạn đã rời màn hình làm bài"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {environmentWarning === "PAGE_HIDDEN"
-                ? "Trang thi đã bị ẩn khi bạn chuyển tab, cửa sổ hoặc ứng dụng. Lượt làm bài và đồng hồ vẫn tiếp tục bình thường; hệ thống không tự động nộp bài hoặc thay đổi điểm."
-                : "Lượt làm bài và đồng hồ vẫn tiếp tục bình thường. Bạn có thể quay lại toàn màn hình để có không gian làm bài tập trung hơn."}
+              {environmentWarning === "FULLSCREEN_SUBMIT"
+                ? "Bạn đã thoát chế độ toàn màn hình. Phiếu trả lời hiện tại đã được khóa và đang được gửi để nộp bài."
+                : "Trang thi đã bị ẩn khi bạn chuyển tab, cửa sổ hoặc ứng dụng. Lượt làm bài và đồng hồ vẫn tiếp tục bình thường; hệ thống không tự động nộp bài hoặc thay đổi điểm."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {fullscreenError && (
+          {environmentWarning === "PAGE_HIDDEN" && fullscreenError && (
             <p role="alert" className="text-destructive text-sm">
               {fullscreenError}
             </p>
           )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Tiếp tục làm bài</AlertDialogCancel>
-            <Button
-              type="button"
-              disabled={!fullscreenSupported}
-              onClick={() => void handleReturnToFullscreen()}
-            >
-              Quay lại toàn màn hình
-            </Button>
-          </AlertDialogFooter>
+          {environmentWarning === "FULLSCREEN_SUBMIT" ? (
+            fullscreenSubmissionError && (
+              <>
+                <p role="alert" className="text-destructive text-sm">
+                  {fullscreenSubmissionError}
+                </p>
+                <AlertDialogFooter>
+                  <Button type="button" onClick={retryFullscreenExitSubmission}>
+                    Thử nộp lại
+                  </Button>
+                </AlertDialogFooter>
+              </>
+            )
+          ) : (
+            <AlertDialogFooter>
+              <AlertDialogCancel>Tiếp tục làm bài</AlertDialogCancel>
+              <Button
+                type="button"
+                disabled={!fullscreenSupported}
+                onClick={() => void handleReturnToFullscreen()}
+              >
+                Quay lại toàn màn hình
+              </Button>
+            </AlertDialogFooter>
+          )}
         </AlertDialogContent>
       </AlertDialog>
 
@@ -1123,29 +1276,23 @@ function ActiveAttemptWorkspace({
                 · Lần làm {context.attempt.attemptNumber}
               </span>
             </h1>
-            <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-3">
-              <p
-                className="text-xs font-semibold tabular-nums sm:text-sm"
-                aria-label={`${progress.answeredQuestions} trên ${progress.totalQuestions} câu đã trả lời`}
-              >
-                {progress.answeredQuestions}/{progress.totalQuestions}
-                <span className="text-muted-foreground ml-1 hidden font-normal xl:inline">
-                  đã trả lời
-                </span>
-              </p>
-              <CountdownTimer
-                expiresAt={context.attempt.expiresAt}
-                serverNow={context.serverNow}
-                onRemainingChange={(remainingMilliseconds) => {
-                  if (
-                    remainingMilliseconds > 0 &&
-                    remainingMilliseconds <= 3000
-                  ) {
-                    void autosave.flush().catch(() => undefined);
-                  }
-                }}
-                onExpired={handleCountdownExpired}
-              />
+            <div className="ml-auto flex shrink-0 items-center gap-3 sm:gap-4">
+              <div className="flex items-center gap-2">
+                <ClockIcon />
+                <CountdownTimer
+                  expiresAt={context.attempt.expiresAt}
+                  serverNow={context.serverNow}
+                  onRemainingChange={(remainingMilliseconds) => {
+                    if (
+                      remainingMilliseconds > 0 &&
+                      remainingMilliseconds <= 3000
+                    ) {
+                      void autosave.flush().catch(() => undefined);
+                    }
+                  }}
+                  onExpired={handleCountdownExpired}
+                />
+              </div>
               <AutosaveIndicator status={autosave.status} />
               <Button
                 ref={fullscreenButtonRef}
@@ -1155,13 +1302,13 @@ function ActiveAttemptWorkspace({
                 disabled={!fullscreenSupported}
                 aria-label={
                   isFullscreen
-                    ? "Thoát chế độ toàn màn hình"
+                    ? "Thoát toàn màn hình và nộp bài"
                     : "Mở chế độ toàn màn hình"
                 }
                 title={
                   fullscreenSupported
                     ? isFullscreen
-                      ? "Thoát toàn màn hình"
+                      ? "Thoát toàn màn hình và nộp bài"
                       : "Mở toàn màn hình"
                     : "Trình duyệt không hỗ trợ toàn màn hình"
                 }

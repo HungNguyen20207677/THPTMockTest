@@ -13,14 +13,17 @@ function stubDocument({
   exitFullscreen = vi.fn().mockResolvedValue(undefined),
 }: {
   fullscreenEnabled?: boolean;
-  fullscreenElement?: object | null;
+  fullscreenElement?: "document" | object | null;
   requestFullscreen?: ReturnType<typeof vi.fn>;
   exitFullscreen?: ReturnType<typeof vi.fn>;
 } = {}) {
+  const documentElement = { requestFullscreen };
+
   vi.stubGlobal("document", {
     fullscreenEnabled,
-    fullscreenElement,
-    documentElement: { requestFullscreen },
+    fullscreenElement:
+      fullscreenElement === "document" ? documentElement : fullscreenElement,
+    documentElement,
     exitFullscreen,
   });
 
@@ -53,9 +56,18 @@ describe("fullscreen browser helpers", () => {
   });
 
   it("exits an active fullscreen document", async () => {
-    const { exitFullscreen } = stubDocument({ fullscreenElement: {} });
+    const { exitFullscreen } = stubDocument({
+      fullscreenElement: "document",
+    });
 
     await expect(exitDocumentFullscreen()).resolves.toBe(true);
     expect(exitFullscreen).toHaveBeenCalledOnce();
+  });
+
+  it("does not exit fullscreen owned by another element", async () => {
+    const { exitFullscreen } = stubDocument({ fullscreenElement: {} });
+
+    await expect(exitDocumentFullscreen()).resolves.toBe(false);
+    expect(exitFullscreen).not.toHaveBeenCalled();
   });
 });

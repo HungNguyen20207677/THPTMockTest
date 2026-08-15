@@ -106,6 +106,7 @@ export const updateExamSchema = z.strictObject({
 export const updateExamRequestSchema = z.strictObject({
   exam: updateExamSchema,
   replacementPdfUpload: examPdfUploadReferenceSchema.optional(),
+  confirmAnswerKeyCorrection: z.literal(true).optional(),
 });
 
 export const publishableExamSchema = z.strictObject({

@@ -44,6 +44,7 @@ export async function PATCH(request: Request, context: ExamRouteContext) {
       examId,
       input.exam,
       input.replacementPdfUpload,
+      input.confirmAnswerKeyCorrection,
     );
     const response = {
       data: { exam },
