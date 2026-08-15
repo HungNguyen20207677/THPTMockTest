@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { PublicHeaderBoundary } from "@/components/shared/navigation-visibility";
 import { SiteHeader } from "@/components/shared/site-header";
 
 import "./globals.css";
@@ -20,7 +21,9 @@ export default function RootLayout({
   return (
     <html lang="vi">
       <body className="min-h-screen antialiased">
-        <SiteHeader />
+        <PublicHeaderBoundary>
+          <SiteHeader />
+        </PublicHeaderBoundary>
         {children}
       </body>
     </html>

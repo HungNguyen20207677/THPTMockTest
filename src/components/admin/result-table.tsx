@@ -115,7 +115,7 @@ export function AdminResultTable({
 
   return (
     <div className="border-border overflow-x-auto rounded-xl border">
-      <table className="w-full min-w-5xl border-collapse text-sm">
+      <table className="w-full min-w-5xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
         <thead className="bg-muted/70">
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
@@ -140,7 +140,7 @@ export function AdminResultTable({
           {table.getRowModel().rows.map((row) => (
             <tr key={row.id} className="border-border border-t">
               {row.getAllCells().map((cell) => (
-                <td key={cell.id} className="px-4 py-3 align-top">
+                <td key={cell.id} className="px-4 py-3 align-middle">
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
               ))}

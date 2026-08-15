@@ -7,6 +7,7 @@ import {
   AnswerReview,
   ScoreSummary,
 } from "@/components/student/attempt-result";
+import { ResultDetailSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchAdminAttemptDetail } from "@/lib/api/reporting";
@@ -68,11 +69,7 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
   }
 
   if (!detail) {
-    return (
-      <p className="text-muted-foreground py-12 text-center" aria-live="polite">
-        Đang tải chi tiết lượt làm bài...
-      </p>
-    );
+    return <ResultDetailSkeleton label="Đang tải chi tiết lượt làm bài" />;
   }
 
   const isTerminal = detail.attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS;

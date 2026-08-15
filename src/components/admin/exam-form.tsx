@@ -8,6 +8,7 @@ import { Controller, useForm, useWatch } from "react-hook-form";
 
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
 import { ShortAnswerTextInput } from "@/components/exam/short-answer-text-input";
+import { ExamFormSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -252,11 +253,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   });
 
   if (isLoading) {
-    return (
-      <p className="text-muted-foreground py-10 text-center" aria-live="polite">
-        Đang tải đề thi...
-      </p>
-    );
+    return <ExamFormSkeleton />;
   }
 
   if (loadError) {

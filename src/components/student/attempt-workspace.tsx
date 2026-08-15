@@ -13,6 +13,7 @@ import {
 import { CountdownTimer } from "@/components/exam/countdown-timer";
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
 import { ShortAnswerTextInput } from "@/components/exam/short-answer-text-input";
+import { ExamWorkspaceSkeleton } from "@/components/shared/loading-skeletons";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -23,6 +24,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ApiClientError } from "@/lib/api/client";
 import {
   fetchStudentExamAttempt,
@@ -41,6 +43,11 @@ import {
   countAnsweredPartTwoStatements,
   getAttemptAnswerProgress,
 } from "@/lib/exam/attempt-answers";
+import {
+  exitDocumentFullscreen,
+  isFullscreenSupported,
+  requestDocumentFullscreen,
+} from "@/lib/fullscreen";
 import {
   AUTOSAVE_STATUS,
   useAttemptAutosave,
@@ -65,14 +72,10 @@ const submittedAtFormatter = new Intl.DateTimeFormat("vi-VN", {
   timeZone: "Asia/Ho_Chi_Minh",
 });
 
-const savedAtFormatter = new Intl.DateTimeFormat("vi-VN", {
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  timeZone: "Asia/Ho_Chi_Minh",
-});
 const FINAL_AUTOSAVE_WAIT_MS = 2000;
 const PDF_LOAD_TIMEOUT_MS = 15_000;
+
+type ExamEnvironmentWarning = "FULLSCREEN_EXIT" | "PAGE_HIDDEN";
 
 interface AttemptWorkspaceProps {
   examId: string;
@@ -506,33 +509,74 @@ function EndedAttempt({ context }: { context: StudentExamAttemptContext }) {
   );
 }
 
-function AutosaveIndicator({
-  status,
-  lastSavedAt,
-}: {
-  status: AutosaveStatus;
-  lastSavedAt?: string;
-}) {
+function AutosaveIndicator({ status }: { status: AutosaveStatus }) {
   const labels: Record<AutosaveStatus, string> = {
-    [AUTOSAVE_STATUS.SAVED]: lastSavedAt
-      ? `Đã lưu lúc ${savedAtFormatter.format(new Date(lastSavedAt))}`
-      : "Đã lưu",
+    [AUTOSAVE_STATUS.SAVED]: "Đã lưu",
     [AUTOSAVE_STATUS.UNSAVED]: "Chưa lưu",
     [AUTOSAVE_STATUS.SAVING]: "Đang lưu...",
-    [AUTOSAVE_STATUS.ERROR]: "Lỗi khi lưu, sẽ thử lại",
+    [AUTOSAVE_STATUS.ERROR]: "Lỗi khi lưu",
   };
   const isError = status === AUTOSAVE_STATUS.ERROR;
+  const statusDotClassNames: Record<AutosaveStatus, string> = {
+    [AUTOSAVE_STATUS.SAVED]: "bg-emerald-500",
+    [AUTOSAVE_STATUS.UNSAVED]: "bg-amber-500",
+    [AUTOSAVE_STATUS.SAVING]: "bg-primary animate-pulse",
+    [AUTOSAVE_STATUS.ERROR]: "bg-destructive",
+  };
+  const compactLabels: Record<AutosaveStatus, string> = {
+    [AUTOSAVE_STATUS.SAVED]: "✓",
+    [AUTOSAVE_STATUS.UNSAVED]: "○",
+    [AUTOSAVE_STATUS.SAVING]: "…",
+    [AUTOSAVE_STATUS.ERROR]: "Lỗi",
+  };
 
   return (
     <p
       aria-live="polite"
+      title={`Tự động lưu: ${labels[status]}`}
       className={cn(
-        "text-xs font-medium",
+        "flex items-center gap-1.5 text-xs font-medium",
         isError ? "text-destructive" : "text-muted-foreground",
       )}
     >
-      {labels[status]}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "hidden size-2 rounded-full sm:block",
+          statusDotClassNames[status],
+        )}
+      />
+      <span aria-hidden="true" className="text-xs font-bold sm:hidden">
+        {compactLabels[status]}
+      </span>
+      <span className="hidden sm:inline">{labels[status]}</span>
+      <span className="sr-only sm:hidden">{labels[status]}</span>
     </p>
+  );
+}
+
+function FullscreenIcon({ active }: { active: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {active ? (
+        <>
+          <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+        </>
+      ) : (
+        <>
+          <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+        </>
+      )}
+    </svg>
   );
 }
 
@@ -563,12 +607,20 @@ function ActiveAttemptWorkspace({
   const [partThreeTextValidity, setPartThreeTextValidity] = useState(() =>
     Array.from({ length: EXAM_STRUCTURE.partThreeQuestions }, () => true),
   );
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenSupported, setFullscreenSupported] = useState(true);
+  const [fullscreenError, setFullscreenError] = useState<string | null>(null);
+  const [environmentWarning, setEnvironmentWarning] =
+    useState<ExamEnvironmentWarning | null>(null);
   const autoSubmitInFlightRef = useRef(false);
   const expirationStartedRef = useRef(false);
   const isMountedRef = useRef(true);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const answerSheetRef = useRef<HTMLElement>(null);
   const answerSheetHeaderRef = useRef<HTMLDivElement>(null);
+  const wasFullscreenRef = useRef(false);
+  const leftExamScreenRef = useRef(false);
   const autoSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -624,6 +676,32 @@ function ActiveAttemptWorkspace({
         index === questionIndex ? isValid : currentValue,
       );
     });
+  }
+
+  async function handleFullscreenToggle() {
+    setFullscreenError(null);
+    const succeeded = isFullscreen
+      ? await exitDocumentFullscreen()
+      : await requestDocumentFullscreen();
+
+    if (!succeeded) {
+      setFullscreenError(
+        "Trình duyệt không thể thay đổi chế độ toàn màn hình. Bạn vẫn có thể tiếp tục làm bài.",
+      );
+    }
+  }
+
+  async function handleReturnToFullscreen() {
+    setFullscreenError(null);
+
+    if (await requestDocumentFullscreen()) {
+      setEnvironmentWarning(null);
+      return;
+    }
+
+    setFullscreenError(
+      "Trình duyệt không thể mở toàn màn hình. Bạn vẫn có thể tiếp tục làm bài.",
+    );
   }
 
   function navigateToQuestion(targetId: string) {
@@ -868,6 +946,55 @@ function ActiveAttemptWorkspace({
   }, []);
 
   useEffect(() => {
+    wasFullscreenRef.current = Boolean(document.fullscreenElement);
+    leftExamScreenRef.current = document.hidden;
+
+    function handleFullscreenChange() {
+      const nextIsFullscreen = Boolean(document.fullscreenElement);
+
+      if (wasFullscreenRef.current && !nextIsFullscreen && !document.hidden) {
+        setEnvironmentWarning((currentWarning) =>
+          currentWarning === "PAGE_HIDDEN" ? currentWarning : "FULLSCREEN_EXIT",
+        );
+      }
+
+      wasFullscreenRef.current = nextIsFullscreen;
+      setIsFullscreen(nextIsFullscreen);
+
+      if (nextIsFullscreen) {
+        setFullscreenError(null);
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        leftExamScreenRef.current = true;
+        return;
+      }
+
+      if (leftExamScreenRef.current) {
+        leftExamScreenRef.current = false;
+        setEnvironmentWarning("PAGE_HIDDEN");
+      }
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const initialStateFrame = window.requestAnimationFrame(() => {
+      const initialIsFullscreen = Boolean(document.fullscreenElement);
+      wasFullscreenRef.current = initialIsFullscreen;
+      setIsFullscreen(initialIsFullscreen);
+      setFullscreenSupported(isFullscreenSupported());
+    });
+
+    return () => {
+      window.cancelAnimationFrame(initialStateFrame);
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
     if (pdfLoadState !== "loading") {
       return;
     }
@@ -888,6 +1015,51 @@ function ActiveAttemptWorkspace({
 
   return (
     <>
+      <AlertDialog
+        open={Boolean(environmentWarning) && !isSubmitDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEnvironmentWarning(null);
+            setFullscreenError(null);
+          }
+        }}
+      >
+        <AlertDialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            fullscreenButtonRef.current?.focus();
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {environmentWarning === "PAGE_HIDDEN"
+                ? "Bạn đã rời màn hình làm bài"
+                : "Bạn đã thoát chế độ toàn màn hình"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {environmentWarning === "PAGE_HIDDEN"
+                ? "Trang thi đã bị ẩn khi bạn chuyển tab, cửa sổ hoặc ứng dụng. Lượt làm bài và đồng hồ vẫn tiếp tục bình thường; hệ thống không tự động nộp bài hoặc thay đổi điểm."
+                : "Lượt làm bài và đồng hồ vẫn tiếp tục bình thường. Bạn có thể quay lại toàn màn hình để có không gian làm bài tập trung hơn."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {fullscreenError && (
+            <p role="alert" className="text-destructive text-sm">
+              {fullscreenError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Tiếp tục làm bài</AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={!fullscreenSupported}
+              onClick={() => void handleReturnToFullscreen()}
+            >
+              Quay lại toàn màn hình
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog
         open={isSubmitDialogOpen}
         onOpenChange={(open) => {
@@ -938,52 +1110,65 @@ function ActiveAttemptWorkspace({
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="flex h-full min-h-0 flex-col gap-3">
-        <header className="border-border bg-background sticky top-0 z-20 shrink-0 rounded-xl border px-4 py-3 shadow-sm lg:static">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0">
-              <p className="text-muted-foreground text-xs font-semibold tracking-wide">
-                LẦN LÀM {context.attempt.attemptNumber}
-              </p>
-              <h1
-                className="truncate text-xl font-bold"
-                title={context.exam.title}
+      <div className="flex h-full min-h-0 flex-col gap-2">
+        <header className="border-border bg-background sticky top-0 z-20 flex min-h-14 shrink-0 items-center overflow-x-auto rounded-lg border px-2.5 py-2 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:static sm:px-3">
+          <div className="flex w-full min-w-0 items-center gap-2 sm:gap-3">
+            <h1
+              className="hidden min-w-0 flex-1 truncate text-sm font-semibold lg:block xl:text-base"
+              title={`${context.exam.title} · Lần làm ${context.attempt.attemptNumber}`}
+            >
+              {context.exam.title}
+              <span className="text-muted-foreground font-normal">
+                {" "}
+                · Lần làm {context.attempt.attemptNumber}
+              </span>
+            </h1>
+            <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-3">
+              <p
+                className="text-xs font-semibold tabular-nums sm:text-sm"
+                aria-label={`${progress.answeredQuestions} trên ${progress.totalQuestions} câu đã trả lời`}
               >
-                {context.exam.title}
-              </h1>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-              <div>
-                <p className="text-muted-foreground text-xs">Đã trả lời</p>
-                <p className="font-semibold tabular-nums">
-                  {progress.answeredQuestions}/{progress.totalQuestions} câu
-                </p>
-              </div>
-              <div>
-                <p className="text-muted-foreground text-xs">
-                  Thời gian còn lại
-                </p>
-                <CountdownTimer
-                  expiresAt={context.attempt.expiresAt}
-                  serverNow={context.serverNow}
-                  onRemainingChange={(remainingMilliseconds) => {
-                    if (
-                      remainingMilliseconds > 0 &&
-                      remainingMilliseconds <= 3000
-                    ) {
-                      void autosave.flush().catch(() => undefined);
-                    }
-                  }}
-                  onExpired={handleCountdownExpired}
-                />
-              </div>
-              <div className="min-w-32">
-                <p className="text-muted-foreground text-xs">Tự động lưu</p>
-                <AutosaveIndicator
-                  status={autosave.status}
-                  lastSavedAt={autosave.lastSavedAt}
-                />
-              </div>
+                {progress.answeredQuestions}/{progress.totalQuestions}
+                <span className="text-muted-foreground ml-1 hidden font-normal xl:inline">
+                  đã trả lời
+                </span>
+              </p>
+              <CountdownTimer
+                expiresAt={context.attempt.expiresAt}
+                serverNow={context.serverNow}
+                onRemainingChange={(remainingMilliseconds) => {
+                  if (
+                    remainingMilliseconds > 0 &&
+                    remainingMilliseconds <= 3000
+                  ) {
+                    void autosave.flush().catch(() => undefined);
+                  }
+                }}
+                onExpired={handleCountdownExpired}
+              />
+              <AutosaveIndicator status={autosave.status} />
+              <Button
+                ref={fullscreenButtonRef}
+                type="button"
+                size="icon"
+                variant="outline"
+                disabled={!fullscreenSupported}
+                aria-label={
+                  isFullscreen
+                    ? "Thoát chế độ toàn màn hình"
+                    : "Mở chế độ toàn màn hình"
+                }
+                title={
+                  fullscreenSupported
+                    ? isFullscreen
+                      ? "Thoát toàn màn hình"
+                      : "Mở toàn màn hình"
+                    : "Trình duyệt không hỗ trợ toàn màn hình"
+                }
+                onClick={() => void handleFullscreenToggle()}
+              >
+                <FullscreenIcon active={isFullscreen} />
+              </Button>
               <Button
                 ref={submitButtonRef}
                 type="button"
@@ -1000,11 +1185,21 @@ function ActiveAttemptWorkspace({
                 }
                 onClick={() => setIsSubmitDialogOpen(true)}
               >
-                Nộp bài
+                <span className="sm:hidden">Nộp</span>
+                <span className="hidden sm:inline">Nộp bài</span>
               </Button>
             </div>
           </div>
         </header>
+
+        {fullscreenError && !environmentWarning && (
+          <p
+            role="alert"
+            className="border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+          >
+            {fullscreenError}
+          </p>
+        )}
 
         {(hasCountdownExpired || isExpirationPending) && (
           <div
@@ -1032,33 +1227,33 @@ function ActiveAttemptWorkspace({
           </div>
         )}
 
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(24rem,2fr)]">
+        <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(24rem,2fr)]">
           <section
             aria-labelledby="exam-pdf-heading"
             className="border-border bg-background flex min-h-[65dvh] flex-col overflow-hidden rounded-xl border shadow-sm lg:min-h-0"
           >
-            <div className="border-border flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2.5">
-              <div className="min-w-0">
-                <h2 id="exam-pdf-heading" className="text-sm font-semibold">
-                  Đề thi PDF
-                </h2>
-                <p className="text-muted-foreground truncate text-xs">
-                  {context.exam.pdf.filename}
-                </p>
-              </div>
-              <Button asChild size="sm" variant="outline">
-                <a href={context.exam.pdf.url} target="_blank" rel="noreferrer">
-                  Mở tab mới
-                </a>
-              </Button>
+            <div className="border-border flex h-9 shrink-0 items-center gap-2 border-b px-3">
+              <h2
+                id="exam-pdf-heading"
+                className="shrink-0 text-xs font-semibold"
+              >
+                Đề thi PDF
+              </h2>
+              <span aria-hidden="true" className="text-muted-foreground">
+                ·
+              </span>
+              <p
+                className="text-muted-foreground min-w-0 truncate text-xs"
+                title={context.exam.pdf.filename}
+              >
+                {context.exam.pdf.filename}
+              </p>
             </div>
             {pdfLoadState === "loading" && (
-              <p
-                role="status"
-                className="text-muted-foreground px-4 py-3 text-center text-sm"
-              >
-                Đang tải đề thi PDF...
-              </p>
+              <div role="status" className="px-3 py-2">
+                <span className="sr-only">Đang tải đề thi PDF</span>
+                <Skeleton className="h-1.5 w-full" />
+              </div>
             )}
             {pdfLoadState === "error" && (
               <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -1228,11 +1423,7 @@ export function AttemptWorkspace({ examId, attemptId }: AttemptWorkspaceProps) {
   }
 
   if (!context) {
-    return (
-      <p className="text-muted-foreground py-12 text-center" aria-live="polite">
-        Đang tải không gian làm bài...
-      </p>
-    );
+    return <ExamWorkspaceSkeleton />;
   }
 
   if (!context.canEditAnswers) {

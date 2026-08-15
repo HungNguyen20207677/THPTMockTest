@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { ExamTable } from "@/components/admin/exam-table";
+import { TableSkeleton } from "@/components/shared/loading-skeletons";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -236,12 +237,7 @@ export function ExamManagement() {
           </Button>
         </div>
       ) : isLoading ? (
-        <p
-          className="text-muted-foreground py-10 text-center"
-          aria-live="polite"
-        >
-          Đang tải danh sách đề thi...
-        </p>
+        <TableSkeleton columns={6} label="Đang tải danh sách đề thi" />
       ) : (
         <ExamTable
           exams={exams}

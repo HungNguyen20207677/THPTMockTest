@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AdminResultListPanel } from "@/components/admin/result-list-panel";
+import { StatisticsSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchAdminExamResults } from "@/lib/api/reporting";
@@ -75,9 +76,7 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
 
   if (!report) {
     return (
-      <p className="text-muted-foreground py-12 text-center" aria-live="polite">
-        Đang tải thống kê đề thi...
-      </p>
+      <StatisticsSkeleton label="Đang tải thống kê đề thi" metricCount={8} />
     );
   }
 
@@ -136,7 +135,7 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
           </p>
         </div>
         <div className="border-border overflow-x-auto rounded-xl border">
-          <table className="w-full min-w-3xl border-collapse text-sm">
+          <table className="w-full min-w-3xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
             <thead className="bg-muted/70">
               <tr>
                 {[

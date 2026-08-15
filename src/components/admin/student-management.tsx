@@ -8,6 +8,7 @@ import {
   ResetPasswordForm,
 } from "@/components/admin/student-forms";
 import { StudentTable } from "@/components/admin/student-table";
+import { TableSkeleton } from "@/components/shared/loading-skeletons";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -272,12 +273,7 @@ export function StudentManagement() {
           </Button>
         </div>
       ) : isLoading ? (
-        <p
-          className="text-muted-foreground py-8 text-center"
-          aria-live="polite"
-        >
-          Đang tải danh sách học sinh...
-        </p>
+        <TableSkeleton columns={5} label="Đang tải danh sách học sinh" />
       ) : (
         <StudentTable
           students={students}

@@ -4,8 +4,13 @@ import { signOut } from "next-auth/react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
-export function LogoutButton() {
+export function LogoutButton({
+  presentation = "default",
+}: {
+  presentation?: "default" | "menu";
+}) {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
@@ -25,8 +30,9 @@ export function LogoutButton() {
     <div className="flex flex-col items-end gap-1">
       <Button
         type="button"
-        variant="outline"
+        variant={presentation === "menu" ? "ghost" : "outline"}
         size="sm"
+        className={cn(presentation === "menu" && "w-full justify-start")}
         disabled={isSigningOut}
         onClick={() => void handleSignOut()}
       >

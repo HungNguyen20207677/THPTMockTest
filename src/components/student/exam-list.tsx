@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { ExamCardsSkeleton } from "@/components/shared/loading-skeletons";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -20,6 +21,10 @@ import {
   startStudentExamAttempt,
 } from "@/lib/api/student-exams";
 import { STUDENT_EXAM_STATE } from "@/lib/constants/exam-attempt";
+import {
+  exitDocumentFullscreen,
+  requestDocumentFullscreen,
+} from "@/lib/fullscreen";
 import type {
   StudentExamState,
   StudentExamSummary,
@@ -103,26 +108,38 @@ export function StudentExamList() {
       return;
     }
 
+    const wasFullscreen = Boolean(document.fullscreenElement);
+    const fullscreenRequest = requestDocumentFullscreen();
     setIsStarting(true);
     setStartError(null);
 
     try {
+      if (
+        startTarget.state === STUDENT_EXAM_STATE.IN_PROGRESS &&
+        startTarget.activeAttemptId
+      ) {
+        router.push(
+          getAttemptHref(startTarget.id, startTarget.activeAttemptId),
+        );
+        return;
+      }
+
       const response = await startStudentExamAttempt(startTarget.id);
       const { attempt } = response.data.context;
       router.push(getAttemptHref(startTarget.id, attempt.id));
     } catch (error) {
       setStartError(getRequestError(error));
+
+      if (!wasFullscreen && (await fullscreenRequest)) {
+        await exitDocumentFullscreen();
+      }
     } finally {
       setIsStarting(false);
     }
   }
 
   if (isLoading) {
-    return (
-      <p className="text-muted-foreground py-12 text-center" aria-live="polite">
-        Đang tải danh sách đề thi...
-      </p>
-    );
+    return <ExamCardsSkeleton />;
   }
 
   if (loadError) {
@@ -168,12 +185,14 @@ export function StudentExamList() {
               <AlertDialogTitle>
                 {startTarget.state === STUDENT_EXAM_STATE.COMPLETED
                   ? "Xác nhận làm lại"
-                  : "Xác nhận bắt đầu làm bài"}
+                  : startTarget.state === STUDENT_EXAM_STATE.IN_PROGRESS
+                    ? "Xác nhận tiếp tục làm bài"
+                    : "Xác nhận bắt đầu làm bài"}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                Thời gian làm bài là 90 phút. Sau khi xác nhận, thời gian bắt
-                đầu tính ngay. Tải lại trang hoặc đóng trình duyệt không làm
-                dừng thời gian.
+                {startTarget.state === STUDENT_EXAM_STATE.IN_PROGRESS
+                  ? "Thời gian làm bài vẫn đang tiếp tục. Sau khi xác nhận, trình duyệt sẽ thử mở chế độ toàn màn hình và đưa bạn trở lại bài thi."
+                  : "Thời gian làm bài là 90 phút. Sau khi xác nhận, thời gian bắt đầu tính ngay và trình duyệt sẽ thử mở chế độ toàn màn hình. Tải lại trang hoặc đóng trình duyệt không làm dừng thời gian."}
               </AlertDialogDescription>
             </AlertDialogHeader>
             {startError && (
@@ -188,7 +207,7 @@ export function StudentExamList() {
                 disabled={isStarting}
                 onClick={() => void handleConfirmedStart()}
               >
-                {isStarting ? "Đang bắt đầu..." : "Xác nhận"}
+                {isStarting ? "Đang mở bài thi..." : "Xác nhận"}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -240,12 +259,15 @@ export function StudentExamList() {
               <div className="mt-auto flex flex-wrap gap-2 pt-5">
                 {exam.state === STUDENT_EXAM_STATE.IN_PROGRESS &&
                   exam.activeAttemptId && (
-                    <Button asChild>
-                      <Link
-                        href={getAttemptHref(exam.id, exam.activeAttemptId)}
-                      >
-                        Tiếp tục làm bài
-                      </Link>
+                    <Button
+                      type="button"
+                      onClick={(event) => {
+                        startTriggerRef.current = event.currentTarget;
+                        setStartError(null);
+                        setStartTarget(exam);
+                      }}
+                    >
+                      Tiếp tục làm bài
                     </Button>
                   )}
                 {exam.state === STUDENT_EXAM_STATE.NOT_STARTED && (

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { MetricCardsSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchAdminDashboardSummary } from "@/lib/api/reporting";
@@ -65,11 +66,7 @@ export function AdminDashboard() {
   }
 
   if (!summary) {
-    return (
-      <p className="text-muted-foreground py-8 text-center" aria-live="polite">
-        Đang tải số liệu tổng quan...
-      </p>
-    );
+    return <MetricCardsSkeleton />;
   }
 
   const metrics = [

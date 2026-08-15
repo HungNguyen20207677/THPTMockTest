@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AdminResultListPanel } from "@/components/admin/result-list-panel";
+import { StatisticsSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchAdminStudentDetail } from "@/lib/api/reporting";
@@ -69,9 +70,7 @@ export function AdminStudentDetailView({ studentId }: { studentId: string }) {
 
   if (!detail) {
     return (
-      <p className="text-muted-foreground py-12 text-center" aria-live="polite">
-        Đang tải thống kê học sinh...
-      </p>
+      <StatisticsSkeleton label="Đang tải thống kê học sinh" metricCount={6} />
     );
   }
 
@@ -141,7 +140,7 @@ export function AdminStudentDetailView({ studentId }: { studentId: string }) {
           </p>
         </div>
         <div className="border-border overflow-x-auto rounded-xl border">
-          <table className="w-full min-w-3xl border-collapse text-sm">
+          <table className="w-full min-w-3xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
             <thead className="bg-muted/70">
               <tr>
                 {[

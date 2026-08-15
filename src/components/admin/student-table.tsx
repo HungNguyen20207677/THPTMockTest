@@ -78,7 +78,7 @@ export function StudentTable({
         const student = row.original;
 
         return (
-          <div className="flex min-w-72 flex-wrap gap-1">
+          <div className="flex min-w-72 flex-wrap items-center gap-1">
             <Button asChild size="sm" variant="outline">
               <Link href={`/admin/students/${student.id}`}>Kết quả</Link>
             </Button>
@@ -136,7 +136,7 @@ export function StudentTable({
 
   return (
     <div className="border-border overflow-x-auto rounded-xl border">
-      <table className="w-full min-w-3xl border-collapse text-sm">
+      <table className="w-full min-w-3xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
         <thead className="bg-muted/70">
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
@@ -161,7 +161,7 @@ export function StudentTable({
           {table.getRowModel().rows.map((row) => (
             <tr key={row.id} className="border-border border-t">
               {row.getAllCells().map((cell) => (
-                <td key={cell.id} className="px-4 py-3 align-top">
+                <td key={cell.id} className="px-4 py-3 align-middle">
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
               ))}

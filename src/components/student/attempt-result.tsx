@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { ResultDetailSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchStudentExamAttemptResult } from "@/lib/api/student-exams";
@@ -254,11 +255,7 @@ export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
   }
 
   if (!result) {
-    return (
-      <p className="text-muted-foreground py-12 text-center" aria-live="polite">
-        Đang tải kết quả bài làm...
-      </p>
-    );
+    return <ResultDetailSkeleton label="Đang tải kết quả bài làm" />;
   }
 
   const wasAutoSubmitted =

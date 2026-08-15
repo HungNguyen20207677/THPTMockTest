@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AdminResultTable } from "@/components/admin/result-table";
+import { TableSkeleton } from "@/components/shared/loading-skeletons";
 import { PaginationControls } from "@/components/shared/pagination-controls";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
@@ -252,12 +253,7 @@ export function AdminResultListPanel({
           </Button>
         </div>
       ) : isLoading && !data ? (
-        <p
-          className="text-muted-foreground py-8 text-center"
-          aria-live="polite"
-        >
-          Đang tải danh sách kết quả...
-        </p>
+        <TableSkeleton columns={8} label="Đang tải danh sách kết quả" />
       ) : data ? (
         <>
           <AdminResultTable results={data.results} />

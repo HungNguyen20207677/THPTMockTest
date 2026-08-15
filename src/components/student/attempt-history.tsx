@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { StatisticsSkeleton } from "@/components/shared/loading-skeletons";
 import { PaginationControls } from "@/components/shared/pagination-controls";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
@@ -91,9 +92,7 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
 
   if (!history) {
     return (
-      <p className="text-muted-foreground py-12 text-center" aria-live="polite">
-        Đang tải lịch sử làm bài...
-      </p>
+      <StatisticsSkeleton label="Đang tải lịch sử làm bài" metricCount={0} />
     );
   }
 
@@ -117,7 +116,7 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
       )}
 
       <div className="border-border overflow-x-auto rounded-xl border">
-        <table className="w-full min-w-2xl border-collapse text-sm">
+        <table className="w-full min-w-2xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
           <thead className="bg-muted/70">
             <tr>
               {[
