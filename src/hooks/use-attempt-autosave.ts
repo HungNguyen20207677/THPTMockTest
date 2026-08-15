@@ -27,6 +27,7 @@ interface UseAttemptAutosaveOptions {
   initialLastSavedAt?: string;
   enabled: boolean;
   isPayloadValid: boolean;
+  hasLocalDraft?: boolean;
   saveAnswers: (answers: AttemptAnswers) => Promise<SaveAnswersResult>;
 }
 
@@ -53,6 +54,7 @@ export function useAttemptAutosave({
   initialLastSavedAt,
   enabled,
   isPayloadValid,
+  hasLocalDraft = false,
   saveAnswers,
 }: UseAttemptAutosaveOptions) {
   const [initialSnapshot] = useState(() => createSnapshot(initialAnswers));
@@ -259,7 +261,7 @@ export function useAttemptAutosave({
   ]);
 
   useEffect(() => {
-    if (!enabled || status === AUTOSAVE_STATUS.SAVED) {
+    if (!enabled || (status === AUTOSAVE_STATUS.SAVED && !hasLocalDraft)) {
       return;
     }
 
@@ -270,7 +272,7 @@ export function useAttemptAutosave({
 
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [enabled, status]);
+  }, [enabled, hasLocalDraft, status]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -308,7 +310,10 @@ export function useAttemptAutosave({
   }
 
   return {
-    status: enabled && !isPayloadValid ? AUTOSAVE_STATUS.UNSAVED : status,
+    status:
+      enabled && (!isPayloadValid || hasLocalDraft)
+        ? AUTOSAVE_STATUS.UNSAVED
+        : status,
     lastSavedAt,
     flush,
   };

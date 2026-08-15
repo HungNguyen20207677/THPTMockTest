@@ -4,9 +4,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
+import { ShortAnswerTextInput } from "@/components/exam/short-answer-text-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +18,8 @@ import {
   EXAM_STATUSES,
   EXAM_STATUS,
   EXAM_STRUCTURE,
+  PART3_INPUT_MODE,
+  PART3_INPUT_MODES,
   PART_ONE_CHOICES,
   PART_TWO_STATEMENTS,
 } from "@/lib/constants/exam";
@@ -41,6 +44,11 @@ const statusLabels = {
   HIDDEN: "Đã ẩn",
 } as const;
 
+const part3InputModeLabels = {
+  BUBBLE: "Tô 4 ô ký tự",
+  TEXT: "Nhập bằng ô văn bản",
+} as const;
+
 interface ExamFormProps {
   mode: "create" | "edit";
   examId?: string;
@@ -51,6 +59,7 @@ function createEmptyEditorValues(): ExamEditorInput {
     title: "",
     description: "",
     status: EXAM_STATUS.DRAFT,
+    part3InputMode: PART3_INPUT_MODE.BUBBLE,
     settings: {
       allowRetake: true,
       showScoreAfterSubmission: true,
@@ -80,6 +89,7 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     title: exam.title,
     description: exam.description ?? "",
     status: exam.status,
+    part3InputMode: exam.part3InputMode,
     settings: { ...exam.settings },
     answerKey: {
       partOne: [...exam.answerKey.partOne],
@@ -116,6 +126,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(mode === "edit");
+  const [partThreeTextValidity, setPartThreeTextValidity] = useState(() =>
+    Array.from({ length: EXAM_STRUCTURE.partThreeQuestions }, () => true),
+  );
   const {
     control,
     register,
@@ -126,6 +139,11 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     resolver: zodResolver(examEditorSchema),
     defaultValues: createEmptyEditorValues(),
   });
+  const part3InputMode =
+    useWatch({ control, name: "part3InputMode" }) ?? PART3_INPUT_MODE.BUBBLE;
+  const hasInvalidPartThreeText =
+    part3InputMode === PART3_INPUT_MODE.TEXT &&
+    partThreeTextValidity.some((isValid) => !isValid);
 
   useEffect(() => {
     if (mode !== "edit" || !examId) {
@@ -180,8 +198,30 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     return true;
   }
 
+  function setPartThreeTextAnswerValidity(
+    questionIndex: number,
+    isValid: boolean,
+  ) {
+    setPartThreeTextValidity((currentValidity) => {
+      if (currentValidity[questionIndex] === isValid) {
+        return currentValidity;
+      }
+
+      return currentValidity.map((currentValue, index) =>
+        index === questionIndex ? isValid : currentValue,
+      );
+    });
+  }
+
   const onSubmit = handleSubmit(async (input) => {
     setSubmissionError(null);
+
+    if (hasInvalidPartThreeText) {
+      setSubmissionError(
+        "Có đáp án Phần III chưa hợp lệ. Hãy hoàn thành hoặc xóa nội dung đang nhập.",
+      );
+      return;
+    }
 
     if (mode === "create" && !pdfFile) {
       setFileError("Vui lòng chọn tệp PDF của đề thi.");
@@ -244,8 +284,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             </p>
             {isContentLocked && (
               <p className="mt-2 text-sm font-medium text-amber-700">
-                Đề thi đã có lượt làm. Bạn vẫn có thể sửa thông tin và thiết
-                lập, nhưng tệp PDF và đáp án đã được khóa.
+                Đề thi đã có lượt làm. Bạn vẫn có thể sửa thông tin và thiết lập
+                chung, nhưng tệp PDF, đáp án và cách nhập Phần III đã được khóa.
               </p>
             )}
           </div>
@@ -352,6 +392,50 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
 
         <section className="border-border bg-background space-y-4 rounded-xl border p-5 shadow-sm">
           <h2 className="text-xl font-semibold">Thiết lập</h2>
+          <div className="max-w-md space-y-2">
+            <Label htmlFor="part-three-input-mode">
+              Cách nhập đáp án Phần III
+            </Label>
+            <Controller
+              control={control}
+              name="part3InputMode"
+              render={({ field }) => (
+                <select
+                  ref={field.ref}
+                  id="part-three-input-mode"
+                  name={field.name}
+                  className={selectClassName}
+                  value={field.value}
+                  disabled={isContentLocked}
+                  aria-describedby="part-three-input-mode-help"
+                  onBlur={field.onBlur}
+                  onChange={(event) => {
+                    field.onChange(event.target.value);
+                    setPartThreeTextValidity(
+                      Array.from(
+                        { length: EXAM_STRUCTURE.partThreeQuestions },
+                        () => true,
+                      ),
+                    );
+                  }}
+                >
+                  {PART3_INPUT_MODES.map((inputMode) => (
+                    <option key={inputMode} value={inputMode}>
+                      {part3InputModeLabels[inputMode]}
+                    </option>
+                  ))}
+                </select>
+              )}
+            />
+            <p
+              id="part-three-input-mode-help"
+              className="text-muted-foreground text-xs leading-5"
+            >
+              {isContentLocked
+                ? "Không thể đổi cách nhập sau khi đề đã có lượt làm."
+                : "Hai cách nhập dùng cùng quy tắc 4 ô và cùng cách chấm điểm."}
+            </p>
+          </div>
           <div className="grid gap-3 md:grid-cols-3">
             <label className="border-border flex items-start gap-3 rounded-lg border p-3 text-sm">
               <input
@@ -524,8 +608,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           <div>
             <h2 className="text-xl font-semibold">Phần III - Trả lời ngắn</h2>
             <p className="text-muted-foreground mt-1 text-sm">
-              Tô tối đa 4 ô ký tự. Dấu phẩy hiển thị theo mẫu Việt Nam và được
-              lưu nội bộ bằng dấu chấm.
+              {part3InputMode === PART3_INPUT_MODE.BUBBLE
+                ? "Tô tối đa 4 ô ký tự. Dấu phẩy hiển thị theo mẫu Việt Nam và được lưu nội bộ bằng dấu chấm."
+                : "Nhập tối đa 4 ký tự bằng chữ số, dấu âm và dấu phẩy thập phân."}
             </p>
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
@@ -536,17 +621,32 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                   key={questionIndex}
                   control={control}
                   name={`answerKey.partThree.${questionIndex}` as const}
-                  render={({ field, fieldState }) => (
-                    <ShortAnswerBubbleInput
-                      value={field.value}
-                      onChange={field.onChange}
-                      label={`Câu ${questionIndex + 1}`}
-                      error={fieldState.error?.message}
-                      disabled={isSubmitting || isContentLocked}
-                      inputRef={field.ref}
-                      onBlur={field.onBlur}
-                    />
-                  )}
+                  render={({ field, fieldState }) =>
+                    part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
+                      <ShortAnswerBubbleInput
+                        value={field.value}
+                        onChange={field.onChange}
+                        label={`Câu ${questionIndex + 1}`}
+                        error={fieldState.error?.message}
+                        disabled={isSubmitting || isContentLocked}
+                        inputRef={field.ref}
+                        onBlur={field.onBlur}
+                      />
+                    ) : (
+                      <ShortAnswerTextInput
+                        value={field.value}
+                        onChange={field.onChange}
+                        label={`Câu ${questionIndex + 1}`}
+                        error={fieldState.error?.message}
+                        disabled={isSubmitting || isContentLocked}
+                        inputRef={field.ref}
+                        onBlur={field.onBlur}
+                        onValidityChange={(isValid) =>
+                          setPartThreeTextAnswerValidity(questionIndex, isValid)
+                        }
+                      />
+                    )
+                  }
                 />
               ),
             )}

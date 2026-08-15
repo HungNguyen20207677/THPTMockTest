@@ -1,10 +1,13 @@
 import type {
   EXAM_STATUS,
+  PART3_INPUT_MODE,
   PART_ONE_CHOICES,
   SHORT_ANSWER_SLOT_OPTIONS,
 } from "@/lib/constants/exam";
 
 export type ExamStatus = (typeof EXAM_STATUS)[keyof typeof EXAM_STATUS];
+export type Part3InputMode =
+  (typeof PART3_INPUT_MODE)[keyof typeof PART3_INPUT_MODE];
 export type PartOneAnswer = (typeof PART_ONE_CHOICES)[number];
 export type ShortAnswerSlotOption = (typeof SHORT_ANSWER_SLOT_OPTIONS)[number];
 export type ShortAnswerSlot = ShortAnswerSlotOption | null;
@@ -75,6 +78,7 @@ export interface ExamSummary {
 
 export interface ExamDetail extends ExamSummary {
   description?: string;
+  part3InputMode: Part3InputMode;
   pdf: ExamPdf;
   answerKey: ExamAnswerKey;
 }

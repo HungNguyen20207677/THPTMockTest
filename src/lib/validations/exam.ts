@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   EXAM_STATUSES,
   EXAM_STRUCTURE,
+  PART3_INPUT_MODE,
+  PART3_INPUT_MODES,
   PART_ONE_CHOICES,
   PART_TWO_STATEMENTS,
   SHORT_ANSWER_SLOT_OPTIONS,
@@ -15,6 +17,9 @@ import { examPdfUploadReferenceSchema } from "@/lib/validations/exam-pdf";
 import type { PartOneAnswer, PartTwoAnswer } from "@/types/exam";
 
 export const examStatusSchema = z.enum(EXAM_STATUSES);
+export const part3InputModeSchema = z
+  .enum(PART3_INPUT_MODES)
+  .default(PART3_INPUT_MODE.BUBBLE);
 export const partOneAnswerSchema = z.enum(PART_ONE_CHOICES);
 
 export const partTwoAnswerSchema = z.strictObject({
@@ -78,6 +83,7 @@ const examFields = {
   title: titleSchema,
   description: descriptionSchema,
   status: examStatusSchema,
+  part3InputMode: part3InputModeSchema,
   settings: examSettingsSchema,
 };
 
@@ -104,6 +110,7 @@ export const updateExamRequestSchema = z.strictObject({
 
 export const publishableExamSchema = z.strictObject({
   title: titleSchema,
+  part3InputMode: part3InputModeSchema,
   pdf: examPdfSchema,
   answerKey: examAnswerKeySchema,
 });

@@ -3,6 +3,7 @@ import type {
   STUDENT_EXAM_STATE,
 } from "@/lib/constants/exam-attempt";
 import type {
+  Part3InputMode,
   PartOneAnswer,
   PartTwoAnswer,
   ShortAnswerSlots,
@@ -95,6 +96,7 @@ export interface StudentExamAttemptContext {
       filename: string;
     };
     durationMinutes: number;
+    part3InputMode: Part3InputMode;
   };
   attempt: ExamAttempt;
   serverNow: string;

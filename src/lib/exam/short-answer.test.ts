@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   canonicalShortAnswerToSlots,
+  createEmptyShortAnswerSlots,
   isValidCanonicalShortAnswer,
+  parseShortAnswerText,
   shortAnswerSlotsToCanonicalValue,
   shortAnswerSlotsToDisplayValue,
 } from "@/lib/exam/short-answer";
@@ -47,4 +49,26 @@ describe("short-answer slots", () => {
       expect(isValidCanonicalShortAnswer(value)).toBe(false);
     },
   );
+
+  it.each<{ text: string; slots: ShortAnswerSlots }>([
+    { text: "19", slots: ["1", "9", null, null] },
+    { text: "0,21", slots: ["0", ",", "2", "1"] },
+    { text: "-0,5", slots: ["-", "0", ",", "5"] },
+    { text: "12,3", slots: ["1", "2", ",", "3"] },
+    { text: "1234", slots: ["1", "2", "3", "4"] },
+    { text: "-123", slots: ["-", "1", "2", "3"] },
+  ])("parses Vietnamese text $text into four slots", ({ text, slots }) => {
+    expect(parseShortAnswerText(text)).toEqual(slots);
+  });
+
+  it.each(["12345", "123,45", "1/2", "sqrt(2)", "2π", "1e3", "1+2", "0.21"])(
+    "rejects free-form or too-long text %s",
+    (text) => {
+      expect(parseShortAnswerText(text)).toBeNull();
+    },
+  );
+
+  it("maps empty text to the existing empty slot representation", () => {
+    expect(parseShortAnswerText("")).toEqual(createEmptyShortAnswerSlots());
+  });
 });

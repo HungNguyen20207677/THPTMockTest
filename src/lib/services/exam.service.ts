@@ -85,6 +85,7 @@ function toExamDetail(
   return {
     ...toExamSummary(exam, hasAttempts),
     description: exam.description,
+    part3InputMode: exam.part3InputMode,
     pdf: exam.pdf,
     answerKey: exam.answerKey,
   };
@@ -98,11 +99,13 @@ function assertPublishableContent(input: UpsertExamInput): void {
 
 export function assertExamCanBePublished(input: {
   title: string;
+  part3InputMode: ExamPersistenceRecord["part3InputMode"];
   pdf: ExamPdf;
   answerKey: ExamPersistenceRecord["answerKey"];
 }): void {
   const publicationData = {
     title: input.title,
+    part3InputMode: input.part3InputMode,
     pdf: input.pdf,
     answerKey: input.answerKey,
   };
@@ -279,6 +282,7 @@ export async function createExam(
     if (input.status === EXAM_STATUS.PUBLISHED) {
       assertExamCanBePublished({
         title: input.title,
+        part3InputMode: input.part3InputMode,
         pdf,
         answerKey: input.answerKey,
       });
@@ -323,8 +327,13 @@ export async function editExam(
     currentExam.attemptsStarted || (await hasExamAttemptRecords(examId));
   const answerKeyChanged =
     JSON.stringify(currentExam.answerKey) !== JSON.stringify(input.answerKey);
+  const part3InputModeChanged =
+    currentExam.part3InputMode !== input.part3InputMode;
 
-  if (hasAttempts && (replacementPdfUpload || answerKeyChanged)) {
+  if (
+    hasAttempts &&
+    (replacementPdfUpload || answerKeyChanged || part3InputModeChanged)
+  ) {
     if (replacementPdfUpload) {
       await discardPdfUploadBestEffort(replacementPdfUpload);
     }
@@ -336,6 +345,7 @@ export async function editExam(
     title: input.title,
     description: input.description,
     status: input.status,
+    part3InputMode: input.part3InputMode,
     settings: input.settings,
     answerKey: input.answerKey,
   };
@@ -362,6 +372,7 @@ export async function editExam(
     if (examInput.status === EXAM_STATUS.PUBLISHED) {
       assertExamCanBePublished({
         title: examInput.title,
+        part3InputMode: examInput.part3InputMode,
         pdf: newPdf,
         answerKey: examInput.answerKey,
       });

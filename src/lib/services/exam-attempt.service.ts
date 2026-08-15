@@ -111,6 +111,7 @@ function toAttemptContext(
         filename: exam.pdf.originalFilename,
       },
       durationMinutes: EXAM_STRUCTURE.durationMinutes,
+      part3InputMode: exam.part3InputMode,
     },
     attempt: toExamAttempt(attempt),
     serverNow: serverNow.toISOString(),

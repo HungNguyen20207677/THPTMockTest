@@ -12,6 +12,7 @@ import {
 
 import { CountdownTimer } from "@/components/exam/countdown-timer";
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
+import { ShortAnswerTextInput } from "@/components/exam/short-answer-text-input";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -32,6 +33,7 @@ import {
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
 import {
   EXAM_STRUCTURE,
+  PART3_INPUT_MODE,
   PART_ONE_CHOICES,
   PART_TWO_STATEMENTS,
 } from "@/lib/constants/exam";
@@ -51,7 +53,11 @@ import type {
   AttemptAnswers,
   StudentExamAttemptContext,
 } from "@/types/exam-attempt";
-import type { PartOneAnswer, ShortAnswerSlots } from "@/types/exam";
+import type {
+  Part3InputMode,
+  PartOneAnswer,
+  ShortAnswerSlots,
+} from "@/types/exam";
 
 const submittedAtFormatter = new Intl.DateTimeFormat("vi-VN", {
   dateStyle: "medium",
@@ -82,6 +88,11 @@ interface AnswerSheetProps {
   setAnswers: Dispatch<SetStateAction<AttemptAnswers>>;
   disabled: boolean;
   progress: AttemptAnswerProgress;
+  part3InputMode: Part3InputMode;
+  onPartThreeTextValidityChange: (
+    questionIndex: number,
+    isValid: boolean,
+  ) => void;
 }
 
 function getRequestError(
@@ -383,7 +394,13 @@ function PartTwoSection({
   );
 }
 
-function PartThreeSection({ answers, setAnswers, disabled }: AnswerSheetProps) {
+function PartThreeSection({
+  answers,
+  setAnswers,
+  disabled,
+  part3InputMode,
+  onPartThreeTextValidityChange,
+}: AnswerSheetProps) {
   function updateShortAnswer(questionIndex: number, value: ShortAnswerSlots) {
     setAnswers((currentAnswers) => {
       const partThree = [...currentAnswers.partThree];
@@ -402,7 +419,9 @@ function PartThreeSection({ answers, setAnswers, disabled }: AnswerSheetProps) {
           Trắc nghiệm trả lời ngắn
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          Tô tối đa bốn ô ký tự. Dấu thập phân được hiển thị bằng dấu phẩy.
+          {part3InputMode === PART3_INPUT_MODE.BUBBLE
+            ? "Tô tối đa bốn ô ký tự. Dấu thập phân được hiển thị bằng dấu phẩy."
+            : "Nhập tối đa bốn ký tự bằng chữ số, dấu âm và dấu phẩy thập phân."}
         </p>
       </div>
 
@@ -413,12 +432,24 @@ function PartThreeSection({ answers, setAnswers, disabled }: AnswerSheetProps) {
             id={`part-three-question-${questionIndex + 1}`}
             className="scroll-mt-40"
           >
-            <ShortAnswerBubbleInput
-              value={answer}
-              onChange={(value) => updateShortAnswer(questionIndex, value)}
-              label={`Câu ${questionIndex + 1}`}
-              disabled={disabled}
-            />
+            {part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
+              <ShortAnswerBubbleInput
+                value={answer}
+                onChange={(value) => updateShortAnswer(questionIndex, value)}
+                label={`Câu ${questionIndex + 1}`}
+                disabled={disabled}
+              />
+            ) : (
+              <ShortAnswerTextInput
+                value={answer}
+                onChange={(value) => updateShortAnswer(questionIndex, value)}
+                label={`Câu ${questionIndex + 1}`}
+                disabled={disabled}
+                onValidityChange={(isValid) =>
+                  onPartThreeTextValidityChange(questionIndex, isValid)
+                }
+              />
+            )}
           </div>
         ))}
       </div>
@@ -529,6 +560,9 @@ function ActiveAttemptWorkspace({
     "loading" | "ready" | "error"
   >("loading");
   const [pdfLoadVersion, setPdfLoadVersion] = useState(0);
+  const [partThreeTextValidity, setPartThreeTextValidity] = useState(() =>
+    Array.from({ length: EXAM_STRUCTURE.partThreeQuestions }, () => true),
+  );
   const autoSubmitInFlightRef = useRef(false);
   const expirationStartedRef = useRef(false);
   const isMountedRef = useRef(true);
@@ -544,12 +578,17 @@ function ActiveAttemptWorkspace({
     !hasCountdownExpired &&
     !isSubmitting;
   const answerPayloadIsValid = attemptAnswersSchema.safeParse(answers).success;
+  const hasInvalidPartThreeText =
+    exam.part3InputMode === PART3_INPUT_MODE.TEXT &&
+    partThreeTextValidity.some((isValid) => !isValid);
+  const canSubmitAnswers = answerPayloadIsValid && !hasInvalidPartThreeText;
   const autosave = useAttemptAutosave({
     answers,
     initialAnswers: initialAttempt.answers,
     initialLastSavedAt: initialAttempt.lastSavedAt,
     enabled: autosaveEnabled,
     isPayloadValid: answerPayloadIsValid,
+    hasLocalDraft: hasInvalidPartThreeText,
     saveAnswers: async (latestAnswers) => {
       try {
         const response = await saveStudentExamAttemptAnswers(
@@ -571,6 +610,21 @@ function ActiveAttemptWorkspace({
     },
   });
   const progress = getAttemptAnswerProgress(answers);
+
+  function setPartThreeTextAnswerValidity(
+    questionIndex: number,
+    isValid: boolean,
+  ) {
+    setPartThreeTextValidity((currentValidity) => {
+      if (currentValidity[questionIndex] === isValid) {
+        return currentValidity;
+      }
+
+      return currentValidity.map((currentValue, index) =>
+        index === questionIndex ? isValid : currentValue,
+      );
+    });
+  }
 
   function navigateToQuestion(targetId: string) {
     const answerSheet = answerSheetRef.current;
@@ -753,7 +807,7 @@ function ActiveAttemptWorkspace({
       isSubmitting ||
       hasCountdownExpired ||
       isExpirationPending ||
-      !answerPayloadIsValid
+      !canSubmitAnswers
     ) {
       return;
     }
@@ -937,10 +991,10 @@ function ActiveAttemptWorkspace({
                   isSubmitting ||
                   hasCountdownExpired ||
                   isExpirationPending ||
-                  !answerPayloadIsValid
+                  !canSubmitAnswers
                 }
                 title={
-                  answerPayloadIsValid
+                  canSubmitAnswers
                     ? undefined
                     : "Hãy hoàn thành hoặc xóa đáp án Phần III chưa hợp lệ."
                 }
@@ -1089,10 +1143,10 @@ function ActiveAttemptWorkspace({
                 progress={progress}
                 onQuestionSelect={navigateToQuestion}
               />
-              {!answerPayloadIsValid && (
+              {!canSubmitAnswers && (
                 <p role="alert" className="text-destructive text-xs leading-5">
                   Có đáp án Phần III chưa hợp lệ. Hãy hoàn thành giá trị hoặc
-                  xóa các ô đã chọn để tiếp tục lưu.
+                  xóa nội dung đang nhập để tiếp tục lưu.
                 </p>
               )}
               <p className="text-muted-foreground text-xs leading-5">
@@ -1108,6 +1162,8 @@ function ActiveAttemptWorkspace({
                 hasCountdownExpired || isExpirationPending || isSubmitting
               }
               progress={progress}
+              part3InputMode={exam.part3InputMode}
+              onPartThreeTextValidityChange={setPartThreeTextAnswerValidity}
             />
           </section>
         </div>

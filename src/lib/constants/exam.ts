@@ -10,6 +10,16 @@ export const EXAM_STATUSES = [
   EXAM_STATUS.HIDDEN,
 ] as const;
 
+export const PART3_INPUT_MODE = {
+  BUBBLE: "BUBBLE",
+  TEXT: "TEXT",
+} as const;
+
+export const PART3_INPUT_MODES = [
+  PART3_INPUT_MODE.BUBBLE,
+  PART3_INPUT_MODE.TEXT,
+] as const;
+
 export const PART_ONE_CHOICES = ["A", "B", "C", "D"] as const;
 export const PART_TWO_STATEMENTS = ["a", "b", "c", "d"] as const;
 export const SHORT_ANSWER_SLOT_OPTIONS = [

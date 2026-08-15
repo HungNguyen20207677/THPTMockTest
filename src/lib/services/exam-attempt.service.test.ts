@@ -60,7 +60,11 @@ import {
   EXAM_ATTEMPT_STATUS,
   STUDENT_EXAM_STATE,
 } from "@/lib/constants/exam-attempt";
-import { EXAM_STATUS, EXAM_STRUCTURE } from "@/lib/constants/exam";
+import {
+  EXAM_STATUS,
+  EXAM_STRUCTURE,
+  PART3_INPUT_MODE,
+} from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import type {
   CreateExamAttemptRecordInput,
@@ -100,6 +104,7 @@ function createStudentExam(
     title: "Đề thi thử Toán số 1",
     description: "Đề luyện tập",
     status: EXAM_STATUS.PUBLISHED,
+    part3InputMode: PART3_INPUT_MODE.BUBBLE,
     allowRetake: true,
     pdf: {
       secureUrl: "https://res.cloudinary.com/demo/raw/upload/exam.pdf",
@@ -468,6 +473,9 @@ describe("ExamAttempt service", () => {
 
   it("returns a safe editable PDF workspace for an owned active attempt", async () => {
     const activeAttempt = createAttempt();
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ part3InputMode: PART3_INPUT_MODE.TEXT }),
+    );
     mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
 
     const result = await getOwnedExamAttemptContext(
@@ -482,6 +490,7 @@ describe("ExamAttempt service", () => {
         title: "Đề thi thử Toán số 1",
         description: "Đề luyện tập",
         durationMinutes: 90,
+        part3InputMode: PART3_INPUT_MODE.TEXT,
         pdf: {
           url: "https://res.cloudinary.com/demo/raw/upload/exam.pdf",
           filename: "de-thi.pdf",

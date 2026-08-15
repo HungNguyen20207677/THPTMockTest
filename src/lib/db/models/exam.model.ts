@@ -5,6 +5,8 @@ import { model, models, Schema, type Model, type Types } from "mongoose";
 import {
   EXAM_STATUSES,
   EXAM_STRUCTURE,
+  PART3_INPUT_MODE,
+  PART3_INPUT_MODES,
   PART_ONE_CHOICES,
 } from "@/lib/constants/exam";
 import { isValidCanonicalShortAnswer } from "@/lib/exam/short-answer";
@@ -13,6 +15,7 @@ import type {
   ExamPdf,
   ExamSettings,
   ExamStatus,
+  Part3InputMode,
   PartOneAnswer,
   PartTwoAnswer,
 } from "@/types/exam";
@@ -21,6 +24,7 @@ export interface ExamRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  part3InputMode: Part3InputMode;
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
@@ -119,6 +123,12 @@ const examSchema = new Schema<ExamRecord>(
       enum: EXAM_STATUSES,
       required: true,
       index: true,
+    },
+    part3InputMode: {
+      type: String,
+      enum: PART3_INPUT_MODES,
+      required: true,
+      default: PART3_INPUT_MODE.BUBBLE,
     },
     pdf: { type: pdfSchema, required: true },
     settings: { type: settingsSchema, required: true },

@@ -57,7 +57,11 @@ vi.mock("@/lib/db/mongoose", () => ({
   withMongoTransaction: mocks.withMongoTransaction,
 }));
 
-import { EXAM_STATUS, EXAM_STRUCTURE } from "@/lib/constants/exam";
+import {
+  EXAM_STATUS,
+  EXAM_STRUCTURE,
+  PART3_INPUT_MODE,
+} from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
   changeExamStatus,
@@ -109,6 +113,7 @@ function createValidInput(): UpsertExamInput {
     title: "Đề thi thử Toán số 1",
     description: "Đề luyện tập",
     status: EXAM_STATUS.DRAFT,
+    part3InputMode: PART3_INPUT_MODE.BUBBLE,
     settings: {
       allowRetake: true,
       showScoreAfterSubmission: true,
@@ -526,6 +531,52 @@ describe("exam service", () => {
     await expect(
       editExam(admin, currentExam.id, {
         ...input,
+        expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+      }),
+    ).rejects.toMatchObject({
+      code: "EXAM_CONTENT_LOCKED",
+      statusCode: 409,
+    });
+    expect(mocks.updateExamRecord).not.toHaveBeenCalled();
+    expect(mocks.updateExamMetadataRecord).not.toHaveBeenCalled();
+  });
+
+  it("allows changing the Part III input mode before attempts exist", async () => {
+    const currentExam = createStoredExam();
+    const input = {
+      ...createValidInput(),
+      part3InputMode: PART3_INPUT_MODE.TEXT,
+    };
+    const updatedExam = createStoredExam({
+      part3InputMode: PART3_INPUT_MODE.TEXT,
+    });
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.updateExamRecord.mockResolvedValue(updatedExam);
+
+    const result = await editExam(admin, currentExam.id, {
+      ...input,
+      expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+    });
+
+    expect(result.part3InputMode).toBe(PART3_INPUT_MODE.TEXT);
+    expect(mocks.updateExamRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      expect.objectContaining({
+        part3InputMode: PART3_INPUT_MODE.TEXT,
+      }),
+      currentExam.updatedAt,
+    );
+  });
+
+  it("rejects changing the Part III input mode after any attempt exists", async () => {
+    const currentExam = createStoredExam();
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+
+    await expect(
+      editExam(admin, currentExam.id, {
+        ...createValidInput(),
+        part3InputMode: PART3_INPUT_MODE.TEXT,
         expectedUpdatedAt: currentExam.updatedAt.toISOString(),
       }),
     ).rejects.toMatchObject({

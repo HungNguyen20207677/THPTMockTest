@@ -127,3 +127,15 @@ export function canonicalShortAnswerToSlots(
 
   return slots;
 }
+
+export function parseShortAnswerText(text: string): ShortAnswerSlots | null {
+  if (text === "") {
+    return createEmptyShortAnswerSlots();
+  }
+
+  if (text.includes(".")) {
+    return null;
+  }
+
+  return canonicalShortAnswerToSlots(text.replace(",", "."));
+}

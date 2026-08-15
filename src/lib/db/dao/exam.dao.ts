@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import type { ClientSession, Types } from "mongoose";
 
-import { EXAM_STATUS } from "@/lib/constants/exam";
+import { EXAM_STATUS, PART3_INPUT_MODE } from "@/lib/constants/exam";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import {
   ExamModel,
@@ -16,6 +16,7 @@ import type {
   ExamPdf,
   ExamSettings,
   ExamStatus,
+  Part3InputMode,
 } from "@/types/exam";
 
 export interface ExamPersistenceRecord {
@@ -23,6 +24,7 @@ export interface ExamPersistenceRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  part3InputMode: Part3InputMode;
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
@@ -36,6 +38,7 @@ export interface SaveExamRecordInput {
   title: string;
   description?: string;
   status: ExamStatus;
+  part3InputMode: Part3InputMode;
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
@@ -60,6 +63,7 @@ export interface StudentExamPersistenceRecord {
 }
 
 export interface StudentExamWorkspacePersistenceRecord extends StudentExamPersistenceRecord {
+  part3InputMode: Part3InputMode;
   pdf: Pick<ExamPdf, "secureUrl" | "originalFilename">;
 }
 
@@ -82,6 +86,7 @@ interface ExamDocumentData {
   title: string;
   description?: string;
   status: ExamStatus;
+  part3InputMode?: Part3InputMode;
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
@@ -103,6 +108,7 @@ interface StudentExamDocumentData {
 }
 
 interface StudentExamWorkspaceDocumentData extends StudentExamDocumentData {
+  part3InputMode?: Part3InputMode;
   pdf: Pick<ExamPdf, "secureUrl" | "originalFilename">;
 }
 
@@ -199,6 +205,7 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     title: exam.title,
     description: exam.description,
     status: exam.status,
+    part3InputMode: exam.part3InputMode ?? PART3_INPUT_MODE.BUBBLE,
     pdf: exam.pdf,
     settings: exam.settings,
     answerKey: exam.answerKey,
@@ -229,6 +236,7 @@ function toStudentExamWorkspaceRecord(
 ): StudentExamWorkspacePersistenceRecord {
   return {
     ...toStudentExamRecord(exam),
+    part3InputMode: exam.part3InputMode ?? PART3_INPUT_MODE.BUBBLE,
     pdf: {
       secureUrl: exam.pdf.secureUrl,
       originalFilename: exam.pdf.originalFilename,
@@ -336,6 +344,7 @@ export async function findStudentExamRecordById(
       description: 1,
       status: 1,
       "settings.allowRetake": 1,
+      part3InputMode: 1,
       attemptsStarted: 1,
       "pdf.secureUrl": 1,
       "pdf.originalFilename": 1,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { EXAM_STATUS, EXAM_STRUCTURE } from "@/lib/constants/exam";
+import {
+  EXAM_STATUS,
+  EXAM_STRUCTURE,
+  PART3_INPUT_MODE,
+} from "@/lib/constants/exam";
 import { examUpsertSchema } from "@/lib/validations/exam";
 
 function createValidExamInput() {
@@ -33,6 +37,27 @@ function createValidExamInput() {
 }
 
 describe("exam answer-key validation", () => {
+  it("defaults legacy input without a Part III mode to BUBBLE", () => {
+    const parsed = examUpsertSchema.parse(createValidExamInput());
+
+    expect(parsed.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
+  });
+
+  it("accepts TEXT and rejects unknown Part III input modes", () => {
+    expect(
+      examUpsertSchema.safeParse({
+        ...createValidExamInput(),
+        part3InputMode: PART3_INPUT_MODE.TEXT,
+      }).success,
+    ).toBe(true);
+    expect(
+      examUpsertSchema.safeParse({
+        ...createValidExamInput(),
+        part3InputMode: "FORMULA",
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts exactly 12 valid Part I answers", () => {
     expect(examUpsertSchema.safeParse(createValidExamInput()).success).toBe(
       true,

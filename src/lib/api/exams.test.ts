@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createExamRecord, updateExamRecord } from "@/lib/api/exams";
-import { EXAM_STATUS, EXAM_STRUCTURE } from "@/lib/constants/exam";
+import {
+  EXAM_STATUS,
+  EXAM_STRUCTURE,
+  PART3_INPUT_MODE,
+} from "@/lib/constants/exam";
 import type { UpdateExamInput, UpsertExamInput } from "@/lib/validations/exam";
 import type { ExamPdfUploadReference, ExamPdfUploadTicket } from "@/types/exam";
 
@@ -34,6 +38,7 @@ function createValidInput(): UpsertExamInput {
     title: "De thi thu Toan so 1",
     description: undefined,
     status: EXAM_STATUS.DRAFT,
+    part3InputMode: PART3_INPUT_MODE.BUBBLE,
     settings: {
       allowRetake: true,
       showScoreAfterSubmission: true,

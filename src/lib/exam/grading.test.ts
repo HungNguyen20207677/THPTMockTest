@@ -6,7 +6,11 @@ import {
   gradeAttemptAnswers,
   scoreHundredthsToPoints,
 } from "@/lib/exam/grading";
-import { normalizeCanonicalShortAnswer } from "@/lib/exam/short-answer";
+import {
+  canonicalShortAnswerToSlots,
+  normalizeCanonicalShortAnswer,
+  parseShortAnswerText,
+} from "@/lib/exam/short-answer";
 import type { AttemptAnswers } from "@/types/exam-attempt";
 import type { ExamAnswerKey } from "@/types/exam";
 
@@ -168,6 +172,20 @@ describe("THPT Math grading", () => {
     const grading = gradeAttemptAnswers(answers, createAnswerKey());
 
     expect(grading.partThree[0].isCorrect).toBe(false);
+  });
+
+  it("grades equivalent bubble and text inputs identically", () => {
+    const answerKey = createAnswerKey();
+    answerKey.partThree[0] = "-0.5";
+    const bubbleAnswers = createEmptyAttemptAnswers();
+    const textAnswers = createEmptyAttemptAnswers();
+    bubbleAnswers.partThree[0] = canonicalShortAnswerToSlots("-0.5")!;
+    textAnswers.partThree[0] = parseShortAnswerText("-0,5")!;
+
+    expect(textAnswers.partThree[0]).toEqual(bubbleAnswers.partThree[0]);
+    expect(gradeAttemptAnswers(textAnswers, answerKey)).toEqual(
+      gradeAttemptAnswers(bubbleAnswers, answerKey),
+    );
   });
 
   it("grades a perfect paper as exactly 10.00", () => {
