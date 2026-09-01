@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
@@ -24,10 +24,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiClientError } from "@/lib/api/client";
 import { createExamRecord, fetchExam, updateExamRecord } from "@/lib/api/exams";
+import { fetchStudents } from "@/lib/api/students";
 import {
   EXAM_STATUSES,
   EXAM_STATUS,
   EXAM_STRUCTURE,
+  EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
   PART3_INPUT_MODES,
   PART_ONE_CHOICES,
@@ -50,6 +52,7 @@ import type {
   ExamPdf,
   Part3InputMode,
 } from "@/types/exam";
+import type { StudentAccount } from "@/types/user";
 
 const selectClassName =
   "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50";
@@ -65,16 +68,16 @@ const part3InputModeLabels = {
   TEXT: "Nhập bằng ô văn bản",
 } as const;
 
-interface ExamFormProps {
-  mode: "create" | "edit";
-  examId?: string;
-}
+type ExamFormProps =
+  { mode: "create"; examId?: never } | { mode: "edit"; examId: string };
 
 function createEmptyEditorValues(): ExamEditorInput {
   return {
     title: "",
     description: "",
     status: EXAM_STATUS.DRAFT,
+    visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
+    assignedStudentIds: [],
     part3InputMode: PART3_INPUT_MODE.BUBBLE,
     settings: {
       allowRetake: true,
@@ -105,6 +108,8 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     title: exam.title,
     description: exam.description ?? "",
     status: exam.status,
+    visibilityMode: exam.visibilityMode,
+    assignedStudentIds: [...exam.assignedStudentIds],
     part3InputMode: exam.part3InputMode,
     settings: { ...exam.settings },
     answerKey: {
@@ -118,7 +123,10 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
   };
 }
 
-function getRequestError(error: unknown): string {
+function getRequestError(
+  error: unknown,
+  fallback = "Không thể lưu đề thi. Vui lòng thử lại.",
+): string {
   if (error instanceof ApiClientError) {
     if (error.code === "UNAUTHENTICATED") {
       window.location.replace("/login");
@@ -129,7 +137,7 @@ function getRequestError(error: unknown): string {
     return error.message;
   }
 
-  return "Không thể lưu đề thi. Vui lòng thử lại.";
+  return fallback;
 }
 
 export function ExamForm({ mode, examId }: ExamFormProps) {
@@ -142,6 +150,12 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [initialPart3InputMode, setInitialPart3InputMode] =
     useState<Part3InputMode | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
+  const [students, setStudents] = useState<StudentAccount[]>([]);
+  const [hasLoadedStudents, setHasLoadedStudents] = useState(false);
+  const [isLoadingStudents, setIsLoadingStudents] = useState(true);
+  const [studentLoadError, setStudentLoadError] = useState<string | null>(null);
+  const [studentLoadVersion, setStudentLoadVersion] = useState(0);
+  const [studentSearch, setStudentSearch] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -165,13 +179,28 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   });
   const part3InputMode =
     useWatch({ control, name: "part3InputMode" }) ?? PART3_INPUT_MODE.BUBBLE;
+  const visibilityMode =
+    useWatch({ control, name: "visibilityMode" }) ??
+    EXAM_VISIBILITY_MODE.ALL_STUDENTS;
+  const assignedStudentIds =
+    useWatch({ control, name: "assignedStudentIds" }) ?? [];
+  const deferredStudentSearch = useDeferredValue(
+    studentSearch.trim().toLocaleLowerCase("vi"),
+  );
+  const filteredStudents = deferredStudentSearch
+    ? students.filter((student) =>
+        `${student.fullName} @${student.username}`
+          .toLocaleLowerCase("vi")
+          .includes(deferredStudentSearch),
+      )
+    : students;
   const hasInvalidPartThreeText =
     part3InputMode === PART3_INPUT_MODE.TEXT &&
     partThreeTextValidity.some((isValid) => !isValid);
   const isBusy = isSubmitting || isSaving;
 
   useEffect(() => {
-    if (mode !== "edit" || !examId) {
+    if (mode === "create") {
       return;
     }
 
@@ -179,19 +208,23 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
 
     void fetchExam(examId)
       .then((response) => {
+        const exam = response.data.exam;
+
         if (isCurrent) {
-          reset(toEditorValues(response.data.exam));
-          setCurrentPdf(response.data.exam.pdf);
-          setCurrentUpdatedAt(response.data.exam.updatedAt);
-          setInitialAnswerKey(response.data.exam.answerKey);
-          setInitialPart3InputMode(response.data.exam.part3InputMode);
-          setIsContentLocked(response.data.exam.hasAttempts);
+          reset(toEditorValues(exam));
+          setCurrentPdf(exam.pdf);
+          setCurrentUpdatedAt(exam.updatedAt);
+          setInitialAnswerKey(exam.answerKey);
+          setInitialPart3InputMode(exam.part3InputMode);
+          setIsContentLocked(exam.hasAttempts);
           setLoadError(null);
         }
       })
       .catch((error: unknown) => {
         if (isCurrent) {
-          setLoadError(getRequestError(error));
+          setLoadError(
+            getRequestError(error, "Không thể tải đề thi. Vui lòng thử lại."),
+          );
         }
       })
       .finally(() => {
@@ -204,6 +237,43 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
       isCurrent = false;
     };
   }, [examId, mode, reset]);
+
+  useEffect(() => {
+    if (
+      visibilityMode !== EXAM_VISIBILITY_MODE.SELECTED_STUDENTS ||
+      hasLoadedStudents ||
+      studentLoadError
+    ) {
+      return;
+    }
+
+    let isCurrent = true;
+
+    void fetchStudents()
+      .then((response) => {
+        if (isCurrent) {
+          setStudents(response.data.students);
+          setIsLoadingStudents(false);
+          setHasLoadedStudents(true);
+          setStudentLoadError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) {
+          setIsLoadingStudents(false);
+          setStudentLoadError(
+            getRequestError(
+              error,
+              "Không thể tải danh sách học sinh. Vui lòng thử lại.",
+            ),
+          );
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [hasLoadedStudents, studentLoadError, studentLoadVersion, visibilityMode]);
 
   function handlePdfChange(file: File | undefined): boolean {
     if (!file) {
@@ -512,6 +582,126 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
 
         <section className="border-border bg-background space-y-4 rounded-xl border p-5 shadow-sm">
           <h2 className="text-xl font-semibold">Thiết lập</h2>
+          <fieldset className="max-w-2xl space-y-3">
+            <legend className="text-sm font-medium">Phạm vi học sinh</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="border-border flex items-center gap-3 rounded-lg border p-3 text-sm">
+                <input
+                  type="radio"
+                  value={EXAM_VISIBILITY_MODE.ALL_STUDENTS}
+                  {...register("visibilityMode")}
+                />
+                <span>Tất cả học sinh</span>
+              </label>
+              <label className="border-border flex items-center gap-3 rounded-lg border p-3 text-sm">
+                <input
+                  type="radio"
+                  value={EXAM_VISIBILITY_MODE.SELECTED_STUDENTS}
+                  {...register("visibilityMode")}
+                />
+                <span>Học sinh được chọn</span>
+              </label>
+            </div>
+
+            {visibilityMode === EXAM_VISIBILITY_MODE.SELECTED_STUDENTS && (
+              <div className="border-border space-y-3 rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium" aria-live="polite">
+                    {assignedStudentIds.length} học sinh đã chọn
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    Hiển thị họ tên và @tên đăng nhập
+                  </p>
+                </div>
+                {isLoadingStudents ? (
+                  <p role="status" className="text-muted-foreground text-sm">
+                    Đang tải danh sách học sinh...
+                  </p>
+                ) : studentLoadError ? (
+                  <div className="space-y-2">
+                    <p role="alert" className="text-destructive text-sm">
+                      {studentLoadError}
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setIsLoadingStudents(true);
+                        setStudentLoadError(null);
+                        setStudentLoadVersion((version) => version + 1);
+                      }}
+                    >
+                      Thử lại
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <Input
+                      type="search"
+                      value={studentSearch}
+                      placeholder="Tìm theo họ tên hoặc tên đăng nhập"
+                      aria-label="Tìm học sinh để phân công"
+                      onChange={(event) => setStudentSearch(event.target.value)}
+                    />
+                    <Controller
+                      control={control}
+                      name="assignedStudentIds"
+                      render={({ field }) => (
+                        <div className="border-border max-h-56 overflow-y-auto rounded-md border">
+                          {filteredStudents.map((student, index) => (
+                            <label
+                              key={student.id}
+                              className="border-border flex items-start gap-3 border-b px-3 py-2.5 text-sm last:border-b-0"
+                            >
+                              <input
+                                ref={index === 0 ? field.ref : undefined}
+                                type="checkbox"
+                                name={field.name}
+                                value={student.id}
+                                checked={(field.value ?? []).includes(
+                                  student.id,
+                                )}
+                                className="mt-0.5 size-4"
+                                onBlur={field.onBlur}
+                                onChange={(event) => {
+                                  const selectedIds = field.value ?? [];
+                                  field.onChange(
+                                    event.target.checked
+                                      ? [...selectedIds, student.id]
+                                      : selectedIds.filter(
+                                          (studentId) =>
+                                            studentId !== student.id,
+                                        ),
+                                  );
+                                }}
+                              />
+                              <span className="min-w-0">
+                                <span className="block font-medium">
+                                  {student.fullName}
+                                </span>
+                                <span className="text-muted-foreground block text-xs">
+                                  @{student.username}
+                                  {!student.isActive && " · Đã khóa"}
+                                </span>
+                              </span>
+                            </label>
+                          ))}
+                          {filteredStudents.length === 0 && (
+                            <p className="text-muted-foreground px-3 py-5 text-center text-sm">
+                              {students.length === 0
+                                ? "Chưa có tài khoản học sinh."
+                                : "Không tìm thấy học sinh phù hợp."}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    />
+                  </>
+                )}
+              </div>
+            )}
+          </fieldset>
           <div className="max-w-md space-y-2">
             <Label htmlFor="part-three-input-mode">
               Cách nhập đáp án Phần III

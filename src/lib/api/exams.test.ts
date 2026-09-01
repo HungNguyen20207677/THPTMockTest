@@ -4,6 +4,7 @@ import { createExamRecord, updateExamRecord } from "@/lib/api/exams";
 import {
   EXAM_STATUS,
   EXAM_STRUCTURE,
+  EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
 import type { UpdateExamInput, UpsertExamInput } from "@/lib/validations/exam";
@@ -38,6 +39,8 @@ function createValidInput(): UpsertExamInput {
     title: "De thi thu Toan so 1",
     description: undefined,
     status: EXAM_STATUS.DRAFT,
+    visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
+    assignedStudentIds: [],
     part3InputMode: PART3_INPUT_MODE.BUBBLE,
     settings: {
       allowRetake: true,

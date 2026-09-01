@@ -23,6 +23,7 @@ import {
 import {
   findExamGradingRecordById,
   findStudentExamRecordById,
+  isPublishedExamAvailableToStudent,
   listPublishedStudentExamRecords,
   listStudentExamRecordsByIds,
   markExamAttemptsStarted,
@@ -285,9 +286,13 @@ export async function startOrResumeExamAttempt(
       throw new ExamNotPublishedError();
     }
 
+    if (!(await isPublishedExamAvailableToStudent(examId, actor.id))) {
+      throw new ExamNotPublishedError();
+    }
+
     if (
       currentExam.attemptsStarted ||
-      (await markExamAttemptsStarted(examId, currentExam.updatedAt))
+      (await markExamAttemptsStarted(examId, actor.id, currentExam.updatedAt))
     ) {
       exam = { ...currentExam, attemptsStarted: true };
       break;
@@ -328,7 +333,7 @@ export async function startOrResumeExamAttempt(
 
     try {
       const attempt = await withMongoTransaction(async (session) => {
-        if (!(await reserveExamForAttemptCreation(examId, session))) {
+        if (!(await reserveExamForAttemptCreation(examId, actor.id, session))) {
           throw new ExamNotPublishedError();
         }
 
@@ -382,7 +387,7 @@ export async function listStudentExams(
 ): Promise<StudentExamList> {
   assertStudent(actor);
   const [publishedExams, storedAttempts] = await Promise.all([
-    listPublishedStudentExamRecords(),
+    listPublishedStudentExamRecords(actor.id),
     listAllExamAttemptRecordsForStudent(actor.id),
   ]);
   const publishedExamIds = new Set(publishedExams.map((exam) => exam.id));
@@ -393,8 +398,11 @@ export async function listStudentExams(
         .filter((examId) => !publishedExamIds.has(examId)),
     ),
   ];
-  const retainedExams = await listStudentExamRecordsByIds(retainedExamIds);
-  const exams = [...publishedExams, ...retainedExams];
+  const retainedExams = await listStudentExamRecordsByIds(
+    retainedExamIds,
+    actor.id,
+  );
+  const storedExams = [...publishedExams, ...retainedExams];
   const serverNow = new Date();
   const attempts = await Promise.all(
     storedAttempts.map((attempt) =>
@@ -411,6 +419,15 @@ export async function listStudentExams(
     examAttempts.push(attempt);
     attemptsByExam.set(attempt.examId, examAttempts);
   }
+
+  const exams = storedExams.filter(
+    (exam) =>
+      publishedExamIds.has(exam.id) ||
+      ("isAssigned" in exam && exam.isAssigned) ||
+      (attemptsByExam.get(exam.id) ?? []).some((attempt) =>
+        isValidActiveAttempt(attempt, serverNow),
+      ),
+  );
 
   const studentExams: StudentExamSummary[] = exams.map((exam) => {
     const examAttempts = attemptsByExam.get(exam.id) ?? [];
@@ -435,7 +452,7 @@ export async function listStudentExams(
       description: exam.description,
       durationMinutes: EXAM_STRUCTURE.durationMinutes,
       allowRetake: exam.allowRetake,
-      isAvailable: exam.status === EXAM_STATUS.PUBLISHED,
+      isAvailable: publishedExamIds.has(exam.id),
       state,
       activeAttemptId: activeAttempt?.id,
       latestCompletedAttemptId: latestCompletedAttempt?.id,

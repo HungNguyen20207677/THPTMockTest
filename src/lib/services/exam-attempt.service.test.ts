@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   submitOwnedActiveExamAttempt: vi.fn(),
   findExamGradingRecordById: vi.fn(),
   findStudentExamRecordById: vi.fn(),
+  isPublishedExamAvailableToStudent: vi.fn(),
   listPublishedStudentExamRecords: vi.fn(),
   listStudentExamRecordsByIds: vi.fn(),
   markExamAttemptsStarted: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
 vi.mock("@/lib/db/dao/exam.dao", () => ({
   findExamGradingRecordById: mocks.findExamGradingRecordById,
   findStudentExamRecordById: mocks.findStudentExamRecordById,
+  isPublishedExamAvailableToStudent: mocks.isPublishedExamAvailableToStudent,
   listPublishedStudentExamRecords: mocks.listPublishedStudentExamRecords,
   listStudentExamRecordsByIds: mocks.listStudentExamRecordsByIds,
   markExamAttemptsStarted: mocks.markExamAttemptsStarted,
@@ -206,6 +208,7 @@ describe("ExamAttempt service", () => {
     mocks.findActiveExamAttemptRecord.mockResolvedValue(null);
     mocks.findLatestExamAttemptRecord.mockResolvedValue(null);
     mocks.findExamAttemptRecordById.mockResolvedValue(null);
+    mocks.isPublishedExamAvailableToStudent.mockResolvedValue(true);
     mocks.markExamAttemptsStarted.mockResolvedValue(true);
     mocks.markStudentAttemptsStarted.mockResolvedValue(true);
     mocks.reserveExamForAttemptCreation.mockResolvedValue(true);
@@ -227,11 +230,16 @@ describe("ExamAttempt service", () => {
     vi.useRealTimers();
   });
 
-  it("creates attempt 1 with server timestamps and the fixed 90-minute duration", async () => {
+  it("starts an eligible published Exam with authoritative timestamps", async () => {
     const result = await startOrResumeExamAttempt(student, "exam-id");
 
+    expect(mocks.isPublishedExamAvailableToStudent).toHaveBeenCalledWith(
+      "exam-id",
+      student.id,
+    );
     expect(mocks.markExamAttemptsStarted).toHaveBeenCalledWith(
       "exam-id",
+      student.id,
       new Date("2026-08-10T00:00:00.000Z"),
     );
     expect(
@@ -256,6 +264,7 @@ describe("ExamAttempt service", () => {
     );
     expect(mocks.reserveExamForAttemptCreation).toHaveBeenCalledWith(
       "exam-id",
+      student.id,
       mocks.transactionSession,
     );
     expect(mocks.reserveStudentForAttemptCreation).toHaveBeenCalledWith(
@@ -332,11 +341,9 @@ describe("ExamAttempt service", () => {
     expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
   });
 
-  it("resumes the exact active attempt even after the Exam is hidden", async () => {
+  it("resumes an owned active attempt after the student is unassigned", async () => {
     const activeAttempt = createAttempt();
-    mocks.findStudentExamRecordById.mockResolvedValue(
-      createStudentExam({ status: EXAM_STATUS.HIDDEN }),
-    );
+    mocks.isPublishedExamAvailableToStudent.mockResolvedValue(false);
     mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
 
     const result = await startOrResumeExamAttempt(
@@ -353,6 +360,7 @@ describe("ExamAttempt service", () => {
     );
     expect(mocks.findActiveExamAttemptRecord).not.toHaveBeenCalled();
     expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+    expect(mocks.isPublishedExamAvailableToStudent).not.toHaveBeenCalled();
   });
 
   it("does not turn a stale resume confirmation into a retake", async () => {
@@ -431,6 +439,27 @@ describe("ExamAttempt service", () => {
       code: "EXAM_RETAKE_NOT_ALLOWED",
       statusCode: 409,
     });
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["new attempt", null],
+    [
+      "retake",
+      createAttempt({
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        submittedAt: serverNow,
+      }),
+    ],
+  ])("rejects an unassigned student's %s", async (_label, latestAttempt) => {
+    mocks.isPublishedExamAvailableToStudent.mockResolvedValue(false);
+    mocks.findLatestExamAttemptRecord.mockResolvedValue(latestAttempt);
+
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code: "EXAM_NOT_PUBLISHED", statusCode: 409 });
+    expect(mocks.findActiveExamAttemptRecord).not.toHaveBeenCalled();
+    expect(mocks.reserveExamForAttemptCreation).not.toHaveBeenCalled();
     expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
   });
 
@@ -1084,6 +1113,28 @@ describe("ExamAttempt service", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("keeps an owned historical result accessible after unassignment", async () => {
+    const answers = createEmptyAttemptAnswers();
+    const terminalAttempt = createAttempt({
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      submittedAt: serverNow,
+      answers,
+      grading: gradeAttemptAnswers(answers, createAnswerKey()),
+      gradedAt: serverNow,
+    });
+    mocks.isPublishedExamAvailableToStudent.mockResolvedValue(false);
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
+
+    const result = await getStudentExamAttemptResult(
+      student,
+      "exam-id",
+      terminalAttempt.id,
+    );
+
+    expect(result.attempt.id).toBe(terminalAttempt.id);
+    expect(mocks.isPublishedExamAvailableToStudent).not.toHaveBeenCalled();
+  });
+
   it("does not expose another student's result", async () => {
     mocks.findOwnedExamAttemptRecord.mockResolvedValue(null);
 
@@ -1334,6 +1385,10 @@ describe("ExamAttempt service", () => {
     expect(result.exams[0]).not.toHaveProperty("answerKey");
     expect(result.exams[0]).not.toHaveProperty("pdf");
     expect(result.exams[0]).not.toHaveProperty("createdBy");
+    expect(result.exams[0]).not.toHaveProperty("assignedStudentIds");
+    expect(mocks.listPublishedStudentExamRecords).toHaveBeenCalledWith(
+      student.id,
+    );
     expect(mocks.listAllExamAttemptRecordsForStudent).toHaveBeenCalledTimes(1);
     expect(result.exams[2].latestCompletedAttemptId).toBe("completed-attempt");
   });
@@ -1352,19 +1407,79 @@ describe("ExamAttempt service", () => {
         submittedAt: serverNow,
       }),
     ]);
-    mocks.listStudentExamRecordsByIds.mockResolvedValue([hiddenExam]);
+    mocks.listStudentExamRecordsByIds.mockResolvedValue([
+      { ...hiddenExam, isAssigned: true },
+    ]);
 
     const result = await listStudentExams(student);
 
-    expect(mocks.listStudentExamRecordsByIds).toHaveBeenCalledWith([
-      hiddenExam.id,
-    ]);
+    expect(mocks.listStudentExamRecordsByIds).toHaveBeenCalledWith(
+      [hiddenExam.id],
+      student.id,
+    );
     expect(result.exams).toEqual([
       expect.objectContaining({
         id: hiddenExam.id,
         state: STUDENT_EXAM_STATE.COMPLETED,
         isAvailable: false,
         latestCompletedAttemptId: "hidden-result",
+      }),
+    ]);
+  });
+
+  it("hides an unassigned Exam without attempts from the normal list", async () => {
+    mocks.listPublishedStudentExamRecords.mockResolvedValue([]);
+    mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([]);
+
+    const result = await listStudentExams(student);
+
+    expect(result.exams).toEqual([]);
+    expect(mocks.listStudentExamRecordsByIds).toHaveBeenCalledWith(
+      [],
+      student.id,
+    );
+  });
+
+  it("does not leak an unassigned published Exam with only terminal history", async () => {
+    const revokedExam = createStudentExam({ id: "revoked-exam" });
+    mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([
+      createAttempt({
+        id: "revoked-result",
+        examId: revokedExam.id,
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        submittedAt: serverNow,
+      }),
+    ]);
+    mocks.listStudentExamRecordsByIds.mockResolvedValue([
+      { ...revokedExam, isAssigned: false },
+    ]);
+
+    const result = await listStudentExams(student);
+
+    expect(result.exams).toEqual([]);
+  });
+
+  it("retains an unassigned published Exam only to resume its active attempt", async () => {
+    const revokedExam = createStudentExam({ id: "revoked-exam" });
+    const activeAttempt = createAttempt({
+      id: "revoked-active-attempt",
+      examId: revokedExam.id,
+    });
+    mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([
+      activeAttempt,
+    ]);
+    mocks.listStudentExamRecordsByIds.mockResolvedValue([
+      { ...revokedExam, isAssigned: false },
+    ]);
+
+    const result = await listStudentExams(student);
+
+    expect(result.exams).toEqual([
+      expect.objectContaining({
+        id: revokedExam.id,
+        state: STUDENT_EXAM_STATE.IN_PROGRESS,
+        isAvailable: false,
+        activeAttemptId: activeAttempt.id,
       }),
     ]);
   });

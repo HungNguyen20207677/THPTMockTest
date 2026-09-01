@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ClientSession } from "mongoose";
+
 import {
   assertAuthenticExamPdfUploadReference,
   assertValidExamPdfUploadReference,
@@ -8,7 +10,7 @@ import {
   discardExamPdfUpload,
   verifyExamPdfAsset,
 } from "@/lib/cloudinary/exam-pdf";
-import { EXAM_STATUS } from "@/lib/constants/exam";
+import { EXAM_STATUS, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
   deleteExamAttemptRecordsByExamId,
@@ -34,6 +36,7 @@ import {
 } from "@/lib/db/dao/exam.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { withMongoTransaction } from "@/lib/db/mongoose";
+import { reserveStudentsForExamAssignment } from "@/lib/db/dao/user.dao";
 import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
 import {
@@ -45,6 +48,7 @@ import {
   ExamPdfOperationConflictError,
   ExamPublicationError,
   ForbiddenError,
+  RequestValidationError,
 } from "@/lib/errors/app-error";
 import {
   examUpsertSchema,
@@ -77,6 +81,8 @@ function toExamSummary(
     id: exam.id,
     title: exam.title,
     status: exam.status,
+    visibilityMode: exam.visibilityMode,
+    assignedStudentCount: exam.assignedStudentIds.length,
     settings: exam.settings,
     hasAttempts: hasAttempts || exam.attemptsStarted,
     createdAt: exam.createdAt.toISOString(),
@@ -91,10 +97,47 @@ function toExamDetail(
   return {
     ...toExamSummary(exam, hasAttempts),
     description: exam.description,
+    assignedStudentIds: exam.assignedStudentIds,
     part3InputMode: exam.part3InputMode,
     pdf: exam.pdf,
     answerKey: exam.answerKey,
   };
+}
+
+type ExamAssignment = Pick<
+  UpsertExamInput,
+  "visibilityMode" | "assignedStudentIds"
+>;
+
+function normalizeExamAssignment(
+  input: Pick<UpsertExamInput, "visibilityMode" | "assignedStudentIds">,
+): ExamAssignment {
+  const assignedStudentIds =
+    input.visibilityMode === EXAM_VISIBILITY_MODE.SELECTED_STUDENTS
+      ? [...new Set(input.assignedStudentIds)]
+      : [];
+
+  return {
+    visibilityMode: input.visibilityMode,
+    assignedStudentIds,
+  };
+}
+
+async function reserveExamAssignment(
+  assignment: ExamAssignment,
+  session: ClientSession,
+): Promise<void> {
+  if (
+    assignment.assignedStudentIds.length > 0 &&
+    !(await reserveStudentsForExamAssignment(
+      assignment.assignedStudentIds,
+      session,
+    ))
+  ) {
+    throw new RequestValidationError(
+      "Danh sách phân công chỉ được chứa tài khoản học sinh.",
+    );
+  }
 }
 
 function assertPublishableContent(input: UpsertExamInput): void {
@@ -278,6 +321,10 @@ export async function createExam(
   pdfUpload: ExamPdfUploadReference,
 ): Promise<ExamDetail> {
   assertAdmin(actor);
+  const examInput = {
+    ...input,
+    ...normalizeExamAssignment(input),
+  };
   const leases = await acquirePdfUploadLeases(pdfUpload);
 
   try {
@@ -285,16 +332,19 @@ export async function createExam(
     await assertPdfUploadIsUnclaimed(pdfUpload);
     const pdf = await verifyExamPdfAsset(pdfUpload);
 
-    if (input.status === EXAM_STATUS.PUBLISHED) {
+    if (examInput.status === EXAM_STATUS.PUBLISHED) {
       assertExamCanBePublished({
-        title: input.title,
-        part3InputMode: input.part3InputMode,
+        title: examInput.title,
+        part3InputMode: examInput.part3InputMode,
         pdf,
-        answerKey: input.answerKey,
+        answerKey: examInput.answerKey,
       });
     }
 
-    const exam = await createExamRecord({ ...input, pdf }, actor.id);
+    const exam = await withMongoTransaction(async (session) => {
+      await reserveExamAssignment(examInput, session);
+      return createExamRecord({ ...examInput, pdf }, actor.id, session);
+    });
     return toExamDetail(exam, false);
   } catch (error) {
     await discardPdfUploadWhileLeasedBestEffort(pdfUpload);
@@ -351,10 +401,23 @@ export async function editExam(
     throw new ExamAnswerKeyConfirmationRequiredError();
   }
 
+  const requestedAssignment =
+    input.visibilityMode === undefined && input.assignedStudentIds === undefined
+      ? {
+          visibilityMode: currentExam.visibilityMode,
+          assignedStudentIds: currentExam.assignedStudentIds,
+        }
+      : {
+          visibilityMode: input.visibilityMode ?? currentExam.visibilityMode,
+          assignedStudentIds: input.assignedStudentIds ?? [],
+        };
+  const assignment = normalizeExamAssignment(requestedAssignment);
+
   const examInput: UpsertExamInput = {
     title: input.title,
     description: input.description,
     status: input.status,
+    ...assignment,
     part3InputMode: input.part3InputMode,
     settings: input.settings,
     answerKey: input.answerKey,
@@ -391,71 +454,82 @@ export async function editExam(
     const nextAnswerKeyRevision = answerKeyChanged
       ? currentExam.answerKeyRevision + 1
       : currentExam.answerKeyRevision;
-    const updatedExam =
-      hasAttempts && answerKeyChanged
-        ? await withMongoTransaction(async (session) => {
-            const correctedExam = await updateExamAnswerKeyRecord(
-              examId,
-              {
-                title: examInput.title,
-                description: examInput.description,
-                status: examInput.status,
-                settings: examInput.settings,
-                answerKey: examInput.answerKey,
-              },
-              currentExam.updatedAt,
-              currentExam.answerKeyRevision,
-              nextAnswerKeyRevision,
-              session,
-            );
+    const updatedExam = await withMongoTransaction(async (session) => {
+      await reserveExamAssignment(assignment, session);
 
-            if (!correctedExam) {
-              throw new ExamConflictError();
-            }
+      if (hasAttempts && answerKeyChanged) {
+        const correctedExam = await updateExamAnswerKeyRecord(
+          examId,
+          {
+            title: examInput.title,
+            description: examInput.description,
+            status: examInput.status,
+            visibilityMode: examInput.visibilityMode,
+            assignedStudentIds: examInput.assignedStudentIds,
+            settings: examInput.settings,
+            answerKey: examInput.answerKey,
+          },
+          currentExam.updatedAt,
+          currentExam.answerKeyRevision,
+          nextAnswerKeyRevision,
+          session,
+        );
 
-            const regradeSources = await listTerminalExamAttemptRegradeSources(
-              examId,
-              session,
-            );
-            const gradedAt = new Date();
-            const replacements = regradeSources.map((attempt) => ({
-              attemptId: attempt.id,
-              grading: gradeAttemptAnswers(
-                attempt.answers,
-                correctedExam.answerKey,
-                correctedExam.answerKeyRevision,
-              ),
-            }));
-            const matchedCount = await replaceTerminalExamAttemptGradings(
-              examId,
-              replacements,
-              gradedAt,
-              session,
-            );
+        if (!correctedExam) {
+          throw new ExamConflictError();
+        }
 
-            if (matchedCount !== replacements.length) {
-              throw new ExamConflictError();
-            }
+        const regradeSources = await listTerminalExamAttemptRegradeSources(
+          examId,
+          session,
+        );
+        const gradedAt = new Date();
+        const replacements = regradeSources.map((attempt) => ({
+          attemptId: attempt.id,
+          grading: gradeAttemptAnswers(
+            attempt.answers,
+            correctedExam.answerKey,
+            correctedExam.answerKeyRevision,
+          ),
+        }));
+        const matchedCount = await replaceTerminalExamAttemptGradings(
+          examId,
+          replacements,
+          gradedAt,
+          session,
+        );
 
-            return correctedExam;
-          })
-        : hasAttempts
-          ? await updateExamMetadataRecord(
-              examId,
-              {
-                title: examInput.title,
-                description: examInput.description,
-                status: examInput.status,
-                settings: examInput.settings,
-              },
-              currentExam.updatedAt,
-            )
-          : await updateExamRecord(
-              examId,
-              { ...examInput, pdf: newPdf },
-              currentExam.updatedAt,
-              nextAnswerKeyRevision,
-            );
+        if (matchedCount !== replacements.length) {
+          throw new ExamConflictError();
+        }
+
+        return correctedExam;
+      }
+
+      if (hasAttempts) {
+        return updateExamMetadataRecord(
+          examId,
+          {
+            title: examInput.title,
+            description: examInput.description,
+            status: examInput.status,
+            visibilityMode: examInput.visibilityMode,
+            assignedStudentIds: examInput.assignedStudentIds,
+            settings: examInput.settings,
+          },
+          currentExam.updatedAt,
+          session,
+        );
+      }
+
+      return updateExamRecord(
+        examId,
+        { ...examInput, pdf: newPdf },
+        currentExam.updatedAt,
+        nextAnswerKeyRevision,
+        session,
+      );
+    });
 
     if (!updatedExam) {
       throw new ExamConflictError();
@@ -498,11 +572,18 @@ export async function changeExamStatus(
     assertExamCanBePublished(currentExam);
   }
 
-  const updatedExam = await updateExamRecordStatus(
-    examId,
-    status,
-    currentExam.updatedAt,
-  );
+  const updatedExam = await withMongoTransaction(async (session) => {
+    if (status === EXAM_STATUS.PUBLISHED) {
+      await reserveExamAssignment(currentExam, session);
+    }
+
+    return updateExamRecordStatus(
+      examId,
+      status,
+      currentExam.updatedAt,
+      session,
+    );
+  });
 
   if (!updatedExam) {
     throw new ExamConflictError();

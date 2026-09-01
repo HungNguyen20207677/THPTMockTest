@@ -1,7 +1,6 @@
 import "server-only";
 
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
-import { EXAM_STATUS } from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
   countExamAttemptRecordsByStatus,
@@ -18,6 +17,7 @@ import {
   countExamRecords,
   findExamReportingRecordById,
   findExamReportingRecordsByIds,
+  isPublishedExamAvailableToStudent,
   type ExamReportingPersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
 import {
@@ -578,7 +578,10 @@ export async function getStudentExamAttemptHistory(
     throw new ExamNotFoundError();
   }
 
-  if (exam.status !== EXAM_STATUS.PUBLISHED && !latestAttempt) {
+  if (
+    !latestAttempt &&
+    !(await isPublishedExamAvailableToStudent(examId, actor.id))
+  ) {
     throw new ExamNotFoundError();
   }
 

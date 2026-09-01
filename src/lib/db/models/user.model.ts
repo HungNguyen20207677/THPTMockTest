@@ -20,6 +20,7 @@ export interface UserRecord {
   sessionVersion: number;
   attemptsStarted: boolean;
   attemptOperationVersion: number;
+  assignmentOperationVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -73,6 +74,13 @@ const userSchema = new Schema<UserRecord>(
       select: false,
     },
     attemptOperationVersion: {
+      type: Number,
+      default: 0,
+      required: true,
+      min: 0,
+      select: false,
+    },
+    assignmentOperationVersion: {
       type: Number,
       default: 0,
       required: true,

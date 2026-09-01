@@ -134,6 +134,18 @@ export function StudentExamList() {
       router.push(getAttemptHref(target.id, attempt.id));
     } catch (error) {
       setStartError(getRequestError(error));
+
+      if (
+        error instanceof ApiClientError &&
+        (error.code === "EXAM_NOT_FOUND" ||
+          error.code === "EXAM_NOT_PUBLISHED" ||
+          error.code === "EXAM_RETAKE_NOT_ALLOWED")
+      ) {
+        setStartTarget(null);
+        setIsLoading(true);
+        setLoadError(null);
+        setRefreshVersion((version) => version + 1);
+      }
     } finally {
       startInFlightRef.current = false;
       setIsStarting(false);
@@ -216,11 +228,20 @@ export function StudentExamList() {
         )}
       </AlertDialog>
 
+      {startError && !startTarget && (
+        <p
+          role="alert"
+          className="border-destructive/30 bg-destructive/5 text-destructive mb-4 rounded-md border px-4 py-3 text-sm"
+        >
+          {startError}
+        </p>
+      )}
+
       {exams.length === 0 ? (
         <div className="border-border bg-background rounded-xl border p-8 text-center shadow-sm">
           <p className="font-medium">Chưa có đề thi đang mở.</p>
           <p className="text-muted-foreground mt-2 text-sm">
-            Các đề đã xuất bản sẽ xuất hiện tại đây.
+            Các đề đã xuất bản dành cho bạn sẽ xuất hiện tại đây.
           </p>
         </div>
       ) : (

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   createUser: vi.fn(),
   deleteExamAttemptRecordsByStudentId: vi.fn(),
   deleteExamRecord: vi.fn(),
+  removeStudentFromExamAssignments: vi.fn(),
   deleteStudentUser: vi.fn(),
   findUserById: vi.fn(),
   findUserByUsername: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@/lib/db/dao/user.dao", () => ({
 
 vi.mock("@/lib/db/dao/exam.dao", () => ({
   deleteExamRecord: mocks.deleteExamRecord,
+  removeStudentFromExamAssignments: mocks.removeStudentFromExamAssignments,
 }));
 
 vi.mock("@/lib/db/mongoose", () => ({
@@ -76,6 +78,8 @@ describe("student service", () => {
     mocks.deleteExamAttemptRecordsByStudentId.mockReset();
     mocks.deleteExamAttemptRecordsByStudentId.mockResolvedValue(0);
     mocks.deleteExamRecord.mockReset();
+    mocks.removeStudentFromExamAssignments.mockReset();
+    mocks.removeStudentFromExamAssignments.mockResolvedValue(0);
     mocks.deleteStudentUser.mockReset();
     mocks.findUserById.mockReset();
     mocks.findUserByUsername.mockReset();
@@ -200,12 +204,21 @@ describe("student service", () => {
       "student-id",
       mocks.transactionSession,
     );
+    expect(mocks.removeStudentFromExamAssignments).toHaveBeenCalledWith(
+      "student-id",
+      mocks.transactionSession,
+    );
     expect(
       mocks.deleteExamAttemptRecordsByStudentId.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      mocks.removeStudentFromExamAssignments.mock.invocationCallOrder[0],
+    );
+    expect(
+      mocks.removeStudentFromExamAssignments.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.deleteStudentUser.mock.invocationCallOrder[0]);
   });
 
-  it("does not change Exams when deleting a Student", async () => {
+  it("removes assignment references without deleting Exams", async () => {
     mocks.findUserById.mockResolvedValue({
       id: "student-id",
       username: "student-one",
@@ -219,6 +232,10 @@ describe("student service", () => {
 
     await deleteStudent(admin, "student-id");
 
+    expect(mocks.removeStudentFromExamAssignments).toHaveBeenCalledWith(
+      "student-id",
+      mocks.transactionSession,
+    );
     expect(mocks.deleteExamRecord).not.toHaveBeenCalled();
     expect(mocks.withMongoTransaction).toHaveBeenCalledOnce();
   });
@@ -227,6 +244,7 @@ describe("student service", () => {
     const databaseState = {
       studentExists: true,
       attemptIds: ["in-progress-attempt", "submitted-attempt"],
+      assignedStudentIds: ["student-id", "another-student-id"],
     };
     mocks.findUserById.mockResolvedValue({
       id: "student-id",
@@ -241,6 +259,13 @@ describe("student service", () => {
       databaseState.attemptIds = [];
       return 2;
     });
+    mocks.removeStudentFromExamAssignments.mockImplementation(async () => {
+      databaseState.assignedStudentIds =
+        databaseState.assignedStudentIds.filter(
+          (studentId) => studentId !== "student-id",
+        );
+      return 1;
+    });
     mocks.deleteStudentUser.mockRejectedValue(new Error("User delete failed"));
     mocks.withMongoTransaction.mockImplementation(
       async (operation: (session: unknown) => Promise<unknown>) => {
@@ -251,6 +276,7 @@ describe("student service", () => {
         } catch (error) {
           databaseState.studentExists = snapshot.studentExists;
           databaseState.attemptIds = snapshot.attemptIds;
+          databaseState.assignedStudentIds = snapshot.assignedStudentIds;
           throw error;
         }
       },
@@ -262,6 +288,7 @@ describe("student service", () => {
     expect(databaseState).toEqual({
       studentExists: true,
       attemptIds: ["in-progress-attempt", "submitted-attempt"],
+      assignedStudentIds: ["student-id", "another-student-id"],
     });
   });
 });

@@ -5,6 +5,7 @@ import { hash } from "bcryptjs";
 import { USER_ROLE } from "@/lib/constants/roles";
 import { PASSWORD_HASH_ROUNDS } from "@/lib/constants/user";
 import { deleteExamAttemptRecordsByStudentId } from "@/lib/db/dao/exam-attempt.dao";
+import { removeStudentFromExamAssignments } from "@/lib/db/dao/exam.dao";
 import {
   createUser,
   deleteStudentUser,
@@ -179,6 +180,7 @@ export async function deleteStudent(
 
   await withMongoTransaction(async (session) => {
     await deleteExamAttemptRecordsByStudentId(studentId, session);
+    await removeStudentFromExamAssignments(studentId, session);
     const deleted = await deleteStudentUser(studentId, session);
 
     if (!deleted) {

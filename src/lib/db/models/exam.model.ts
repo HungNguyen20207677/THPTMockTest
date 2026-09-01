@@ -5,6 +5,8 @@ import { model, models, Schema, type Model, type Types } from "mongoose";
 import {
   EXAM_STATUSES,
   EXAM_STRUCTURE,
+  EXAM_VISIBILITY_MODE,
+  EXAM_VISIBILITY_MODES,
   INITIAL_ANSWER_KEY_REVISION,
   PART3_INPUT_MODE,
   PART3_INPUT_MODES,
@@ -16,6 +18,7 @@ import type {
   ExamPdf,
   ExamSettings,
   ExamStatus,
+  ExamVisibilityMode,
   Part3InputMode,
   PartOneAnswer,
   PartTwoAnswer,
@@ -25,6 +28,8 @@ export interface ExamRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  visibilityMode: ExamVisibilityMode;
+  assignedStudentIds: Types.ObjectId[];
   part3InputMode: Part3InputMode;
   pdf: ExamPdf;
   settings: ExamSettings;
@@ -126,6 +131,16 @@ const examSchema = new Schema<ExamRecord>(
       required: true,
       index: true,
     },
+    visibilityMode: {
+      type: String,
+      enum: EXAM_VISIBILITY_MODES,
+      required: true,
+      default: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
+    },
+    assignedStudentIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      default: [],
+    },
     part3InputMode: {
       type: String,
       enum: PART3_INPUT_MODES,
@@ -167,6 +182,7 @@ const examSchema = new Schema<ExamRecord>(
 );
 
 examSchema.index({ createdAt: -1 });
+examSchema.index({ assignedStudentIds: 1 });
 examSchema.index({ "pdf.publicId": 1 }, { unique: true });
 
 const examPdfOperationLeaseSchema = new Schema<ExamPdfOperationLeaseRecord>(

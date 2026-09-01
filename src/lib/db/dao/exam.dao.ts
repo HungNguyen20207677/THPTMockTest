@@ -6,6 +6,7 @@ import type { ClientSession, Types } from "mongoose";
 
 import {
   EXAM_STATUS,
+  EXAM_VISIBILITY_MODE,
   INITIAL_ANSWER_KEY_REVISION,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
@@ -20,6 +21,7 @@ import type {
   ExamPdf,
   ExamSettings,
   ExamStatus,
+  ExamVisibilityMode,
   Part3InputMode,
 } from "@/types/exam";
 
@@ -28,6 +30,8 @@ export interface ExamPersistenceRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  visibilityMode: ExamVisibilityMode;
+  assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
   pdf: ExamPdf;
   settings: ExamSettings;
@@ -43,6 +47,8 @@ export interface SaveExamRecordInput {
   title: string;
   description?: string;
   status: ExamStatus;
+  visibilityMode: ExamVisibilityMode;
+  assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
   pdf: ExamPdf;
   settings: ExamSettings;
@@ -53,6 +59,8 @@ export interface UpdateExamMetadataRecordInput {
   title: string;
   description?: string;
   status: ExamStatus;
+  visibilityMode: ExamVisibilityMode;
+  assignedStudentIds: string[];
   settings: ExamSettings;
 }
 
@@ -76,6 +84,10 @@ export interface StudentExamWorkspacePersistenceRecord extends StudentExamPersis
   pdf: Pick<ExamPdf, "secureUrl" | "originalFilename">;
 }
 
+export interface RetainedStudentExamPersistenceRecord extends StudentExamPersistenceRecord {
+  isAssigned: boolean;
+}
+
 export interface ExamGradingPersistenceRecord {
   id: string;
   title: string;
@@ -95,6 +107,8 @@ interface ExamDocumentData {
   title: string;
   description?: string;
   status: ExamStatus;
+  visibilityMode?: ExamVisibilityMode;
+  assignedStudentIds?: Types.ObjectId[];
   part3InputMode?: Part3InputMode;
   pdf: ExamPdf;
   settings: ExamSettings;
@@ -120,6 +134,11 @@ interface StudentExamDocumentData {
 interface StudentExamWorkspaceDocumentData extends StudentExamDocumentData {
   part3InputMode?: Part3InputMode;
   pdf: Pick<ExamPdf, "secureUrl" | "originalFilename">;
+}
+
+interface RetainedStudentExamDocumentData extends StudentExamDocumentData {
+  visibilityMode?: ExamVisibilityMode;
+  assignedStudentIds?: Types.ObjectId[];
 }
 
 interface ExamGradingDocumentData {
@@ -210,11 +229,26 @@ export async function releaseExamPdfOperationLease(
 }
 
 function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
+  const visibilityMode =
+    exam.visibilityMode ?? EXAM_VISIBILITY_MODE.ALL_STUDENTS;
+  const assignedStudentIds =
+    visibilityMode === EXAM_VISIBILITY_MODE.SELECTED_STUDENTS
+      ? [
+          ...new Set(
+            (exam.assignedStudentIds ?? []).map((studentId) =>
+              studentId.toString(),
+            ),
+          ),
+        ]
+      : [];
+
   return {
     id: exam._id.toString(),
     title: exam.title,
     description: exam.description,
     status: exam.status,
+    visibilityMode,
+    assignedStudentIds,
     part3InputMode: exam.part3InputMode ?? PART3_INPUT_MODE.BUBBLE,
     pdf: exam.pdf,
     settings: exam.settings,
@@ -225,6 +259,38 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     createdAt: exam.createdAt,
     updatedAt: exam.updatedAt,
   };
+}
+
+function getStudentAssignmentFilter(studentId: string) {
+  return {
+    $or: [
+      { visibilityMode: { $exists: false } },
+      { visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS },
+      {
+        visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+        assignedStudentIds: studentId,
+      },
+    ],
+  };
+}
+
+function isStudentAssignedToExam(
+  exam: Pick<
+    RetainedStudentExamDocumentData,
+    "visibilityMode" | "assignedStudentIds"
+  >,
+  studentId: string,
+): boolean {
+  const visibilityMode =
+    exam.visibilityMode ?? EXAM_VISIBILITY_MODE.ALL_STUDENTS;
+
+  return (
+    visibilityMode === EXAM_VISIBILITY_MODE.ALL_STUDENTS ||
+    (visibilityMode === EXAM_VISIBILITY_MODE.SELECTED_STUDENTS &&
+      (exam.assignedStudentIds ?? []).some(
+        (assignedStudentId) => assignedStudentId.toString() === studentId,
+      ))
+  );
 }
 
 function toStudentExamRecord(
@@ -306,12 +372,15 @@ export async function findExamRecordById(
   return exam ? toExamRecord(exam) : null;
 }
 
-export async function listPublishedStudentExamRecords(): Promise<
-  StudentExamPersistenceRecord[]
-> {
+export async function listPublishedStudentExamRecords(
+  studentId: string,
+): Promise<StudentExamPersistenceRecord[]> {
   await prepareExamModel();
 
-  const exams = await ExamModel.find({ status: EXAM_STATUS.PUBLISHED })
+  const exams = await ExamModel.find({
+    status: EXAM_STATUS.PUBLISHED,
+    ...getStudentAssignmentFilter(studentId),
+  })
     .select({
       title: 1,
       description: 1,
@@ -328,9 +397,25 @@ export async function listPublishedStudentExamRecords(): Promise<
   return exams.map(toStudentExamRecord);
 }
 
+export async function isPublishedExamAvailableToStudent(
+  examId: string,
+  studentId: string,
+): Promise<boolean> {
+  await prepareExamModel();
+
+  return Boolean(
+    await ExamModel.exists({
+      _id: examId,
+      status: EXAM_STATUS.PUBLISHED,
+      ...getStudentAssignmentFilter(studentId),
+    }),
+  );
+}
+
 export async function listStudentExamRecordsByIds(
   examIds: string[],
-): Promise<StudentExamPersistenceRecord[]> {
+  studentId: string,
+): Promise<RetainedStudentExamPersistenceRecord[]> {
   await prepareExamModel();
 
   if (examIds.length === 0) {
@@ -343,15 +428,20 @@ export async function listStudentExamRecordsByIds(
       description: 1,
       status: 1,
       "settings.allowRetake": 1,
+      visibilityMode: 1,
+      assignedStudentIds: 1,
       attemptsStarted: 1,
       createdAt: 1,
       updatedAt: 1,
     })
     .sort({ createdAt: -1, _id: -1 })
-    .lean<StudentExamDocumentData[]>()
+    .lean<RetainedStudentExamDocumentData[]>()
     .exec();
 
-  return exams.map(toStudentExamRecord);
+  return exams.map((exam) => ({
+    ...toStudentExamRecord(exam),
+    isAssigned: isStudentAssignedToExam(exam, studentId),
+  }));
 }
 
 export async function findStudentExamRecordById(
@@ -380,6 +470,7 @@ export async function findStudentExamRecordById(
 
 export async function markExamAttemptsStarted(
   examId: string,
+  studentId: string,
   expectedUpdatedAt: Date,
 ): Promise<boolean> {
   await prepareExamModel();
@@ -388,6 +479,7 @@ export async function markExamAttemptsStarted(
     {
       _id: examId,
       status: EXAM_STATUS.PUBLISHED,
+      ...getStudentAssignmentFilter(studentId),
       updatedAt: expectedUpdatedAt,
       attemptsStarted: { $ne: true },
     },
@@ -400,12 +492,17 @@ export async function markExamAttemptsStarted(
 
 export async function reserveExamForAttemptCreation(
   examId: string,
+  studentId: string,
   session: ClientSession,
 ): Promise<boolean> {
   await prepareExamModel();
 
   const result = await ExamModel.updateOne(
-    { _id: examId, status: EXAM_STATUS.PUBLISHED },
+    {
+      _id: examId,
+      status: EXAM_STATUS.PUBLISHED,
+      ...getStudentAssignmentFilter(studentId),
+    },
     {
       $set: { attemptsStarted: true },
       $inc: { attemptOperationVersion: 1 },
@@ -536,10 +633,11 @@ export async function findExamRecordByPdfPublicId(
 export async function createExamRecord(
   input: SaveExamRecordInput,
   createdBy: string,
+  session: ClientSession,
 ): Promise<ExamPersistenceRecord> {
   await prepareExamModel();
 
-  const exam = await ExamModel.create({ ...input, createdBy });
+  const [exam] = await ExamModel.create([{ ...input, createdBy }], { session });
   return toExamRecord(exam.toObject() as ExamDocumentData);
 }
 
@@ -548,6 +646,7 @@ export async function updateExamRecord(
   input: SaveExamRecordInput,
   expectedUpdatedAt: Date,
   answerKeyRevision: number,
+  session: ClientSession,
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();
 
@@ -568,7 +667,7 @@ export async function updateExamRecord(
       attemptsStarted: { $ne: true },
     },
     update,
-    { returnDocument: "after", runValidators: true },
+    { returnDocument: "after", runValidators: true, session },
   )
     .lean<ExamDocumentData>()
     .exec();
@@ -615,6 +714,7 @@ export async function updateExamMetadataRecord(
   examId: string,
   input: UpdateExamMetadataRecordInput,
   expectedUpdatedAt: Date,
+  session: ClientSession,
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();
 
@@ -627,7 +727,7 @@ export async function updateExamMetadataRecord(
   const exam = await ExamModel.findOneAndUpdate(
     { _id: examId, updatedAt: expectedUpdatedAt },
     update,
-    { returnDocument: "after", runValidators: true },
+    { returnDocument: "after", runValidators: true, session },
   )
     .lean<ExamDocumentData>()
     .exec();
@@ -639,18 +739,34 @@ export async function updateExamRecordStatus(
   examId: string,
   status: ExamStatus,
   expectedUpdatedAt: Date,
+  session: ClientSession,
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();
 
   const exam = await ExamModel.findOneAndUpdate(
     { _id: examId, updatedAt: expectedUpdatedAt },
     { $set: { status } },
-    { returnDocument: "after", runValidators: true },
+    { returnDocument: "after", runValidators: true, session },
   )
     .lean<ExamDocumentData>()
     .exec();
 
   return exam ? toExamRecord(exam) : null;
+}
+
+export async function removeStudentFromExamAssignments(
+  studentId: string,
+  session: ClientSession,
+): Promise<number> {
+  await prepareExamModel();
+
+  const result = await ExamModel.updateMany(
+    { assignedStudentIds: studentId },
+    { $pull: { assignedStudentIds: studentId } },
+    { session },
+  ).exec();
+
+  return result.modifiedCount;
 }
 
 export async function deleteExamRecord(

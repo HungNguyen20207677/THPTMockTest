@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EXAM_STATUS,
   EXAM_STRUCTURE,
+  EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
 import {
@@ -44,6 +45,45 @@ describe("exam answer-key validation", () => {
     const parsed = examUpsertSchema.parse(createValidExamInput());
 
     expect(parsed.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
+    expect(parsed.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
+    expect(parsed.assignedStudentIds).toEqual([]);
+  });
+
+  it("deduplicates selected students and ignores IDs in all-student mode", () => {
+    const firstStudentId = "64b000000000000000000001";
+    const secondStudentId = "64b000000000000000000002";
+    const selected = examUpsertSchema.parse({
+      ...createValidExamInput(),
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+      assignedStudentIds: [firstStudentId, firstStudentId, secondStudentId],
+    });
+    const allStudents = examUpsertSchema.parse({
+      ...createValidExamInput(),
+      visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
+      assignedStudentIds: [firstStudentId],
+    });
+
+    expect(selected.assignedStudentIds).toEqual([
+      firstStudentId,
+      secondStudentId,
+    ]);
+    expect(allStudents.assignedStudentIds).toEqual([]);
+  });
+
+  it.each([
+    {
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+    },
+    {
+      assignedStudentIds: ["64b000000000000000000001"],
+    },
+  ])("rejects a one-sided assignment payload", (assignment) => {
+    expect(
+      examUpsertSchema.safeParse({
+        ...createValidExamInput(),
+        ...assignment,
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts TEXT and rejects unknown Part III input modes", () => {

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   countExamRecords: vi.fn(),
   findExamReportingRecordById: vi.fn(),
   findExamReportingRecordsByIds: vi.fn(),
+  isPublishedExamAvailableToStudent: vi.fn(),
   countStudentUsers: vi.fn(),
   findStudentUsersByIds: vi.fn(),
   findUserById: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
   countExamRecords: mocks.countExamRecords,
   findExamReportingRecordById: mocks.findExamReportingRecordById,
   findExamReportingRecordsByIds: mocks.findExamReportingRecordsByIds,
+  isPublishedExamAvailableToStudent: mocks.isPublishedExamAvailableToStudent,
 }));
 
 vi.mock("@/lib/db/dao/user.dao", () => ({
@@ -182,6 +184,7 @@ describe("reporting service", () => {
     mocks.findExamAttemptRecordById.mockResolvedValue(null);
     mocks.findLatestExamAttemptRecord.mockResolvedValue(null);
     mocks.findExamReportingRecordById.mockResolvedValue(createExam());
+    mocks.isPublishedExamAvailableToStudent.mockResolvedValue(true);
     mocks.findExamReportingRecordsByIds.mockImplementation(
       (examIds: string[]) =>
         Promise.resolve(examIds.map((id) => createExam({ id }))),
@@ -447,5 +450,36 @@ describe("reporting service", () => {
       studentActor.id,
       hiddenExam.id,
     );
+  });
+
+  it("keeps owned history accessible after the student is unassigned", async () => {
+    const attempt = createAttempt();
+    mocks.isPublishedExamAvailableToStudent.mockResolvedValue(false);
+    mocks.findLatestExamAttemptRecord.mockResolvedValue(attempt);
+    mocks.listTerminalExamAttemptRecordPage.mockResolvedValue({
+      attempts: [attempt],
+      totalItems: 1,
+    });
+
+    const history = await getStudentExamAttemptHistory(
+      studentActor,
+      attempt.examId,
+      { page: 1, pageSize: 20 },
+    );
+
+    expect(history.attempts).toHaveLength(1);
+    expect(mocks.isPublishedExamAvailableToStudent).not.toHaveBeenCalled();
+  });
+
+  it("does not expose an unassigned Exam through history without ownership", async () => {
+    mocks.isPublishedExamAvailableToStudent.mockResolvedValue(false);
+
+    await expect(
+      getStudentExamAttemptHistory(studentActor, "exam-id", {
+        page: 1,
+        pageSize: 20,
+      }),
+    ).rejects.toMatchObject({ code: "EXAM_NOT_FOUND", statusCode: 404 });
+    expect(mocks.listTerminalExamAttemptRecordPage).not.toHaveBeenCalled();
   });
 });

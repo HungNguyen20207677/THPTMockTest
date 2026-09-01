@@ -173,6 +173,28 @@ export async function findStudentUsersByIds(
   return users.map(toUserAccount);
 }
 
+export async function reserveStudentsForExamAssignment(
+  studentIds: string[],
+  session: ClientSession,
+): Promise<boolean> {
+  await prepareUserModel();
+
+  if (studentIds.length === 0) {
+    return true;
+  }
+
+  const result = await UserModel.updateMany(
+    {
+      _id: { $in: studentIds },
+      role: USER_ROLE.STUDENT,
+    },
+    { $inc: { assignmentOperationVersion: 1 } },
+    { runValidators: true, session, timestamps: false },
+  ).exec();
+
+  return result.matchedCount === studentIds.length;
+}
+
 export async function countStudentUsers(): Promise<{
   total: number;
   active: number;

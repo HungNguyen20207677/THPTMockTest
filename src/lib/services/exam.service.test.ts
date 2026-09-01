@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   updateExamMetadataRecord: vi.fn(),
   updateExamRecordStatus: vi.fn(),
   findExamIdsWithAttemptRecords: vi.fn(),
+  reserveStudentsForExamAssignment: vi.fn(),
   hasExamAttemptRecords: vi.fn(),
   transactionSession: { id: "transaction-session" },
   withMongoTransaction: vi.fn(),
@@ -60,6 +61,10 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   replaceTerminalExamAttemptGradings: mocks.replaceTerminalExamAttemptGradings,
 }));
 
+vi.mock("@/lib/db/dao/user.dao", () => ({
+  reserveStudentsForExamAssignment: mocks.reserveStudentsForExamAssignment,
+}));
+
 vi.mock("@/lib/db/mongoose", () => ({
   withMongoTransaction: mocks.withMongoTransaction,
 }));
@@ -67,6 +72,7 @@ vi.mock("@/lib/db/mongoose", () => ({
 import {
   EXAM_STATUS,
   EXAM_STRUCTURE,
+  EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
@@ -81,7 +87,7 @@ import {
 import type { ExamPersistenceRecord } from "@/lib/db/dao/exam.dao";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
-import type { UpsertExamInput } from "@/lib/validations/exam";
+import type { UpdateExamInput, UpsertExamInput } from "@/lib/validations/exam";
 import type { AppUser } from "@/types/user";
 import type { ExamPdfUploadReference } from "@/types/exam";
 
@@ -122,6 +128,8 @@ function createValidInput(): UpsertExamInput {
     title: "Đề thi thử Toán số 1",
     description: "Đề luyện tập",
     status: EXAM_STATUS.DRAFT,
+    visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
+    assignedStudentIds: [],
     part3InputMode: PART3_INPUT_MODE.BUBBLE,
     settings: {
       allowRetake: true,
@@ -197,6 +205,8 @@ describe("exam service", () => {
     mocks.updateExamRecordStatus.mockReset();
     mocks.findExamIdsWithAttemptRecords.mockReset();
     mocks.findExamIdsWithAttemptRecords.mockResolvedValue(new Set<string>());
+    mocks.reserveStudentsForExamAssignment.mockReset();
+    mocks.reserveStudentsForExamAssignment.mockResolvedValue(true);
     mocks.hasExamAttemptRecords.mockReset();
     mocks.hasExamAttemptRecords.mockResolvedValue(false);
     mocks.withMongoTransaction.mockReset();
@@ -224,6 +234,7 @@ describe("exam service", () => {
       draft.id,
       EXAM_STATUS.PUBLISHED,
       draft.updatedAt,
+      mocks.transactionSession,
     );
   });
 
@@ -257,6 +268,45 @@ describe("exam service", () => {
       statusCode: 403,
     });
     expect(mocks.listExamRecords).not.toHaveBeenCalled();
+  });
+
+  it("returns only a compact assignment summary in the ADMIN list", async () => {
+    const exam = createStoredExam({
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+      assignedStudentIds: ["student-one", "student-two", "student-three"],
+    });
+    mocks.listExamRecords.mockResolvedValue([exam]);
+
+    const [summary] = await listExams(admin);
+
+    expect(summary).toMatchObject({
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+      assignedStudentCount: 3,
+    });
+    expect(summary).not.toHaveProperty("assignedStudentIds");
+  });
+
+  it("rejects a missing or non-student user in an Exam assignment", async () => {
+    const input = {
+      ...createValidInput(),
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+      assignedStudentIds: ["64b000000000000000000099"],
+    };
+    mocks.reserveStudentsForExamAssignment.mockResolvedValue(false);
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.discardExamPdfUpload.mockResolvedValue(undefined);
+
+    await expect(
+      createExam(admin, input, replacementPdfUpload),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", statusCode: 400 });
+    expect(mocks.reserveStudentsForExamAssignment).toHaveBeenCalledWith(
+      input.assignedStudentIds,
+      mocks.transactionSession,
+    );
+    expect(mocks.discardExamPdfUpload).toHaveBeenCalledWith(
+      replacementPdfUpload,
+    );
+    expect(mocks.createExamRecord).not.toHaveBeenCalled();
   });
 
   it("allows only an ADMIN to issue a signed PDF upload ticket", () => {
@@ -311,6 +361,7 @@ describe("exam service", () => {
       expect.objectContaining({ pdf: newPdf }),
       currentExam.updatedAt,
       currentExam.answerKeyRevision,
+      mocks.transactionSession,
     );
     expect(mocks.deleteExamPdf).toHaveBeenCalledWith(oldPdf.publicId);
     expect(mocks.updateExamRecord.mock.invocationCallOrder[0]).toBeLessThan(
@@ -694,6 +745,7 @@ describe("exam service", () => {
       expect.objectContaining({ answerKey: input.answerKey }),
       currentExam.updatedAt,
       2,
+      mocks.transactionSession,
     );
   });
 
@@ -722,6 +774,35 @@ describe("exam service", () => {
       }),
       currentExam.updatedAt,
       currentExam.answerKeyRevision,
+      mocks.transactionSession,
+    );
+  });
+
+  it("preserves assignment when a legacy update omits the new fields", async () => {
+    const currentExam = createStoredExam({
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+      assignedStudentIds: ["64b000000000000000000001"],
+    });
+    const legacyInput: Partial<UpsertExamInput> = { ...createValidInput() };
+    delete legacyInput.visibilityMode;
+    delete legacyInput.assignedStudentIds;
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.updateExamRecord.mockResolvedValue(currentExam);
+
+    await editExam(admin, currentExam.id, {
+      ...legacyInput,
+      expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+    } as UpdateExamInput);
+
+    expect(mocks.updateExamRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      expect.objectContaining({
+        visibilityMode: currentExam.visibilityMode,
+        assignedStudentIds: currentExam.assignedStudentIds,
+      }),
+      currentExam.updatedAt,
+      currentExam.answerKeyRevision,
+      mocks.transactionSession,
     );
   });
 
@@ -830,12 +911,15 @@ describe("exam service", () => {
     consoleError.mockRestore();
   });
 
-  it("updates only metadata and settings after the Exam has attempts", async () => {
+  it("updates assignment as metadata after attempts without touching grading", async () => {
     const currentExam = createStoredExam();
+    const assignedStudentId = "64b000000000000000000001";
     const input = {
       ...createValidInput(),
       title: "Đề thi thử Toán đã đổi tên",
       description: "Mô tả mới",
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+      assignedStudentIds: [assignedStudentId],
       settings: {
         ...currentExam.settings,
         allowRetake: false,
@@ -844,6 +928,8 @@ describe("exam service", () => {
     const updatedExam = createStoredExam({
       title: input.title,
       description: input.description,
+      visibilityMode: input.visibilityMode,
+      assignedStudentIds: input.assignedStudentIds,
       settings: input.settings,
     });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
@@ -859,6 +945,8 @@ describe("exam service", () => {
       title: input.title,
       description: input.description,
       settings: input.settings,
+      visibilityMode: input.visibilityMode,
+      assignedStudentIds: input.assignedStudentIds,
       hasAttempts: true,
     });
     expect(mocks.updateExamMetadataRecord).toHaveBeenCalledWith(
@@ -867,10 +955,19 @@ describe("exam service", () => {
         title: input.title,
         description: input.description,
         status: input.status,
+        visibilityMode: input.visibilityMode,
+        assignedStudentIds: input.assignedStudentIds,
         settings: input.settings,
       },
       currentExam.updatedAt,
+      mocks.transactionSession,
+    );
+    expect(mocks.reserveStudentsForExamAssignment).toHaveBeenCalledWith(
+      [assignedStudentId],
+      mocks.transactionSession,
     );
     expect(mocks.updateExamRecord).not.toHaveBeenCalled();
+    expect(mocks.listTerminalExamAttemptRegradeSources).not.toHaveBeenCalled();
+    expect(mocks.replaceTerminalExamAttemptGradings).not.toHaveBeenCalled();
   });
 });

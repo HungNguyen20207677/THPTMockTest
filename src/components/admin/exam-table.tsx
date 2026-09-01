@@ -9,7 +9,7 @@ import {
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { EXAM_STATUSES } from "@/lib/constants/exam";
+import { EXAM_STATUSES, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
 import type { ExamStatus, ExamSummary } from "@/types/exam";
 
 const features = tableFeatures({});
@@ -83,6 +83,14 @@ export function ExamTable({
     columnHelper.accessor("settings.allowRetake", {
       header: "Làm lại",
       cell: ({ getValue }) => (getValue() ? "Có" : "Không"),
+    }),
+    columnHelper.display({
+      id: "assignment",
+      header: "Phạm vi học sinh",
+      cell: ({ row }) =>
+        row.original.visibilityMode === EXAM_VISIBILITY_MODE.ALL_STUDENTS
+          ? "Tất cả học sinh"
+          : `${row.original.assignedStudentCount} học sinh`,
     }),
     columnHelper.display({
       id: "visibility",

@@ -237,7 +237,7 @@ export function ExamManagement() {
           </Button>
         </div>
       ) : isLoading ? (
-        <TableSkeleton columns={6} label="Đang tải danh sách đề thi" />
+        <TableSkeleton columns={7} label="Đang tải danh sách đề thi" />
       ) : (
         <ExamTable
           exams={exams}
