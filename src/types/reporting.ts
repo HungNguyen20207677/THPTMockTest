@@ -149,6 +149,14 @@ export interface AdminExamQuestionStatistics {
   partThree: AdminExamQuestionCorrectnessStatistics[];
 }
 
+export interface AdminExamTopicStatistics {
+  topicId: string;
+  topicName: string;
+  taggedQuestionCount: number;
+  observationCount: number;
+  averagePerformancePercent: number | null;
+}
+
 export interface AdminExamResults {
   exam: ReportingExamIdentity;
   activeAttemptCount: number;
@@ -158,6 +166,7 @@ export interface AdminExamResults {
   autoSubmittedAttemptCount: number;
   statistics: ScoreStatistics;
   questionStatistics: AdminExamQuestionStatistics;
+  topicStatistics: AdminExamTopicStatistics[];
   students: AdminExamStudentPerformance[];
 }
 

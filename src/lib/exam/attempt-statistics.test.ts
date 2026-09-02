@@ -5,10 +5,12 @@ import {
   calculatePerformanceStatistics,
   calculateQuestionStatistics,
   calculateScoreAggregate,
+  calculateTopicStatistics,
   getAttemptTimeUsedSeconds,
   toScoreStatistics,
   type ScoredAttempt,
 } from "@/lib/exam/attempt-statistics";
+import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 import type { AttemptGradingSnapshot } from "@/types/exam-attempt";
 
 function createGrading(score: number): AttemptGradingSnapshot {
@@ -223,6 +225,170 @@ describe("attempt statistics", () => {
         d: { correctCount: 1, correctRatePercent: 25 },
       },
     });
+  });
+
+  it("normalizes Part I and Part III correctness to 0 or 100 percent", () => {
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partOne[0] = ["part-one-topic"];
+    questionTopicIds.partThree[0] = ["part-three-topic"];
+    const attempts = [
+      {
+        ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+        grading: createQuestionGrading({
+          partOneCorrect: [0],
+          partThreeCorrect: [],
+        }),
+      },
+      {
+        ...createAttempt(0, 2, "2026-08-02T00:00:00.000Z"),
+        grading: createQuestionGrading({
+          partOneCorrect: [],
+          partThreeCorrect: [0],
+        }),
+      },
+    ];
+
+    expect(
+      calculateTopicStatistics(questionTopicIds, attempts, [
+        { id: "part-one-topic", name: "Part I" },
+        { id: "part-three-topic", name: "Part III" },
+      ]),
+    ).toEqual([
+      {
+        topicId: "part-one-topic",
+        topicName: "Part I",
+        taggedQuestionCount: 1,
+        observationCount: 2,
+        averagePerformancePercent: 50,
+      },
+      {
+        topicId: "part-three-topic",
+        topicName: "Part III",
+        taggedQuestionCount: 1,
+        observationCount: 2,
+        averagePerformancePercent: 50,
+      },
+    ]);
+  });
+
+  it("uses the persisted Part II partial score as its normalized percentage", () => {
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partTwo[0] = ["partial-topic"];
+    const attempt = {
+      ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+      grading: createQuestionGrading({
+        partTwo: [
+          {
+            correctStatementCount: 2,
+            scoreHundredths: 25,
+            statements: { a: true, b: true, c: false, d: false },
+          },
+        ],
+      }),
+    };
+
+    expect(
+      calculateTopicStatistics(
+        questionTopicIds,
+        [attempt],
+        [{ id: "partial-topic", name: "Partial" }],
+      ),
+    ).toEqual([
+      {
+        topicId: "partial-topic",
+        topicName: "Partial",
+        taggedQuestionCount: 1,
+        observationCount: 1,
+        averagePerformancePercent: 25,
+      },
+    ]);
+  });
+
+  it("fully credits multi-topic questions and counts terminal retakes separately", () => {
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partOne[0] = ["broad-topic"];
+    questionTopicIds.partOne[1] = ["broad-topic", "shared-topic"];
+    const submittedAttempt = {
+      ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+      grading: createQuestionGrading({ partOneCorrect: [0] }),
+    };
+    const autoSubmittedRetake = {
+      ...createAttempt(0, 2, "2026-08-02T00:00:00.000Z"),
+      status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+      grading: createQuestionGrading({ partOneCorrect: [1] }),
+    };
+    const activeAttempt = {
+      ...createAttempt(0, 3, "2026-08-03T00:00:00.000Z"),
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      grading: createQuestionGrading({ partOneCorrect: [0, 1] }),
+    };
+
+    expect(
+      calculateTopicStatistics(
+        questionTopicIds,
+        [submittedAttempt, autoSubmittedRetake, activeAttempt],
+        [
+          { id: "broad-topic", name: "Broad" },
+          { id: "shared-topic", name: "Shared" },
+        ],
+      ),
+    ).toEqual([
+      {
+        topicId: "broad-topic",
+        topicName: "Broad",
+        taggedQuestionCount: 2,
+        observationCount: 4,
+        averagePerformancePercent: 50,
+      },
+      {
+        topicId: "shared-topic",
+        topicName: "Shared",
+        taggedQuestionCount: 1,
+        observationCount: 2,
+        averagePerformancePercent: 50,
+      },
+    ]);
+  });
+
+  it("returns assigned topics with null performance when no attempt is complete", () => {
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partOne[0] = ["topic-b", "topic-a"];
+
+    expect(
+      calculateTopicStatistics(
+        questionTopicIds,
+        [],
+        [
+          { id: "topic-b", name: "Beta" },
+          { id: "topic-a", name: "Alpha" },
+        ],
+      ),
+    ).toEqual([
+      {
+        topicId: "topic-a",
+        topicName: "Alpha",
+        taggedQuestionCount: 1,
+        observationCount: 0,
+        averagePerformancePercent: null,
+      },
+      {
+        topicId: "topic-b",
+        topicName: "Beta",
+        taggedQuestionCount: 1,
+        observationCount: 0,
+        averagePerformancePercent: null,
+      },
+    ]);
+  });
+
+  it("returns empty topic statistics for an Exam without assignments", () => {
+    expect(
+      calculateTopicStatistics(
+        createEmptyQuestionTopicIds(),
+        [createAttempt(0, 1, "2026-08-01T00:00:00.000Z")],
+        [],
+      ),
+    ).toEqual([]);
   });
 
   it("uses expiration for auto-submit duration and submission for manual duration", () => {

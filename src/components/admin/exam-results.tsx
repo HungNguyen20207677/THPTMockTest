@@ -25,6 +25,11 @@ const rateFormatter = new Intl.NumberFormat("vi-VN", {
   maximumFractionDigits: 1,
 });
 
+const performancePercentFormatter = new Intl.NumberFormat("vi-VN", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 function getRequestError(error: unknown): string {
   if (error instanceof ApiClientError) {
     if (error.code === "UNAUTHENTICATED") {
@@ -46,6 +51,10 @@ function formatImprovement(value: number | null): string {
 
 function formatRatePercent(value: number | null): string {
   return value === null ? "—" : `${rateFormatter.format(value)}%`;
+}
+
+function formatPerformancePercent(value: number | null): string {
+  return value === null ? "—" : `${performancePercentFormatter.format(value)}%`;
 }
 
 function formatAverageScoreHundredths(value: number | null): string {
@@ -272,6 +281,65 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
             </div>
           ))}
         </div>
+      </section>
+
+      <section aria-labelledby="topic-analysis-heading" className="space-y-4">
+        <div>
+          <h2 id="topic-analysis-heading" className="text-xl font-bold">
+            Phân tích theo chủ đề
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Mỗi câu hỏi được tính như nhau trên các lượt đã hoàn thành.
+          </p>
+        </div>
+        {report.topicStatistics.length === 0 ? (
+          <div className="border-border text-muted-foreground rounded-xl border px-4 py-8 text-center text-sm">
+            Đề thi chưa được gắn chủ đề cho các câu hỏi.
+          </div>
+        ) : (
+          <div className="border-border overflow-x-auto rounded-xl border">
+            <table className="w-full min-w-[36rem] border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
+              <thead className="bg-muted/70">
+                <tr>
+                  {["Chủ đề", "Số câu", "Số lượt dữ liệu", "Mức độ đạt TB"].map(
+                    (heading) => (
+                      <th
+                        key={heading}
+                        scope="col"
+                        className="px-4 py-3 text-left font-semibold"
+                      >
+                        {heading}
+                      </th>
+                    ),
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {report.topicStatistics.map((topic) => (
+                  <tr key={topic.topicId} className="border-border border-t">
+                    <th
+                      scope="row"
+                      className="px-4 py-2.5 text-left font-medium"
+                    >
+                      {topic.topicName}
+                    </th>
+                    <td className="px-4 py-2.5 tabular-nums">
+                      {topic.taggedQuestionCount}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums">
+                      {topic.observationCount}
+                    </td>
+                    <td className="px-4 py-2.5 font-medium tabular-nums">
+                      {formatPerformancePercent(
+                        topic.averagePerformancePercent,
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section

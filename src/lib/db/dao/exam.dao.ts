@@ -103,9 +103,18 @@ export interface ExamGradingPersistenceRecord {
     ExamSettings,
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
   >;
+  questionTopicIds?: ExamQuestionTopicIds;
 }
 
-export type ExamReportingPersistenceRecord = ExamGradingPersistenceRecord;
+export interface ExamReportingPersistenceRecord extends ExamGradingPersistenceRecord {
+  questionTopicIds: ExamQuestionTopicIds;
+}
+
+interface ExamQuestionTopicDocumentData {
+  partOne?: Types.ObjectId[][];
+  partTwo?: Types.ObjectId[][];
+  partThree?: Types.ObjectId[][];
+}
 
 interface ExamDocumentData {
   _id: Types.ObjectId;
@@ -118,11 +127,7 @@ interface ExamDocumentData {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
-  questionTopicIds?: {
-    partOne?: Types.ObjectId[][];
-    partTwo?: Types.ObjectId[][];
-    partThree?: Types.ObjectId[][];
-  };
+  questionTopicIds?: ExamQuestionTopicDocumentData;
   answerKeyRevision?: number;
   attemptsStarted?: boolean;
   createdBy: Types.ObjectId;
@@ -161,6 +166,7 @@ interface ExamGradingDocumentData {
     ExamSettings,
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
   >;
+  questionTopicIds?: ExamQuestionTopicDocumentData;
 }
 
 type ExamReportingDocumentData = ExamGradingDocumentData;
@@ -238,6 +244,34 @@ export async function releaseExamPdfOperationLease(
   }).exec();
 }
 
+function toQuestionTopicIds(
+  questionTopicIds: ExamQuestionTopicDocumentData | undefined,
+): ExamQuestionTopicIds {
+  const toTopicIdSection = (
+    questions: Types.ObjectId[][] | undefined,
+    length: number,
+  ) =>
+    Array.from({ length }, (_, questionIndex) => [
+      ...new Set(
+        (questions?.[questionIndex] ?? []).map((topicId) => topicId.toString()),
+      ),
+    ]);
+  return {
+    partOne: toTopicIdSection(
+      questionTopicIds?.partOne,
+      EXAM_STRUCTURE.partOneQuestions,
+    ),
+    partTwo: toTopicIdSection(
+      questionTopicIds?.partTwo,
+      EXAM_STRUCTURE.partTwoQuestions,
+    ),
+    partThree: toTopicIdSection(
+      questionTopicIds?.partThree,
+      EXAM_STRUCTURE.partThreeQuestions,
+    ),
+  };
+}
+
 function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
   const visibilityMode =
     exam.visibilityMode ?? EXAM_VISIBILITY_MODE.ALL_STUDENTS;
@@ -251,29 +285,6 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
           ),
         ]
       : [];
-  const toTopicIdSection = (
-    questions: Types.ObjectId[][] | undefined,
-    length: number,
-  ) =>
-    Array.from({ length }, (_, questionIndex) => [
-      ...new Set(
-        (questions?.[questionIndex] ?? []).map((topicId) => topicId.toString()),
-      ),
-    ]);
-  const questionTopicIds: ExamQuestionTopicIds = {
-    partOne: toTopicIdSection(
-      exam.questionTopicIds?.partOne,
-      EXAM_STRUCTURE.partOneQuestions,
-    ),
-    partTwo: toTopicIdSection(
-      exam.questionTopicIds?.partTwo,
-      EXAM_STRUCTURE.partTwoQuestions,
-    ),
-    partThree: toTopicIdSection(
-      exam.questionTopicIds?.partThree,
-      EXAM_STRUCTURE.partThreeQuestions,
-    ),
-  };
 
   return {
     id: exam._id.toString(),
@@ -286,7 +297,7 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     pdf: exam.pdf,
     settings: exam.settings,
     answerKey: exam.answerKey,
-    questionTopicIds,
+    questionTopicIds: toQuestionTopicIds(exam.questionTopicIds),
     answerKeyRevision: exam.answerKeyRevision ?? INITIAL_ANSWER_KEY_REVISION,
     attemptsStarted: exam.attemptsStarted === true,
     createdBy: exam.createdBy.toString(),
@@ -365,13 +376,19 @@ function toExamGradingRecord(
     answerKey: exam.answerKey,
     answerKeyRevision: exam.answerKeyRevision ?? INITIAL_ANSWER_KEY_REVISION,
     settings: exam.settings,
+    ...(exam.questionTopicIds
+      ? { questionTopicIds: toQuestionTopicIds(exam.questionTopicIds) }
+      : {}),
   };
 }
 
 function toExamReportingRecord(
   exam: ExamReportingDocumentData,
 ): ExamReportingPersistenceRecord {
-  return toExamGradingRecord(exam);
+  return {
+    ...toExamGradingRecord(exam),
+    questionTopicIds: toQuestionTopicIds(exam.questionTopicIds),
+  };
 }
 
 function getAnswerKeyRevisionFilter(expectedRevision: number) {
@@ -570,6 +587,7 @@ export async function reserveExamForAttemptGrading(
       answerKeyRevision: 1,
       "settings.showScoreAfterSubmission": 1,
       "settings.showAnswersAfterSubmission": 1,
+      questionTopicIds: 1,
     })
     .lean<ExamGradingDocumentData>()
     .exec();
@@ -609,6 +627,7 @@ export async function findExamReportingRecordById(
       answerKey: 1,
       answerKeyRevision: 1,
       settings: 1,
+      questionTopicIds: 1,
     })
     .lean<ExamReportingDocumentData>()
     .exec();
@@ -632,6 +651,7 @@ export async function findExamReportingRecordsByIds(
       answerKey: 1,
       answerKeyRevision: 1,
       settings: 1,
+      questionTopicIds: 1,
     })
     .lean<ExamReportingDocumentData[]>()
     .exec();

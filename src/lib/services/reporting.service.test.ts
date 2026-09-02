@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   findExamReportingRecordById: vi.fn(),
   findExamReportingRecordsByIds: vi.fn(),
   isPublishedExamAvailableToStudent: vi.fn(),
+  findTopicRecordsByIds: vi.fn(),
   countStudentUsers: vi.fn(),
   findStudentUsersByIds: vi.fn(),
   findUserById: vi.fn(),
@@ -38,6 +39,10 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
   isPublishedExamAvailableToStudent: mocks.isPublishedExamAvailableToStudent,
 }));
 
+vi.mock("@/lib/db/dao/topic.dao", () => ({
+  findTopicRecordsByIds: mocks.findTopicRecordsByIds,
+}));
+
 vi.mock("@/lib/db/dao/user.dao", () => ({
   countStudentUsers: mocks.countStudentUsers,
   findStudentUsersByIds: mocks.findStudentUsersByIds,
@@ -58,6 +63,7 @@ import type { ExamAttemptPersistenceRecord } from "@/lib/db/dao/exam-attempt.dao
 import type { ExamReportingPersistenceRecord } from "@/lib/db/dao/exam.dao";
 import type { UserAccountRecord } from "@/lib/db/dao/user.dao";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
+import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 import {
   getAdminAttemptDetail,
   getAdminDashboardSummary,
@@ -138,6 +144,7 @@ function createExam(
       showScoreAfterSubmission: true,
       showAnswersAfterSubmission: true,
     },
+    questionTopicIds: createEmptyQuestionTopicIds(),
     ...overrides,
   };
 }
@@ -203,6 +210,17 @@ describe("reporting service", () => {
     mocks.findExamReportingRecordsByIds.mockImplementation(
       (examIds: string[]) =>
         Promise.resolve(examIds.map((id) => createExam({ id }))),
+    );
+    mocks.findTopicRecordsByIds.mockImplementation((topicIds: string[]) =>
+      Promise.resolve(
+        topicIds.map((id) => ({
+          id,
+          name: id,
+          normalizedName: id,
+          createdAt: now,
+          updatedAt: now,
+        })),
+      ),
     );
     mocks.findStudentUsersByIds.mockImplementation((studentIds: string[]) =>
       Promise.resolve(studentIds.map((id) => createStudent({ id }))),
@@ -305,6 +323,8 @@ describe("reporting service", () => {
   });
 
   it("counts submitted and auto-submitted retakes but excludes active attempts", async () => {
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partOne[0] = ["algebra-topic"];
     const submittedAttempt = createAttempt({
       id: "submitted-attempt",
       grading: createFirstQuestionGrading(true),
@@ -328,6 +348,9 @@ describe("reporting service", () => {
       autoSubmittedAttempt,
     ]);
     mocks.listActiveExamAttemptRecords.mockResolvedValue([activeAttempt]);
+    mocks.findExamReportingRecordById.mockResolvedValue(
+      createExam({ questionTopicIds }),
+    );
 
     const report = await getAdminExamResults(admin, "exam-id");
 
@@ -348,6 +371,17 @@ describe("reporting service", () => {
       incorrectCount: 1,
       correctRatePercent: 50,
     });
+    expect(report.topicStatistics).toEqual([
+      {
+        topicId: "algebra-topic",
+        topicName: "algebra-topic",
+        taggedQuestionCount: 1,
+        observationCount: 2,
+        averagePerformancePercent: 50,
+      },
+    ]);
+    expect(mocks.findTopicRecordsByIds).toHaveBeenCalledTimes(1);
+    expect(mocks.findTopicRecordsByIds).toHaveBeenCalledWith(["algebra-topic"]);
   });
 
   it("returns ordered zero-attempt question statistics safely", async () => {
@@ -381,7 +415,12 @@ describe("reporting service", () => {
   });
 
   it("reflects a reconciled grading snapshot instead of the stored answers", async () => {
-    const currentExam = createExam({ answerKeyRevision: 2 });
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partOne[0] = ["algebra-topic"];
+    const currentExam = createExam({
+      answerKeyRevision: 2,
+      questionTopicIds,
+    });
     const staleAttempt = createAttempt({
       grading: createFirstQuestionGrading(false, 1),
     });
@@ -407,6 +446,74 @@ describe("reporting service", () => {
       incorrectCount: 0,
       correctRatePercent: 100,
     });
+    expect(report.topicStatistics[0]).toMatchObject({
+      topicId: "algebra-topic",
+      observationCount: 1,
+      averagePerformancePercent: 100,
+    });
+  });
+
+  it("keeps concurrently refreshed grading and topic metadata consistent", async () => {
+    const initialTopicIds = createEmptyQuestionTopicIds();
+    initialTopicIds.partOne[0] = ["algebra-topic"];
+    const refreshedTopicIds = createEmptyQuestionTopicIds();
+    refreshedTopicIds.partOne[1] = ["algebra-topic"];
+    const initialExam = createExam({
+      answerKeyRevision: 2,
+      questionTopicIds: initialTopicIds,
+    });
+    const refreshedExam = createExam({
+      answerKeyRevision: 3,
+      questionTopicIds: refreshedTopicIds,
+    });
+    const refreshedGrading = createGrading(25);
+    refreshedGrading.answerKeyRevision = 3;
+    refreshedGrading.partOne[1] = { isCorrect: true };
+    const staleAttempt = createAttempt({
+      grading: createFirstQuestionGrading(false, 1),
+    });
+    const refreshedAttempt = createAttempt({ grading: refreshedGrading });
+    mocks.findExamReportingRecordById.mockResolvedValue(initialExam);
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue([staleAttempt]);
+    mocks.ensureTerminalAttemptGrading.mockResolvedValue({
+      attempt: refreshedAttempt,
+      exam: refreshedExam,
+    });
+
+    const report = await getAdminExamResults(admin, initialExam.id);
+
+    expect(report.topicStatistics[0]).toMatchObject({
+      taggedQuestionCount: 1,
+      observationCount: 1,
+      averagePerformancePercent: 100,
+    });
+  });
+
+  it("uses current topic assignments without regrading existing attempts", async () => {
+    const originalTopicIds = createEmptyQuestionTopicIds();
+    originalTopicIds.partOne[0] = ["algebra-topic"];
+    const updatedTopicIds = createEmptyQuestionTopicIds();
+    updatedTopicIds.partOne[1] = ["algebra-topic"];
+    const grading = createFirstQuestionGrading(true);
+    const attempt = createAttempt({ grading });
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue([attempt]);
+    mocks.findExamReportingRecordById
+      .mockResolvedValueOnce(createExam({ questionTopicIds: originalTopicIds }))
+      .mockResolvedValueOnce(createExam({ questionTopicIds: updatedTopicIds }));
+
+    const originalReport = await getAdminExamResults(admin, "exam-id");
+    const updatedReport = await getAdminExamResults(admin, "exam-id");
+
+    expect(originalReport.topicStatistics[0].averagePerformancePercent).toBe(
+      100,
+    );
+    expect(updatedReport.topicStatistics[0]).toMatchObject({
+      taggedQuestionCount: 1,
+      observationCount: 1,
+      averagePerformancePercent: 0,
+    });
+    expect(attempt.grading).toBe(grading);
+    expect(mocks.ensureTerminalAttemptGrading).not.toHaveBeenCalled();
   });
 
   it("backfills only a missing legacy grading snapshot", async () => {

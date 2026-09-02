@@ -5,8 +5,10 @@ import type {
   AttemptGradingSnapshot,
   ExamAttemptStatus,
 } from "@/types/exam-attempt";
+import type { ExamQuestionTopicIds } from "@/types/exam";
 import type {
   AdminExamQuestionStatistics,
+  AdminExamTopicStatistics,
   PerformanceStatistics,
   ScoreStatistics,
 } from "@/types/reporting";
@@ -207,6 +209,111 @@ export function calculateQuestionStatistics(
       correctRatePercent: correctRatePercent(correctCount),
     })),
   };
+}
+
+export function calculateTopicStatistics(
+  questionTopicIds: ExamQuestionTopicIds,
+  attempts: ScoredAttempt[],
+  topics: Array<{ id: string; name: string }>,
+): AdminExamTopicStatistics[] {
+  const questions: Array<{
+    topicIds: string[];
+    getPerformance: (grading: AttemptGradingSnapshot) => number;
+  }> = [
+    ...questionTopicIds.partOne.map((topicIds, questionIndex) => ({
+      topicIds: [...new Set(topicIds)],
+      getPerformance: (grading: AttemptGradingSnapshot) =>
+        grading.partOne[questionIndex].isCorrect ? 100 : 0,
+    })),
+    ...questionTopicIds.partTwo.map((topicIds, questionIndex) => ({
+      topicIds: [...new Set(topicIds)],
+      getPerformance: (grading: AttemptGradingSnapshot) =>
+        grading.partTwo[questionIndex].scoreHundredths,
+    })),
+    ...questionTopicIds.partThree.map((topicIds, questionIndex) => ({
+      topicIds: [...new Set(topicIds)],
+      getPerformance: (grading: AttemptGradingSnapshot) =>
+        grading.partThree[questionIndex].isCorrect ? 100 : 0,
+    })),
+  ];
+  const aggregateByTopicId = new Map<
+    string,
+    {
+      taggedQuestionCount: number;
+      observationCount: number;
+      totalPerformancePercent: number;
+    }
+  >();
+
+  for (const question of questions) {
+    for (const topicId of question.topicIds) {
+      const aggregate = aggregateByTopicId.get(topicId) ?? {
+        taggedQuestionCount: 0,
+        observationCount: 0,
+        totalPerformancePercent: 0,
+      };
+      aggregate.taggedQuestionCount += 1;
+      aggregateByTopicId.set(topicId, aggregate);
+    }
+  }
+
+  for (const attempt of attempts) {
+    if (
+      attempt.status !== EXAM_ATTEMPT_STATUS.SUBMITTED &&
+      attempt.status !== EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED
+    ) {
+      continue;
+    }
+
+    for (const question of questions) {
+      if (question.topicIds.length === 0) {
+        continue;
+      }
+
+      const performance = question.getPerformance(attempt.grading);
+
+      for (const topicId of question.topicIds) {
+        const aggregate = aggregateByTopicId.get(topicId);
+
+        if (aggregate) {
+          aggregate.observationCount += 1;
+          aggregate.totalPerformancePercent += performance;
+        }
+      }
+    }
+  }
+
+  const topicNameById = new Map(
+    topics.map((topic) => [topic.id, topic.name] as const),
+  );
+  const statistics: AdminExamTopicStatistics[] = [];
+
+  for (const [topicId, aggregate] of aggregateByTopicId) {
+    const topicName = topicNameById.get(topicId);
+
+    if (topicName === undefined) {
+      continue;
+    }
+
+    statistics.push({
+      topicId,
+      topicName,
+      taggedQuestionCount: aggregate.taggedQuestionCount,
+      observationCount: aggregate.observationCount,
+      averagePerformancePercent:
+        aggregate.observationCount === 0
+          ? null
+          : aggregate.totalPerformancePercent / aggregate.observationCount,
+    });
+  }
+
+  statistics.sort(
+    (left, right) =>
+      right.taggedQuestionCount - left.taggedQuestionCount ||
+      left.topicName.localeCompare(right.topicName, "vi") ||
+      left.topicId.localeCompare(right.topicId),
+  );
+  return statistics;
 }
 
 export function getAttemptTimeUsedSeconds(attempt: {

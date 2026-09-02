@@ -20,6 +20,7 @@ import {
   isPublishedExamAvailableToStudent,
   type ExamReportingPersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
+import { findTopicRecordsByIds } from "@/lib/db/dao/topic.dao";
 import {
   countStudentUsers,
   findStudentUsersByIds,
@@ -30,11 +31,13 @@ import {
   calculatePerformanceStatistics,
   calculateQuestionStatistics,
   calculateScoreAggregate,
+  calculateTopicStatistics,
   getAttemptTimeUsedSeconds,
   toScoreStatistics,
   type ScoredAttempt,
 } from "@/lib/exam/attempt-statistics";
 import { scoreHundredthsToPoints } from "@/lib/exam/grading";
+import { getUniqueExamTopicIds } from "@/lib/exam/question-topics";
 import {
   ExamAttemptNotFoundError,
   ExamAttemptStateConflictError,
@@ -130,7 +133,7 @@ function toStudentAccount(student: UserAccountRecord): StudentAccount {
 }
 
 function toExamIdentity(
-  exam: ExamReportingPersistenceRecord,
+  exam: Pick<ExamReportingPersistenceRecord, "id" | "title" | "status">,
 ): ReportingExamIdentity {
   return {
     id: exam.id,
@@ -266,7 +269,13 @@ async function prepareTerminalAttempts(
         !latestExam ||
         graded.exam.answerKeyRevision >= latestExam.answerKeyRevision
       ) {
-        examMap.set(attempt.examId, graded.exam);
+        examMap.set(attempt.examId, {
+          ...graded.exam,
+          questionTopicIds:
+            graded.exam.questionTopicIds ??
+            latestExam?.questionTopicIds ??
+            exam.questionTopicIds,
+        });
       }
 
       return toPreparedTerminalAttempt(graded.attempt);
@@ -514,9 +523,11 @@ export async function getAdminExamResults(
     examMap,
     now,
   );
-  const studentMap = await getStudentMap(
-    terminalAttempts.map((attempt) => attempt.studentId),
-  );
+  const currentExam = examMap.get(exam.id) ?? exam;
+  const [studentMap, topics] = await Promise.all([
+    getStudentMap(terminalAttempts.map((attempt) => attempt.studentId)),
+    findTopicRecordsByIds(getUniqueExamTopicIds(currentExam.questionTopicIds)),
+  ]);
   const attemptsByStudent = new Map<string, PreparedTerminalAttempt[]>();
 
   for (const attempt of terminalAttempts) {
@@ -548,8 +559,6 @@ export async function getAdminExamResults(
     (attempt) => attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
   ).length;
 
-  const currentExam = examMap.get(exam.id) ?? exam;
-
   return {
     exam: toExamIdentity(currentExam),
     activeAttemptCount: activeAttempts.length,
@@ -562,6 +571,11 @@ export async function getAdminExamResults(
     ),
     questionStatistics: calculateQuestionStatistics(
       terminalAttempts.map(toScoredAttempt),
+    ),
+    topicStatistics: calculateTopicStatistics(
+      currentExam.questionTopicIds,
+      terminalAttempts.map(toScoredAttempt),
+      topics,
     ),
     students,
   };

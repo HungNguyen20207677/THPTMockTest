@@ -84,6 +84,23 @@ export async function findTopicRecordByNormalizedName(
   return topic ? toTopicRecord(topic) : null;
 }
 
+export async function findTopicRecordsByIds(
+  topicIds: string[],
+): Promise<TopicPersistenceRecord[]> {
+  const uniqueTopicIds = [...new Set(topicIds)];
+
+  if (uniqueTopicIds.length === 0) {
+    return [];
+  }
+
+  await prepareTopicModel();
+  const topics = await TopicModel.find({ _id: { $in: uniqueTopicIds } })
+    .lean<TopicDocumentData[]>()
+    .exec();
+
+  return topics.map(toTopicRecord);
+}
+
 export async function createTopicRecord(input: {
   name: string;
   normalizedName: string;

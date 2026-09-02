@@ -23,7 +23,7 @@ describe("ADMIN Exam results route", () => {
     mocks.getAdminExamResults.mockReset();
   });
 
-  it("rejects STUDENT access before returning question statistics", async () => {
+  it("rejects STUDENT access before returning topic analytics", async () => {
     mocks.requireApiRole.mockRejectedValue(new ForbiddenError());
     const examId = "507f1f77bcf86cd799439011";
 
