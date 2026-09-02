@@ -6,6 +6,7 @@ import type { ClientSession, Types } from "mongoose";
 
 import {
   EXAM_STATUS,
+  EXAM_STRUCTURE,
   EXAM_VISIBILITY_MODE,
   INITIAL_ANSWER_KEY_REVISION,
   PART3_INPUT_MODE,
@@ -19,6 +20,7 @@ import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import type {
   ExamAnswerKey,
   ExamPdf,
+  ExamQuestionTopicIds,
   ExamSettings,
   ExamStatus,
   ExamVisibilityMode,
@@ -36,6 +38,7 @@ export interface ExamPersistenceRecord {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  questionTopicIds: ExamQuestionTopicIds;
   answerKeyRevision: number;
   attemptsStarted: boolean;
   createdBy: string;
@@ -53,6 +56,7 @@ export interface SaveExamRecordInput {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  questionTopicIds: ExamQuestionTopicIds;
 }
 
 export interface UpdateExamMetadataRecordInput {
@@ -62,6 +66,7 @@ export interface UpdateExamMetadataRecordInput {
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   settings: ExamSettings;
+  questionTopicIds: ExamQuestionTopicIds;
 }
 
 export interface UpdateExamAnswerKeyRecordInput extends UpdateExamMetadataRecordInput {
@@ -113,6 +118,11 @@ interface ExamDocumentData {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  questionTopicIds?: {
+    partOne?: Types.ObjectId[][];
+    partTwo?: Types.ObjectId[][];
+    partThree?: Types.ObjectId[][];
+  };
   answerKeyRevision?: number;
   attemptsStarted?: boolean;
   createdBy: Types.ObjectId;
@@ -241,6 +251,29 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
           ),
         ]
       : [];
+  const toTopicIdSection = (
+    questions: Types.ObjectId[][] | undefined,
+    length: number,
+  ) =>
+    Array.from({ length }, (_, questionIndex) => [
+      ...new Set(
+        (questions?.[questionIndex] ?? []).map((topicId) => topicId.toString()),
+      ),
+    ]);
+  const questionTopicIds: ExamQuestionTopicIds = {
+    partOne: toTopicIdSection(
+      exam.questionTopicIds?.partOne,
+      EXAM_STRUCTURE.partOneQuestions,
+    ),
+    partTwo: toTopicIdSection(
+      exam.questionTopicIds?.partTwo,
+      EXAM_STRUCTURE.partTwoQuestions,
+    ),
+    partThree: toTopicIdSection(
+      exam.questionTopicIds?.partThree,
+      EXAM_STRUCTURE.partThreeQuestions,
+    ),
+  };
 
   return {
     id: exam._id.toString(),
@@ -253,6 +286,7 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     pdf: exam.pdf,
     settings: exam.settings,
     answerKey: exam.answerKey,
+    questionTopicIds,
     answerKeyRevision: exam.answerKeyRevision ?? INITIAL_ANSWER_KEY_REVISION,
     attemptsStarted: exam.attemptsStarted === true,
     createdBy: exam.createdBy.toString(),

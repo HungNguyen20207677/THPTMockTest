@@ -6,6 +6,7 @@ import {
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
 import { ExamModel } from "@/lib/db/models/exam.model";
+import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 
 describe("Exam model", () => {
   it("defaults legacy-compatible fields for new documents", () => {
@@ -15,5 +16,8 @@ describe("Exam model", () => {
     expect(exam.answerKeyRevision).toBe(INITIAL_ANSWER_KEY_REVISION);
     expect(exam.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
     expect(exam.assignedStudentIds).toEqual([]);
+    expect(exam.toObject().questionTopicIds).toEqual(
+      createEmptyQuestionTopicIds(),
+    );
   });
 });

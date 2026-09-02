@@ -34,6 +34,12 @@ export interface ExamAnswerKey {
   partThree: string[];
 }
 
+export interface ExamQuestionTopicIds {
+  partOne: string[][];
+  partTwo: string[][];
+  partThree: string[][];
+}
+
 export interface ExamSettings {
   allowRetake: boolean;
   showScoreAfterSubmission: boolean;
@@ -87,4 +93,5 @@ export interface ExamDetail extends ExamSummary {
   part3InputMode: Part3InputMode;
   pdf: ExamPdf;
   answerKey: ExamAnswerKey;
+  questionTopicIds: ExamQuestionTopicIds;
 }

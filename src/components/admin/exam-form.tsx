@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useDeferredValue, useEffect, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 
+import { QuestionTopicSelector } from "@/components/admin/question-topic-selector";
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
 import { ShortAnswerTextInput } from "@/components/exam/short-answer-text-input";
 import { ExamFormSkeleton } from "@/components/shared/loading-skeletons";
@@ -25,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiClientError } from "@/lib/api/client";
 import { createExamRecord, fetchExam, updateExamRecord } from "@/lib/api/exams";
 import { fetchStudents } from "@/lib/api/students";
+import { createTopicRecord, fetchTopics } from "@/lib/api/topics";
 import {
   EXAM_STATUSES,
   EXAM_STATUS,
@@ -36,6 +38,7 @@ import {
   PART_TWO_STATEMENTS,
 } from "@/lib/constants/exam";
 import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
+import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 import {
   canonicalShortAnswerToSlots,
   createEmptyShortAnswerSlots,
@@ -53,6 +56,7 @@ import type {
   Part3InputMode,
 } from "@/types/exam";
 import type { StudentAccount } from "@/types/user";
+import type { Topic } from "@/types/topic";
 
 const selectClassName =
   "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50";
@@ -84,6 +88,7 @@ function createEmptyEditorValues(): ExamEditorInput {
       showScoreAfterSubmission: true,
       showAnswersAfterSubmission: false,
     },
+    questionTopicIds: createEmptyQuestionTopicIds(),
     answerKey: {
       partOne: Array.from(
         { length: EXAM_STRUCTURE.partOneQuestions },
@@ -112,6 +117,13 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     assignedStudentIds: [...exam.assignedStudentIds],
     part3InputMode: exam.part3InputMode,
     settings: { ...exam.settings },
+    questionTopicIds: {
+      partOne: exam.questionTopicIds.partOne.map((topicIds) => [...topicIds]),
+      partTwo: exam.questionTopicIds.partTwo.map((topicIds) => [...topicIds]),
+      partThree: exam.questionTopicIds.partThree.map((topicIds) => [
+        ...topicIds,
+      ]),
+    },
     answerKey: {
       partOne: [...exam.answerKey.partOne],
       partTwo: exam.answerKey.partTwo.map((answer) => ({ ...answer })),
@@ -156,6 +168,11 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [studentLoadError, setStudentLoadError] = useState<string | null>(null);
   const [studentLoadVersion, setStudentLoadVersion] = useState(0);
   const [studentSearch, setStudentSearch] = useState("");
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [isLoadingTopics, setIsLoadingTopics] = useState(true);
+  const [topicLoadError, setTopicLoadError] = useState<string | null>(null);
+  const [topicLoadVersion, setTopicLoadVersion] = useState(0);
+  const [pendingTopicCreations, setPendingTopicCreations] = useState(0);
   const [fileError, setFileError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -197,7 +214,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const hasInvalidPartThreeText =
     part3InputMode === PART3_INPUT_MODE.TEXT &&
     partThreeTextValidity.some((isValid) => !isValid);
-  const isBusy = isSubmitting || isSaving;
+  const isBusy = isSubmitting || isSaving || pendingTopicCreations > 0;
 
   useEffect(() => {
     if (mode === "create") {
@@ -274,6 +291,60 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
       isCurrent = false;
     };
   }, [hasLoadedStudents, studentLoadError, studentLoadVersion, visibilityMode]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    void fetchTopics()
+      .then((response) => {
+        if (isCurrent) {
+          setTopics(response.data.topics);
+          setIsLoadingTopics(false);
+          setTopicLoadError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) {
+          setIsLoadingTopics(false);
+          setTopicLoadError(
+            getRequestError(
+              error,
+              "Không thể tải danh sách chủ đề. Vui lòng thử lại.",
+            ),
+          );
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [topicLoadVersion]);
+
+  function retryTopicLoad() {
+    setIsLoadingTopics(true);
+    setTopicLoadError(null);
+    setTopicLoadVersion((version) => version + 1);
+  }
+
+  async function handleCreateTopic(name: string): Promise<Topic> {
+    setPendingTopicCreations((count) => count + 1);
+
+    try {
+      const response = await createTopicRecord({ name });
+      const topic = response.data.topic;
+
+      setTopics((currentTopics) =>
+        [
+          ...currentTopics.filter((candidate) => candidate.id !== topic.id),
+          topic,
+        ].sort((first, second) => first.name.localeCompare(second.name, "vi")),
+      );
+
+      return topic;
+    } finally {
+      setPendingTopicCreations((count) => Math.max(0, count - 1));
+    }
+  }
 
   function handlePdfChange(file: File | undefined): boolean {
     if (!file) {
@@ -819,6 +890,25 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                         {answerError}
                       </p>
                     )}
+                    <Controller
+                      control={control}
+                      name={
+                        `questionTopicIds.partOne.${questionIndex}` as const
+                      }
+                      render={({ field }) => (
+                        <QuestionTopicSelector
+                          label="Chủ đề kiến thức"
+                          topics={topics}
+                          value={field.value ?? []}
+                          disabled={isBusy}
+                          isLoading={isLoadingTopics}
+                          loadError={topicLoadError}
+                          onChange={field.onChange}
+                          onCreateTopic={handleCreateTopic}
+                          onRetry={retryTopicLoad}
+                        />
+                      )}
+                    />
                   </div>
                 );
               },
@@ -844,6 +934,27 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                   <legend className="px-1 font-medium">
                     Câu {questionIndex + 1}
                   </legend>
+                  <div className="mb-4 mt-2 max-w-sm">
+                    <Controller
+                      control={control}
+                      name={
+                        `questionTopicIds.partTwo.${questionIndex}` as const
+                      }
+                      render={({ field }) => (
+                        <QuestionTopicSelector
+                          label="Chủ đề của toàn bộ câu a/b/c/d"
+                          topics={topics}
+                          value={field.value ?? []}
+                          disabled={isBusy}
+                          isLoading={isLoadingTopics}
+                          loadError={topicLoadError}
+                          onChange={field.onChange}
+                          onCreateTopic={handleCreateTopic}
+                          onRetry={retryTopicLoad}
+                        />
+                      )}
+                    />
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {PART_TWO_STATEMENTS.map((statement) => (
                       <Controller
@@ -925,37 +1036,60 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             {Array.from(
               { length: EXAM_STRUCTURE.partThreeQuestions },
               (_, questionIndex) => (
-                <Controller
-                  key={questionIndex}
-                  control={control}
-                  name={`answerKey.partThree.${questionIndex}` as const}
-                  render={({ field, fieldState }) =>
-                    part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
-                      <ShortAnswerBubbleInput
-                        value={field.value}
-                        onChange={field.onChange}
-                        label={`Câu ${questionIndex + 1}`}
-                        error={fieldState.error?.message}
+                <div key={questionIndex} className="space-y-2">
+                  <Controller
+                    control={control}
+                    name={`answerKey.partThree.${questionIndex}` as const}
+                    render={({ field, fieldState }) =>
+                      part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
+                        <ShortAnswerBubbleInput
+                          value={field.value}
+                          onChange={field.onChange}
+                          label={`Câu ${questionIndex + 1}`}
+                          error={fieldState.error?.message}
+                          disabled={isBusy}
+                          inputRef={field.ref}
+                          onBlur={field.onBlur}
+                        />
+                      ) : (
+                        <ShortAnswerTextInput
+                          value={field.value}
+                          onChange={field.onChange}
+                          label={`Câu ${questionIndex + 1}`}
+                          error={fieldState.error?.message}
+                          disabled={isBusy}
+                          inputRef={field.ref}
+                          onBlur={field.onBlur}
+                          onValidityChange={(isValid) =>
+                            setPartThreeTextAnswerValidity(
+                              questionIndex,
+                              isValid,
+                            )
+                          }
+                        />
+                      )
+                    }
+                  />
+                  <Controller
+                    control={control}
+                    name={
+                      `questionTopicIds.partThree.${questionIndex}` as const
+                    }
+                    render={({ field }) => (
+                      <QuestionTopicSelector
+                        label="Chủ đề kiến thức"
+                        topics={topics}
+                        value={field.value ?? []}
                         disabled={isBusy}
-                        inputRef={field.ref}
-                        onBlur={field.onBlur}
-                      />
-                    ) : (
-                      <ShortAnswerTextInput
-                        value={field.value}
+                        isLoading={isLoadingTopics}
+                        loadError={topicLoadError}
                         onChange={field.onChange}
-                        label={`Câu ${questionIndex + 1}`}
-                        error={fieldState.error?.message}
-                        disabled={isBusy}
-                        inputRef={field.ref}
-                        onBlur={field.onBlur}
-                        onValidityChange={(isValid) =>
-                          setPartThreeTextAnswerValidity(questionIndex, isValid)
-                        }
+                        onCreateTopic={handleCreateTopic}
+                        onRetry={retryTopicLoad}
                       />
-                    )
-                  }
-                />
+                    )}
+                  />
+                </div>
               ),
             )}
           </div>

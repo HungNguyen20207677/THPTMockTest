@@ -34,6 +34,7 @@ import {
   EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
+import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 import {
   findExamRecordById,
   findStudentExamRecordById,
@@ -88,6 +89,7 @@ describe("Exam DAO compatibility", () => {
     expect(exam?.answerKeyRevision).toBe(1);
     expect(exam?.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
     expect(exam?.assignedStudentIds).toEqual([]);
+    expect(exam?.questionTopicIds).toEqual(createEmptyQuestionTopicIds());
   });
 
   it("maps the legacy student workspace safely to BUBBLE", async () => {
@@ -103,6 +105,7 @@ describe("Exam DAO compatibility", () => {
     );
     expect(exam?.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
     expect(exam).not.toHaveProperty("answerKey");
+    expect(exam).not.toHaveProperty("questionTopicIds");
   });
 
   it("scopes published Exams to legacy, all-student, or selected assignments", async () => {

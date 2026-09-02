@@ -10,6 +10,7 @@ import {
   examUpsertSchema,
   updateExamRequestSchema,
 } from "@/lib/validations/exam";
+import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 
 function createValidExamInput() {
   return {
@@ -47,6 +48,40 @@ describe("exam answer-key validation", () => {
     expect(parsed.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
     expect(parsed.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
     expect(parsed.assignedStudentIds).toEqual([]);
+    expect(parsed.questionTopicIds).toEqual(createEmptyQuestionTopicIds());
+  });
+
+  it("supports multiple deduplicated topics across all three question parts", () => {
+    const firstTopicId = "64b000000000000000000011";
+    const secondTopicId = "64b000000000000000000012";
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partOne[0] = [firstTopicId, secondTopicId, firstTopicId];
+    questionTopicIds.partTwo[1] = [secondTopicId];
+    questionTopicIds.partThree[5] = [firstTopicId];
+
+    const parsed = examUpsertSchema.parse({
+      ...createValidExamInput(),
+      questionTopicIds,
+    });
+
+    expect(parsed.questionTopicIds.partOne[0]).toEqual([
+      firstTopicId,
+      secondTopicId,
+    ]);
+    expect(parsed.questionTopicIds.partTwo[1]).toEqual([secondTopicId]);
+    expect(parsed.questionTopicIds.partThree[5]).toEqual([firstTopicId]);
+  });
+
+  it("requires one top-level topic list per question in each part", () => {
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partTwo.pop();
+
+    expect(
+      examUpsertSchema.safeParse({
+        ...createValidExamInput(),
+        questionTopicIds,
+      }).success,
+    ).toBe(false);
   });
 
   it("deduplicates selected students and ignores IDs in all-student mode", () => {

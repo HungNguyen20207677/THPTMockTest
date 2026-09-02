@@ -16,6 +16,7 @@ import { isValidCanonicalShortAnswer } from "@/lib/exam/short-answer";
 import type {
   ExamAnswerKey,
   ExamPdf,
+  ExamQuestionTopicIds,
   ExamSettings,
   ExamStatus,
   ExamVisibilityMode,
@@ -23,6 +24,10 @@ import type {
   PartOneAnswer,
   PartTwoAnswer,
 } from "@/types/exam";
+
+type ExamQuestionTopicObjectIds = {
+  [TSection in keyof ExamQuestionTopicIds]: Types.ObjectId[][];
+};
 
 export interface ExamRecord {
   title: string;
@@ -34,6 +39,7 @@ export interface ExamRecord {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
+  questionTopicIds: ExamQuestionTopicObjectIds;
   answerKeyRevision: number;
   attemptsStarted: boolean;
   attemptOperationVersion: number;
@@ -111,6 +117,62 @@ const answerKeySchema = new Schema<ExamAnswerKey>(
   { _id: false },
 );
 
+function isValidQuestionTopicSection(
+  questions: Types.ObjectId[][],
+  expectedLength: number,
+): boolean {
+  return (
+    questions.length === expectedLength &&
+    questions.every(
+      (topicIds) =>
+        new Set(topicIds.map((topicId) => topicId.toString())).size ===
+        topicIds.length,
+    )
+  );
+}
+
+const questionTopicIdsSchema = new Schema<ExamQuestionTopicObjectIds>(
+  {
+    partOne: {
+      type: [[{ type: Schema.Types.ObjectId, ref: "Topic" }]],
+      required: true,
+      validate: {
+        validator: (questions: Types.ObjectId[][]) =>
+          isValidQuestionTopicSection(
+            questions,
+            EXAM_STRUCTURE.partOneQuestions,
+          ),
+        message: "Part I topic assignments must contain exactly 12 questions.",
+      },
+    },
+    partTwo: {
+      type: [[{ type: Schema.Types.ObjectId, ref: "Topic" }]],
+      required: true,
+      validate: {
+        validator: (questions: Types.ObjectId[][]) =>
+          isValidQuestionTopicSection(
+            questions,
+            EXAM_STRUCTURE.partTwoQuestions,
+          ),
+        message: "Part II topic assignments must contain exactly 4 questions.",
+      },
+    },
+    partThree: {
+      type: [[{ type: Schema.Types.ObjectId, ref: "Topic" }]],
+      required: true,
+      validate: {
+        validator: (questions: Types.ObjectId[][]) =>
+          isValidQuestionTopicSection(
+            questions,
+            EXAM_STRUCTURE.partThreeQuestions,
+          ),
+        message: "Part III topic assignments must contain exactly 6 questions.",
+      },
+    },
+  },
+  { _id: false },
+);
+
 const examSchema = new Schema<ExamRecord>(
   {
     title: {
@@ -150,6 +212,24 @@ const examSchema = new Schema<ExamRecord>(
     pdf: { type: pdfSchema, required: true },
     settings: { type: settingsSchema, required: true },
     answerKey: { type: answerKeySchema, required: true },
+    questionTopicIds: {
+      type: questionTopicIdsSchema,
+      required: true,
+      default: () => ({
+        partOne: Array.from(
+          { length: EXAM_STRUCTURE.partOneQuestions },
+          () => [],
+        ),
+        partTwo: Array.from(
+          { length: EXAM_STRUCTURE.partTwoQuestions },
+          () => [],
+        ),
+        partThree: Array.from(
+          { length: EXAM_STRUCTURE.partThreeQuestions },
+          () => [],
+        ),
+      }),
+    },
     answerKeyRevision: {
       type: Number,
       required: true,

@@ -7,6 +7,7 @@ import {
   EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
+import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 import type { UpdateExamInput, UpsertExamInput } from "@/lib/validations/exam";
 import type { ExamPdfUploadReference, ExamPdfUploadTicket } from "@/types/exam";
 
@@ -47,6 +48,7 @@ function createValidInput(): UpsertExamInput {
       showScoreAfterSubmission: true,
       showAnswersAfterSubmission: false,
     },
+    questionTopicIds: createEmptyQuestionTopicIds(),
     answerKey: {
       partOne: Array.from(
         { length: EXAM_STRUCTURE.partOneQuestions },

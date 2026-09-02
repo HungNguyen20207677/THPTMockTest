@@ -15,7 +15,9 @@ import {
   isValidCanonicalShortAnswer,
   shortAnswerSlotsToCanonicalValue,
 } from "@/lib/exam/short-answer";
+import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 import { examPdfUploadReferenceSchema } from "@/lib/validations/exam-pdf";
+import { topicIdSchema } from "@/lib/validations/topic";
 import { studentIdSchema } from "@/lib/validations/user";
 import type { PartOneAnswer, PartTwoAnswer } from "@/types/exam";
 
@@ -67,6 +69,31 @@ export const examSettingsSchema = z.strictObject({
 const assignedStudentIdListSchema = z
   .array(studentIdSchema)
   .transform((studentIds) => [...new Set(studentIds)]);
+
+const questionTopicIdListSchema = z
+  .array(topicIdSchema)
+  .transform((topicIds) => [...new Set(topicIds)]);
+
+export const examQuestionTopicIdsSchema = z.strictObject({
+  partOne: z
+    .array(questionTopicIdListSchema)
+    .length(
+      EXAM_STRUCTURE.partOneQuestions,
+      `Phần I phải có đúng ${EXAM_STRUCTURE.partOneQuestions} danh sách chủ đề.`,
+    ),
+  partTwo: z
+    .array(questionTopicIdListSchema)
+    .length(
+      EXAM_STRUCTURE.partTwoQuestions,
+      `Phần II phải có đúng ${EXAM_STRUCTURE.partTwoQuestions} danh sách chủ đề.`,
+    ),
+  partThree: z
+    .array(questionTopicIdListSchema)
+    .length(
+      EXAM_STRUCTURE.partThreeQuestions,
+      `Phần III phải có đúng ${EXAM_STRUCTURE.partThreeQuestions} danh sách chủ đề.`,
+    ),
+});
 
 const titleSchema = z
   .string()
@@ -156,6 +183,9 @@ export const examUpsertSchema = z
     visibilityMode: examVisibilityModeSchema.optional(),
     assignedStudentIds: assignedStudentIdListSchema.optional(),
     answerKey: examAnswerKeySchema,
+    questionTopicIds: examQuestionTopicIdsSchema
+      .optional()
+      .default(createEmptyQuestionTopicIds),
   })
   .superRefine(validateExamAssignmentPair)
   .transform(normalizeLegacyExamAssignment);
@@ -171,6 +201,7 @@ export const updateExamSchema = z
     visibilityMode: examVisibilityModeSchema.optional(),
     assignedStudentIds: assignedStudentIdListSchema.optional(),
     answerKey: examAnswerKeySchema,
+    questionTopicIds: examQuestionTopicIdsSchema.optional(),
     expectedUpdatedAt: z.string().datetime(),
   })
   .superRefine(validateExamAssignmentPair)
@@ -280,6 +311,7 @@ const editorPartThreeAnswerSchema = shortAnswerSlotsSchema.transform(
 export const examEditorSchema = z
   .strictObject({
     ...examFields,
+    questionTopicIds: examQuestionTopicIdsSchema,
     answerKey: z.strictObject({
       partOne: editorPartOneSchema,
       partTwo: z

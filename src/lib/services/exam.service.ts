@@ -34,11 +34,13 @@ import {
   type ExamPdfOperationLease,
   type ExamPersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
+import { countTopicRecordsByIds } from "@/lib/db/dao/topic.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { reserveStudentsForExamAssignment } from "@/lib/db/dao/user.dao";
 import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
+import { getUniqueExamTopicIds } from "@/lib/exam/question-topics";
 import {
   ExamAnswerKeyConfirmationRequiredError,
   ExamConflictError,
@@ -61,6 +63,7 @@ import type {
   ExamPdf,
   ExamPdfUploadReference,
   ExamPdfUploadTicket,
+  ExamQuestionTopicIds,
   ExamStatus,
   ExamSummary,
 } from "@/types/exam";
@@ -101,6 +104,7 @@ function toExamDetail(
     part3InputMode: exam.part3InputMode,
     pdf: exam.pdf,
     answerKey: exam.answerKey,
+    questionTopicIds: exam.questionTopicIds,
   };
 }
 
@@ -136,6 +140,22 @@ async function reserveExamAssignment(
   ) {
     throw new RequestValidationError(
       "Danh sách phân công chỉ được chứa tài khoản học sinh.",
+    );
+  }
+}
+
+async function assertExamTopicsExist(
+  questionTopicIds: ExamQuestionTopicIds,
+  session: ClientSession,
+): Promise<void> {
+  const topicIds = getUniqueExamTopicIds(questionTopicIds);
+
+  if (
+    topicIds.length > 0 &&
+    (await countTopicRecordsByIds(topicIds, session)) !== topicIds.length
+  ) {
+    throw new RequestValidationError(
+      "Một hoặc nhiều chủ đề được chọn không tồn tại.",
     );
   }
 }
@@ -343,6 +363,7 @@ export async function createExam(
 
     const exam = await withMongoTransaction(async (session) => {
       await reserveExamAssignment(examInput, session);
+      await assertExamTopicsExist(examInput.questionTopicIds, session);
       return createExamRecord({ ...examInput, pdf }, actor.id, session);
     });
     return toExamDetail(exam, false);
@@ -412,6 +433,8 @@ export async function editExam(
           assignedStudentIds: input.assignedStudentIds ?? [],
         };
   const assignment = normalizeExamAssignment(requestedAssignment);
+  const questionTopicIds =
+    input.questionTopicIds ?? currentExam.questionTopicIds;
 
   const examInput: UpsertExamInput = {
     title: input.title,
@@ -421,6 +444,7 @@ export async function editExam(
     part3InputMode: input.part3InputMode,
     settings: input.settings,
     answerKey: input.answerKey,
+    questionTopicIds,
   };
   const replacementLeases = replacementPdfUpload
     ? await acquirePdfUploadLeases(replacementPdfUpload, [
@@ -456,6 +480,7 @@ export async function editExam(
       : currentExam.answerKeyRevision;
     const updatedExam = await withMongoTransaction(async (session) => {
       await reserveExamAssignment(assignment, session);
+      await assertExamTopicsExist(examInput.questionTopicIds, session);
 
       if (hasAttempts && answerKeyChanged) {
         const correctedExam = await updateExamAnswerKeyRecord(
@@ -468,6 +493,7 @@ export async function editExam(
             assignedStudentIds: examInput.assignedStudentIds,
             settings: examInput.settings,
             answerKey: examInput.answerKey,
+            questionTopicIds: examInput.questionTopicIds,
           },
           currentExam.updatedAt,
           currentExam.answerKeyRevision,
@@ -516,6 +542,7 @@ export async function editExam(
             visibilityMode: examInput.visibilityMode,
             assignedStudentIds: examInput.assignedStudentIds,
             settings: examInput.settings,
+            questionTopicIds: examInput.questionTopicIds,
           },
           currentExam.updatedAt,
           session,
