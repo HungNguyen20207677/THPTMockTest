@@ -28,6 +28,7 @@ import {
 } from "@/lib/db/dao/user.dao";
 import {
   calculatePerformanceStatistics,
+  calculateQuestionStatistics,
   calculateScoreAggregate,
   getAttemptTimeUsedSeconds,
   toScoreStatistics,
@@ -558,6 +559,9 @@ export async function getAdminExamResults(
     autoSubmittedAttemptCount,
     statistics: toScoreStatistics(
       calculateScoreAggregate(terminalAttempts.map(toScoredAttempt)),
+    ),
+    questionStatistics: calculateQuestionStatistics(
+      terminalAttempts.map(toScoredAttempt),
     ),
     students,
   };

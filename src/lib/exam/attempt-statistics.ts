@@ -1,10 +1,15 @@
+import { EXAM_STRUCTURE, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
 import { scoreHundredthsToPoints } from "@/lib/exam/grading";
 import type {
   AttemptGradingSnapshot,
   ExamAttemptStatus,
 } from "@/types/exam-attempt";
-import type { PerformanceStatistics, ScoreStatistics } from "@/types/reporting";
+import type {
+  AdminExamQuestionStatistics,
+  PerformanceStatistics,
+  ScoreStatistics,
+} from "@/types/reporting";
 
 export interface ScoredAttempt {
   id: string;
@@ -98,6 +103,109 @@ export function calculatePerformanceStatistics(
         : scoreHundredthsToPoints(aggregate.highest),
     improvement: scoreHundredthsToPoints(latestHundredths - firstHundredths),
     ...toScoreStatistics(aggregate),
+  };
+}
+
+export function calculateQuestionStatistics(
+  attempts: ScoredAttempt[],
+): AdminExamQuestionStatistics {
+  const completedAttemptCount = attempts.length;
+  const correctRatePercent = (correctCount: number): number | null =>
+    completedAttemptCount === 0
+      ? null
+      : (correctCount * 100) / completedAttemptCount;
+  const partOneCorrectCounts = Array<number>(
+    EXAM_STRUCTURE.partOneQuestions,
+  ).fill(0);
+  const partTwoFullCorrectCounts = Array<number>(
+    EXAM_STRUCTURE.partTwoQuestions,
+  ).fill(0);
+  const partTwoScoreTotals = Array<number>(
+    EXAM_STRUCTURE.partTwoQuestions,
+  ).fill(0);
+  const partTwoStatementCorrectCounts = Array.from(
+    { length: EXAM_STRUCTURE.partTwoQuestions },
+    () => ({ a: 0, b: 0, c: 0, d: 0 }),
+  );
+  const partThreeCorrectCounts = Array<number>(
+    EXAM_STRUCTURE.partThreeQuestions,
+  ).fill(0);
+
+  for (const attempt of attempts) {
+    attempt.grading.partOne.forEach((question, questionIndex) => {
+      if (question.isCorrect) {
+        partOneCorrectCounts[questionIndex] += 1;
+      }
+    });
+    attempt.grading.partTwo.forEach((question, questionIndex) => {
+      if (
+        question.correctStatementCount ===
+        EXAM_STRUCTURE.partTwoStatementsPerQuestion
+      ) {
+        partTwoFullCorrectCounts[questionIndex] += 1;
+      }
+
+      partTwoScoreTotals[questionIndex] += question.scoreHundredths;
+      for (const statement of PART_TWO_STATEMENTS) {
+        if (question.statements[statement]) {
+          partTwoStatementCorrectCounts[questionIndex][statement] += 1;
+        }
+      }
+    });
+    attempt.grading.partThree.forEach((question, questionIndex) => {
+      if (question.isCorrect) {
+        partThreeCorrectCounts[questionIndex] += 1;
+      }
+    });
+  }
+
+  return {
+    partOne: partOneCorrectCounts.map((correctCount, questionIndex) => ({
+      questionNumber: questionIndex + 1,
+      completedAttemptCount,
+      correctCount,
+      incorrectCount: completedAttemptCount - correctCount,
+      correctRatePercent: correctRatePercent(correctCount),
+    })),
+    partTwo: partTwoFullCorrectCounts.map((fullCorrectCount, questionIndex) => {
+      const statementCounts = partTwoStatementCorrectCounts[questionIndex];
+
+      return {
+        questionNumber: questionIndex + 1,
+        completedAttemptCount,
+        fullCorrectCount,
+        fullCorrectRatePercent: correctRatePercent(fullCorrectCount),
+        averageScoreHundredths:
+          completedAttemptCount === 0
+            ? null
+            : partTwoScoreTotals[questionIndex] / completedAttemptCount,
+        statements: {
+          a: {
+            correctCount: statementCounts.a,
+            correctRatePercent: correctRatePercent(statementCounts.a),
+          },
+          b: {
+            correctCount: statementCounts.b,
+            correctRatePercent: correctRatePercent(statementCounts.b),
+          },
+          c: {
+            correctCount: statementCounts.c,
+            correctRatePercent: correctRatePercent(statementCounts.c),
+          },
+          d: {
+            correctCount: statementCounts.d,
+            correctRatePercent: correctRatePercent(statementCounts.d),
+          },
+        },
+      };
+    }),
+    partThree: partThreeCorrectCounts.map((correctCount, questionIndex) => ({
+      questionNumber: questionIndex + 1,
+      completedAttemptCount,
+      correctCount,
+      incorrectCount: completedAttemptCount - correctCount,
+      correctRatePercent: correctRatePercent(correctCount),
+    })),
   };
 }
 

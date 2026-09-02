@@ -9,13 +9,21 @@ import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchAdminExamResults } from "@/lib/api/reporting";
 import { formatScore, scoreFormatter } from "@/lib/formatting";
-import type { AdminExamResults } from "@/types/reporting";
+import type {
+  AdminExamPartTwoQuestionStatistics,
+  AdminExamQuestionCorrectnessStatistics,
+  AdminExamResults,
+} from "@/types/reporting";
 
 const statusLabels = {
   DRAFT: "Bản nháp",
   PUBLISHED: "Đã xuất bản",
   HIDDEN: "Đã ẩn",
 } as const;
+
+const rateFormatter = new Intl.NumberFormat("vi-VN", {
+  maximumFractionDigits: 1,
+});
 
 function getRequestError(error: unknown): string {
   if (error instanceof ApiClientError) {
@@ -34,6 +42,147 @@ function getRequestError(error: unknown): string {
 function formatImprovement(value: number | null): string {
   if (value === null) return "Chưa có";
   return `${value > 0 ? "+" : ""}${scoreFormatter.format(value)}`;
+}
+
+function formatRatePercent(value: number | null): string {
+  return value === null ? "—" : `${rateFormatter.format(value)}%`;
+}
+
+function formatAverageScoreHundredths(value: number | null): string {
+  return value === null ? "—" : scoreFormatter.format(value / 100);
+}
+
+function QuestionCorrectnessTable({
+  label,
+  questions,
+}: {
+  label: string;
+  questions: AdminExamQuestionCorrectnessStatistics[];
+}) {
+  return (
+    <div className="space-y-3">
+      <h3 className="font-semibold">{label}</h3>
+      <div className="border-border overflow-x-auto rounded-xl border">
+        <table className="w-full min-w-[40rem] border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
+          <thead className="bg-muted/70">
+            <tr>
+              {["Câu", "Số lượt", "Đúng", "Sai", "Tỷ lệ đúng"].map(
+                (heading) => (
+                  <th
+                    key={heading}
+                    scope="col"
+                    className="px-4 py-3 text-left font-semibold"
+                  >
+                    {heading}
+                  </th>
+                ),
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {questions.map((question) => (
+              <tr
+                key={question.questionNumber}
+                className="border-border border-t"
+              >
+                <th scope="row" className="px-4 py-2.5 text-left font-medium">
+                  {question.questionNumber}
+                </th>
+                <td className="px-4 py-2.5 tabular-nums">
+                  {question.completedAttemptCount}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums">
+                  {question.correctCount}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums">
+                  {question.incorrectCount}
+                </td>
+                <td className="px-4 py-2.5 font-medium tabular-nums">
+                  {formatRatePercent(question.correctRatePercent)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PartTwoQuestionTable({
+  questions,
+}: {
+  questions: AdminExamPartTwoQuestionStatistics[];
+}) {
+  return (
+    <div className="space-y-3">
+      <h3 className="font-semibold">Phần II - Đúng/Sai</h3>
+      <div className="border-border overflow-x-auto rounded-xl border">
+        <table className="w-full min-w-[58rem] border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
+          <thead className="bg-muted/70">
+            <tr>
+              {[
+                "Câu",
+                "Số lượt",
+                "Đúng toàn bộ",
+                "Tỷ lệ đúng toàn bộ",
+                "Điểm TB",
+                "a",
+                "b",
+                "c",
+                "d",
+              ].map((heading) => (
+                <th
+                  key={heading}
+                  scope="col"
+                  className="px-4 py-3 text-left font-semibold"
+                >
+                  {heading}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {questions.map((question) => (
+              <tr
+                key={question.questionNumber}
+                className="border-border border-t"
+              >
+                <th scope="row" className="px-4 py-2.5 text-left font-medium">
+                  {question.questionNumber}
+                </th>
+                <td className="px-4 py-2.5 tabular-nums">
+                  {question.completedAttemptCount}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums">
+                  {question.fullCorrectCount}
+                </td>
+                <td className="px-4 py-2.5 font-medium tabular-nums">
+                  {formatRatePercent(question.fullCorrectRatePercent)}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums">
+                  {formatAverageScoreHundredths(
+                    question.averageScoreHundredths,
+                  )}
+                </td>
+                {(["a", "b", "c", "d"] as const).map((statement) => (
+                  <td
+                    key={statement}
+                    className="px-4 py-2.5 tabular-nums"
+                    title={`${question.statements[statement].correctCount} lượt đúng`}
+                  >
+                    {formatRatePercent(
+                      question.statements[statement].correctRatePercent,
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export function AdminExamResultsView({ examId }: { examId: string }) {
@@ -123,6 +272,29 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
             </div>
           ))}
         </div>
+      </section>
+
+      <section
+        aria-labelledby="question-analysis-heading"
+        className="space-y-5"
+      >
+        <div>
+          <h2 id="question-analysis-heading" className="text-xl font-bold">
+            Phân tích từng câu
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Tính trên các lượt đã nộp; mỗi lần làm lại được tính là một lượt.
+          </p>
+        </div>
+        <QuestionCorrectnessTable
+          label="Phần I - Trắc nghiệm"
+          questions={report.questionStatistics.partOne}
+        />
+        <PartTwoQuestionTable questions={report.questionStatistics.partTwo} />
+        <QuestionCorrectnessTable
+          label="Phần III - Trả lời ngắn"
+          questions={report.questionStatistics.partThree}
+        />
       </section>
 
       <section aria-labelledby="exam-students-heading" className="space-y-4">

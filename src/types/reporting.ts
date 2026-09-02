@@ -116,6 +116,39 @@ export interface AdminExamStudentPerformance {
   statistics: PerformanceStatistics;
 }
 
+export interface AdminExamQuestionCorrectnessStatistics {
+  questionNumber: number;
+  completedAttemptCount: number;
+  correctCount: number;
+  incorrectCount: number;
+  correctRatePercent: number | null;
+}
+
+export interface AdminExamPartTwoStatementStatistics {
+  correctCount: number;
+  correctRatePercent: number | null;
+}
+
+export interface AdminExamPartTwoQuestionStatistics {
+  questionNumber: number;
+  completedAttemptCount: number;
+  fullCorrectCount: number;
+  fullCorrectRatePercent: number | null;
+  averageScoreHundredths: number | null;
+  statements: {
+    a: AdminExamPartTwoStatementStatistics;
+    b: AdminExamPartTwoStatementStatistics;
+    c: AdminExamPartTwoStatementStatistics;
+    d: AdminExamPartTwoStatementStatistics;
+  };
+}
+
+export interface AdminExamQuestionStatistics {
+  partOne: AdminExamQuestionCorrectnessStatistics[];
+  partTwo: AdminExamPartTwoQuestionStatistics[];
+  partThree: AdminExamQuestionCorrectnessStatistics[];
+}
+
 export interface AdminExamResults {
   exam: ReportingExamIdentity;
   activeAttemptCount: number;
@@ -124,6 +157,7 @@ export interface AdminExamResults {
   submittedAttemptCount: number;
   autoSubmittedAttemptCount: number;
   statistics: ScoreStatistics;
+  questionStatistics: AdminExamQuestionStatistics;
   students: AdminExamStudentPerformance[];
 }
 

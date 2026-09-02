@@ -61,6 +61,7 @@ import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import {
   getAdminAttemptDetail,
   getAdminDashboardSummary,
+  getAdminExamResults,
   getStudentExamAttemptHistory,
   listAdminResults,
 } from "@/lib/services/reporting.service";
@@ -104,10 +105,24 @@ function createGrading(score = 750): AttemptGradingSnapshot {
       partTwo: Math.min(Math.max(score - 300, 0), 400),
       partThree: Math.min(Math.max(score - 700, 0), 300),
     },
-    partOne: [],
-    partTwo: [],
-    partThree: [],
+    partOne: Array.from({ length: 12 }, () => ({ isCorrect: false })),
+    partTwo: Array.from({ length: 4 }, () => ({
+      correctStatementCount: 0,
+      scoreHundredths: 0,
+      statements: { a: false, b: false, c: false, d: false },
+    })),
+    partThree: Array.from({ length: 6 }, () => ({ isCorrect: false })),
   };
+}
+
+function createFirstQuestionGrading(
+  isCorrect: boolean,
+  answerKeyRevision = 1,
+): AttemptGradingSnapshot {
+  const grading = createGrading(isCorrect ? 25 : 0);
+  grading.answerKeyRevision = answerKeyRevision;
+  grading.partOne[0] = { isCorrect };
+  return grading;
 }
 
 function createExam(
@@ -287,6 +302,111 @@ describe("reporting service", () => {
     expect(JSON.stringify(result)).not.toContain("answerKey");
     expect(JSON.stringify(result)).not.toContain('"answers"');
     expect(JSON.stringify(result)).not.toContain("scoreHundredths");
+  });
+
+  it("counts submitted and auto-submitted retakes but excludes active attempts", async () => {
+    const submittedAttempt = createAttempt({
+      id: "submitted-attempt",
+      grading: createFirstQuestionGrading(true),
+    });
+    const autoSubmittedAttempt = createAttempt({
+      id: "auto-submitted-attempt",
+      attemptNumber: 2,
+      status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+      grading: createFirstQuestionGrading(false),
+    });
+    const activeAttempt = createAttempt({
+      id: "active-attempt",
+      attemptNumber: 3,
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      submittedAt: undefined,
+      grading: undefined,
+      gradedAt: undefined,
+    });
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue([
+      submittedAttempt,
+      autoSubmittedAttempt,
+    ]);
+    mocks.listActiveExamAttemptRecords.mockResolvedValue([activeAttempt]);
+
+    const report = await getAdminExamResults(admin, "exam-id");
+
+    expect(mocks.listTerminalExamAttemptRecords).toHaveBeenCalledWith({
+      examId: "exam-id",
+    });
+    expect(report).toMatchObject({
+      activeAttemptCount: 1,
+      completedAttemptCount: 2,
+      distinctStudentCount: 1,
+      submittedAttemptCount: 1,
+      autoSubmittedAttemptCount: 1,
+    });
+    expect(report.questionStatistics.partOne[0]).toEqual({
+      questionNumber: 1,
+      completedAttemptCount: 2,
+      correctCount: 1,
+      incorrectCount: 1,
+      correctRatePercent: 50,
+    });
+  });
+
+  it("returns ordered zero-attempt question statistics safely", async () => {
+    const report = await getAdminExamResults(admin, "exam-id");
+
+    expect(report.completedAttemptCount).toBe(0);
+    expect(report.questionStatistics.partOne).toHaveLength(12);
+    expect(report.questionStatistics.partTwo).toHaveLength(4);
+    expect(report.questionStatistics.partThree).toHaveLength(6);
+    expect(report.questionStatistics.partOne[0]).toEqual({
+      questionNumber: 1,
+      completedAttemptCount: 0,
+      correctCount: 0,
+      incorrectCount: 0,
+      correctRatePercent: null,
+    });
+    expect(report.questionStatistics.partTwo[0]).toEqual({
+      questionNumber: 1,
+      completedAttemptCount: 0,
+      fullCorrectCount: 0,
+      fullCorrectRatePercent: null,
+      averageScoreHundredths: null,
+      statements: {
+        a: { correctCount: 0, correctRatePercent: null },
+        b: { correctCount: 0, correctRatePercent: null },
+        c: { correctCount: 0, correctRatePercent: null },
+        d: { correctCount: 0, correctRatePercent: null },
+      },
+    });
+    expect(report.questionStatistics.partThree[5].questionNumber).toBe(6);
+  });
+
+  it("reflects a reconciled grading snapshot instead of the stored answers", async () => {
+    const currentExam = createExam({ answerKeyRevision: 2 });
+    const staleAttempt = createAttempt({
+      grading: createFirstQuestionGrading(false, 1),
+    });
+    const revisedAttempt = createAttempt({
+      grading: createFirstQuestionGrading(true, 2),
+    });
+    mocks.findExamReportingRecordById.mockResolvedValue(currentExam);
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue([staleAttempt]);
+    mocks.ensureTerminalAttemptGrading.mockResolvedValue({
+      attempt: revisedAttempt,
+      exam: currentExam,
+    });
+
+    const report = await getAdminExamResults(admin, currentExam.id);
+
+    expect(mocks.ensureTerminalAttemptGrading).toHaveBeenCalledWith(
+      staleAttempt,
+      currentExam,
+      now,
+    );
+    expect(report.questionStatistics.partOne[0]).toMatchObject({
+      correctCount: 1,
+      incorrectCount: 0,
+      correctRatePercent: 100,
+    });
   });
 
   it("backfills only a missing legacy grading snapshot", async () => {
