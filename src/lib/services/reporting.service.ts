@@ -31,6 +31,7 @@ import {
   calculatePerformanceStatistics,
   calculateQuestionStatistics,
   calculateScoreAggregate,
+  calculateStudentTopicStatistics,
   calculateTopicStatistics,
   getAttemptTimeUsedSeconds,
   toScoreStatistics,
@@ -467,6 +468,28 @@ export async function getAdminStudentDetail(
     );
   }
 
+  const topicExamAttempts = [...terminalByExam.entries()].flatMap(
+    ([examId, attempts]) => {
+      const exam = examMap.get(examId);
+
+      return exam
+        ? [
+            {
+              questionTopicIds: exam.questionTopicIds,
+              attempts: attempts.map(toScoredAttempt),
+            },
+          ]
+        : [];
+    },
+  );
+  const topics = await findTopicRecordsByIds(
+    uniqueIds(
+      topicExamAttempts.flatMap(({ questionTopicIds }) =>
+        getUniqueExamTopicIds(questionTopicIds),
+      ),
+    ),
+  );
+
   const exams = examIds.map((examId) => {
     const exam = examMap.get(examId);
     const attempts = terminalByExam.get(examId) ?? [];
@@ -496,6 +519,7 @@ export async function getAdminStudentDetail(
       best: overallStatistics.best,
       latest: overallStatistics.latest,
     },
+    topicStatistics: calculateStudentTopicStatistics(topicExamAttempts, topics),
     exams,
   };
 }

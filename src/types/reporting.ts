@@ -103,11 +103,19 @@ export interface AdminStudentStatistics {
   latest: number | null;
 }
 
+export interface AdminStudentTopicStatistics {
+  topicId: string;
+  topicName: string;
+  observationCount: number;
+  averagePerformancePercent: number;
+}
+
 export interface AdminStudentDetail {
   student: StudentAccount;
   activeAttemptCount: number;
   distinctExamCount: number;
   statistics: AdminStudentStatistics;
+  topicStatistics: AdminStudentTopicStatistics[];
   exams: AdminStudentExamPerformance[];
 }
 

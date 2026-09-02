@@ -68,6 +68,7 @@ import {
   getAdminAttemptDetail,
   getAdminDashboardSummary,
   getAdminExamResults,
+  getAdminStudentDetail,
   getStudentExamAttemptHistory,
   listAdminResults,
 } from "@/lib/services/reporting.service";
@@ -205,6 +206,7 @@ describe("reporting service", () => {
     });
     mocks.findExamAttemptRecordById.mockResolvedValue(null);
     mocks.findLatestExamAttemptRecord.mockResolvedValue(null);
+    mocks.findUserById.mockResolvedValue(createStudent());
     mocks.findExamReportingRecordById.mockResolvedValue(createExam());
     mocks.isPublishedExamAvailableToStudent.mockResolvedValue(true);
     mocks.findExamReportingRecordsByIds.mockImplementation(
@@ -283,6 +285,165 @@ describe("reporting service", () => {
       activeAttemptCount: 1,
       completedAttemptCount: 7,
     });
+  });
+
+  it("aggregates one student's terminal topic observations across current Exams", async () => {
+    const firstExamTopicIds = createEmptyQuestionTopicIds();
+    firstExamTopicIds.partOne[0] = ["shared-topic"];
+    firstExamTopicIds.partTwo[0] = ["shared-topic", "partial-topic"];
+    const secondExamTopicIds = createEmptyQuestionTopicIds();
+    secondExamTopicIds.partThree[0] = ["shared-topic"];
+    const firstGrading = createGrading(0);
+    firstGrading.partOne[0] = { isCorrect: true };
+    firstGrading.partTwo[0] = {
+      correctStatementCount: 2,
+      scoreHundredths: 25,
+      statements: { a: true, b: true, c: false, d: false },
+    };
+    const retakeGrading = createGrading(0);
+    retakeGrading.partTwo[0] = {
+      correctStatementCount: 3,
+      scoreHundredths: 50,
+      statements: { a: true, b: true, c: true, d: false },
+    };
+    const secondExamGrading = createGrading(0);
+    secondExamGrading.partThree[0] = { isCorrect: true };
+    const terminalAttempts = [
+      createAttempt({
+        id: "first-exam-attempt",
+        examId: "exam-one",
+        grading: firstGrading,
+      }),
+      createAttempt({
+        id: "first-exam-retake",
+        examId: "exam-one",
+        attemptNumber: 2,
+        status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+        grading: retakeGrading,
+      }),
+      createAttempt({
+        id: "hidden-exam-attempt",
+        examId: "exam-two",
+        grading: secondExamGrading,
+      }),
+    ];
+    const activeAttempt = createAttempt({
+      id: "active-attempt",
+      examId: "exam-one",
+      attemptNumber: 3,
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      submittedAt: undefined,
+      grading: undefined,
+      gradedAt: undefined,
+    });
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue(terminalAttempts);
+    mocks.listActiveExamAttemptRecords.mockResolvedValue([activeAttempt]);
+    mocks.findExamReportingRecordsByIds.mockResolvedValue([
+      createExam({
+        id: "exam-one",
+        title: "Exam one",
+        questionTopicIds: firstExamTopicIds,
+      }),
+      createExam({
+        id: "exam-two",
+        title: "Hidden exam",
+        status: EXAM_STATUS.HIDDEN,
+        questionTopicIds: secondExamTopicIds,
+      }),
+    ]);
+
+    const detail = await getAdminStudentDetail(admin, studentActor.id);
+
+    expect(detail.topicStatistics).toEqual([
+      {
+        topicId: "shared-topic",
+        topicName: "shared-topic",
+        observationCount: 5,
+        averagePerformancePercent: 55,
+      },
+      {
+        topicId: "partial-topic",
+        topicName: "partial-topic",
+        observationCount: 2,
+        averagePerformancePercent: 37.5,
+      },
+    ]);
+    expect(mocks.listTerminalExamAttemptRecords).toHaveBeenCalledWith({
+      studentId: studentActor.id,
+    });
+    expect(mocks.listActiveExamAttemptRecords).toHaveBeenCalledWith({
+      studentId: studentActor.id,
+    });
+    expect(mocks.findExamReportingRecordsByIds).toHaveBeenCalledWith([
+      "exam-one",
+      "exam-two",
+    ]);
+    expect(mocks.findTopicRecordsByIds).toHaveBeenCalledTimes(1);
+    expect(mocks.findTopicRecordsByIds).toHaveBeenCalledWith([
+      "shared-topic",
+      "partial-topic",
+    ]);
+  });
+
+  it("applies current topic assignments to historical student snapshots", async () => {
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partOne[1] = ["current-topic"];
+    const historicalGrading = createFirstQuestionGrading(true);
+    const attempt = createAttempt({ grading: historicalGrading });
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue([attempt]);
+    mocks.findExamReportingRecordsByIds.mockResolvedValue([
+      createExam({ questionTopicIds }),
+    ]);
+
+    const detail = await getAdminStudentDetail(admin, studentActor.id);
+
+    expect(detail.topicStatistics).toEqual([
+      {
+        topicId: "current-topic",
+        topicName: "current-topic",
+        observationCount: 1,
+        averagePerformancePercent: 0,
+      },
+    ]);
+    expect(attempt.grading).toBe(historicalGrading);
+    expect(mocks.ensureTerminalAttemptGrading).not.toHaveBeenCalled();
+  });
+
+  it("uses an updated persisted grading snapshot in student topic analytics", async () => {
+    const questionTopicIds = createEmptyQuestionTopicIds();
+    questionTopicIds.partOne[0] = ["corrected-topic"];
+    const currentExam = createExam({
+      answerKeyRevision: 2,
+      questionTopicIds,
+    });
+    const updatedAttempt = createAttempt({
+      grading: createFirstQuestionGrading(true, 2),
+    });
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue([updatedAttempt]);
+    mocks.findExamReportingRecordsByIds.mockResolvedValue([currentExam]);
+
+    const detail = await getAdminStudentDetail(admin, studentActor.id);
+
+    expect(detail.topicStatistics[0]).toMatchObject({
+      topicId: "corrected-topic",
+      observationCount: 1,
+      averagePerformancePercent: 100,
+    });
+    expect(mocks.ensureTerminalAttemptGrading).not.toHaveBeenCalled();
+  });
+
+  it("returns empty student topic analytics when completed Exams have no topics", async () => {
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue([createAttempt()]);
+
+    const detail = await getAdminStudentDetail(admin, studentActor.id);
+
+    expect(detail.topicStatistics).toEqual([]);
+  });
+
+  it("returns empty student topic analytics without completed attempts", async () => {
+    const detail = await getAdminStudentDetail(admin, studentActor.id);
+
+    expect(detail.topicStatistics).toEqual([]);
   });
 
   it("returns paginated result DTOs with batched identities and immutable grading", async () => {

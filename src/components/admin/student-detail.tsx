@@ -11,6 +11,11 @@ import { fetchAdminStudentDetail } from "@/lib/api/reporting";
 import { formatScore, scoreFormatter } from "@/lib/formatting";
 import type { AdminStudentDetail } from "@/types/reporting";
 
+const performancePercentFormatter = new Intl.NumberFormat("vi-VN", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 function getRequestError(error: unknown): string {
   if (error instanceof ApiClientError) {
     if (error.code === "UNAUTHENTICATED") {
@@ -28,6 +33,10 @@ function getRequestError(error: unknown): string {
 function formatImprovement(value: number | null): string {
   if (value === null) return "Chưa có";
   return `${value > 0 ? "+" : ""}${scoreFormatter.format(value)}`;
+}
+
+function formatPerformancePercent(value: number): string {
+  return `${performancePercentFormatter.format(value)}%`;
 }
 
 export function AdminStudentDetailView({ studentId }: { studentId: string }) {
@@ -128,6 +137,62 @@ export function AdminStudentDetailView({ studentId }: { studentId: string }) {
             </div>
           ))}
         </div>
+      </section>
+
+      <section aria-labelledby="student-topic-heading" className="space-y-4">
+        <div>
+          <h2 id="student-topic-heading" className="text-xl font-bold">
+            Năng lực theo chủ đề
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Tổng hợp từ tất cả lượt làm bài đã hoàn thành.
+          </p>
+        </div>
+        {detail.topicStatistics.length === 0 ? (
+          <div className="border-border text-muted-foreground rounded-xl border px-4 py-8 text-center text-sm">
+            Chưa có đủ dữ liệu chủ đề từ các bài đã hoàn thành.
+          </div>
+        ) : (
+          <div className="border-border overflow-x-auto rounded-xl border">
+            <table className="w-full min-w-[30rem] border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
+              <thead className="bg-muted/70">
+                <tr>
+                  {["Chủ đề", "Số câu đã làm", "Mức độ đạt TB"].map(
+                    (heading) => (
+                      <th
+                        key={heading}
+                        scope="col"
+                        className="px-4 py-3 text-left font-semibold"
+                      >
+                        {heading}
+                      </th>
+                    ),
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {detail.topicStatistics.map((topic) => (
+                  <tr key={topic.topicId} className="border-border border-t">
+                    <th
+                      scope="row"
+                      className="px-4 py-2.5 text-left font-medium"
+                    >
+                      {topic.topicName}
+                    </th>
+                    <td className="px-4 py-2.5 tabular-nums">
+                      {topic.observationCount}
+                    </td>
+                    <td className="px-4 py-2.5 font-medium tabular-nums">
+                      {formatPerformancePercent(
+                        topic.averagePerformancePercent,
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section aria-labelledby="student-exams-heading" className="space-y-4">

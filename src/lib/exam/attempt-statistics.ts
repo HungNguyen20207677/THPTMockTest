@@ -9,6 +9,7 @@ import type { ExamQuestionTopicIds } from "@/types/exam";
 import type {
   AdminExamQuestionStatistics,
   AdminExamTopicStatistics,
+  AdminStudentTopicStatistics,
   PerformanceStatistics,
   ScoreStatistics,
 } from "@/types/reporting";
@@ -211,11 +212,17 @@ export function calculateQuestionStatistics(
   };
 }
 
-export function calculateTopicStatistics(
+interface TopicPerformanceAggregate {
+  taggedQuestionCount: number;
+  observationCount: number;
+  totalPerformancePercent: number;
+}
+
+function accumulateTopicPerformance(
+  aggregateByTopicId: Map<string, TopicPerformanceAggregate>,
   questionTopicIds: ExamQuestionTopicIds,
   attempts: ScoredAttempt[],
-  topics: Array<{ id: string; name: string }>,
-): AdminExamTopicStatistics[] {
+): void {
   const questions: Array<{
     topicIds: string[];
     getPerformance: (grading: AttemptGradingSnapshot) => number;
@@ -236,14 +243,6 @@ export function calculateTopicStatistics(
         grading.partThree[questionIndex].isCorrect ? 100 : 0,
     })),
   ];
-  const aggregateByTopicId = new Map<
-    string,
-    {
-      taggedQuestionCount: number;
-      observationCount: number;
-      totalPerformancePercent: number;
-    }
-  >();
 
   for (const question of questions) {
     for (const topicId of question.topicIds) {
@@ -282,6 +281,15 @@ export function calculateTopicStatistics(
       }
     }
   }
+}
+
+export function calculateTopicStatistics(
+  questionTopicIds: ExamQuestionTopicIds,
+  attempts: ScoredAttempt[],
+  topics: Array<{ id: string; name: string }>,
+): AdminExamTopicStatistics[] {
+  const aggregateByTopicId = new Map<string, TopicPerformanceAggregate>();
+  accumulateTopicPerformance(aggregateByTopicId, questionTopicIds, attempts);
 
   const topicNameById = new Map(
     topics.map((topic) => [topic.id, topic.name] as const),
@@ -310,6 +318,53 @@ export function calculateTopicStatistics(
   statistics.sort(
     (left, right) =>
       right.taggedQuestionCount - left.taggedQuestionCount ||
+      left.topicName.localeCompare(right.topicName, "vi") ||
+      left.topicId.localeCompare(right.topicId),
+  );
+  return statistics;
+}
+
+export function calculateStudentTopicStatistics(
+  exams: Array<{
+    questionTopicIds: ExamQuestionTopicIds;
+    attempts: ScoredAttempt[];
+  }>,
+  topics: Array<{ id: string; name: string }>,
+): AdminStudentTopicStatistics[] {
+  const aggregateByTopicId = new Map<string, TopicPerformanceAggregate>();
+
+  for (const exam of exams) {
+    accumulateTopicPerformance(
+      aggregateByTopicId,
+      exam.questionTopicIds,
+      exam.attempts,
+    );
+  }
+
+  const topicNameById = new Map(
+    topics.map((topic) => [topic.id, topic.name] as const),
+  );
+  const statistics: AdminStudentTopicStatistics[] = [];
+
+  for (const [topicId, aggregate] of aggregateByTopicId) {
+    const topicName = topicNameById.get(topicId);
+
+    if (topicName === undefined || aggregate.observationCount === 0) {
+      continue;
+    }
+
+    statistics.push({
+      topicId,
+      topicName,
+      observationCount: aggregate.observationCount,
+      averagePerformancePercent:
+        aggregate.totalPerformancePercent / aggregate.observationCount,
+    });
+  }
+
+  statistics.sort(
+    (left, right) =>
+      right.observationCount - left.observationCount ||
       left.topicName.localeCompare(right.topicName, "vi") ||
       left.topicId.localeCompare(right.topicId),
   );

@@ -5,6 +5,7 @@ import {
   calculatePerformanceStatistics,
   calculateQuestionStatistics,
   calculateScoreAggregate,
+  calculateStudentTopicStatistics,
   calculateTopicStatistics,
   getAttemptTimeUsedSeconds,
   toScoreStatistics,
@@ -389,6 +390,123 @@ describe("attempt statistics", () => {
         [],
       ),
     ).toEqual([]);
+  });
+
+  it("merges student topic observations across Exams with shared normalization", () => {
+    const firstExamTopicIds = createEmptyQuestionTopicIds();
+    firstExamTopicIds.partOne[0] = ["shared-topic"];
+    firstExamTopicIds.partTwo[0] = ["shared-topic", "second-topic"];
+    const secondExamTopicIds = createEmptyQuestionTopicIds();
+    secondExamTopicIds.partThree[0] = ["shared-topic"];
+    secondExamTopicIds.partThree[1] = ["shared-topic"];
+    const submittedAttempt = {
+      ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+      grading: createQuestionGrading({
+        partOneCorrect: [0],
+        partTwo: [
+          {
+            correctStatementCount: 2,
+            scoreHundredths: 25,
+            statements: { a: true, b: true, c: false, d: false },
+          },
+        ],
+      }),
+    };
+    const autoSubmittedRetake = {
+      ...createAttempt(0, 2, "2026-08-02T00:00:00.000Z"),
+      status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+      grading: createQuestionGrading({
+        partTwo: [
+          {
+            correctStatementCount: 3,
+            scoreHundredths: 50,
+            statements: { a: true, b: true, c: true, d: false },
+          },
+        ],
+      }),
+    };
+    const activeAttempt = {
+      ...createAttempt(0, 3, "2026-08-03T00:00:00.000Z"),
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      grading: createQuestionGrading({
+        partOneCorrect: [0],
+        partTwo: [
+          {
+            correctStatementCount: 4,
+            scoreHundredths: 100,
+            statements: { a: true, b: true, c: true, d: true },
+          },
+        ],
+      }),
+    };
+    const otherExamAttempt = {
+      ...createAttempt(0, 1, "2026-08-04T00:00:00.000Z"),
+      grading: createQuestionGrading({ partThreeCorrect: [0] }),
+    };
+
+    const statistics = calculateStudentTopicStatistics(
+      [
+        {
+          questionTopicIds: firstExamTopicIds,
+          attempts: [submittedAttempt, autoSubmittedRetake, activeAttempt],
+        },
+        {
+          questionTopicIds: secondExamTopicIds,
+          attempts: [otherExamAttempt],
+        },
+      ],
+      [
+        { id: "second-topic", name: "Second" },
+        { id: "shared-topic", name: "Shared" },
+      ],
+    );
+
+    expect(statistics).toHaveLength(2);
+    expect(statistics[0]).toMatchObject({
+      topicId: "shared-topic",
+      topicName: "Shared",
+      observationCount: 6,
+    });
+    expect(statistics[0].averagePerformancePercent).toBeCloseTo(275 / 6);
+    expect(statistics[1]).toEqual({
+      topicId: "second-topic",
+      topicName: "Second",
+      observationCount: 2,
+      averagePerformancePercent: 37.5,
+    });
+  });
+
+  it("returns no student topic row without a completed tagged observation", () => {
+    const untaggedExamTopicIds = createEmptyQuestionTopicIds();
+    const activeExamTopicIds = createEmptyQuestionTopicIds();
+    activeExamTopicIds.partOne[0] = ["unused-topic"];
+    const activeAttempt = {
+      ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      grading: createQuestionGrading({ partOneCorrect: [0] }),
+    };
+
+    expect(
+      calculateStudentTopicStatistics(
+        [
+          {
+            questionTopicIds: untaggedExamTopicIds,
+            attempts: [
+              {
+                ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+                grading: createQuestionGrading(),
+              },
+            ],
+          },
+          {
+            questionTopicIds: activeExamTopicIds,
+            attempts: [activeAttempt],
+          },
+        ],
+        [{ id: "unused-topic", name: "Unused" }],
+      ),
+    ).toEqual([]);
+    expect(calculateStudentTopicStatistics([], [])).toEqual([]);
   });
 
   it("uses expiration for auto-submit duration and submission for manual duration", () => {
