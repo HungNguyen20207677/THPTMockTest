@@ -90,6 +90,8 @@ describe("Exam DAO compatibility", () => {
     expect(exam?.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
     expect(exam?.assignedStudentIds).toEqual([]);
     expect(exam?.questionTopicIds).toEqual(createEmptyQuestionTopicIds());
+    expect(exam).not.toHaveProperty("structureTemplateId");
+    expect(exam).not.toHaveProperty("structureSnapshot");
   });
 
   it("maps the legacy student workspace safely to BUBBLE", async () => {

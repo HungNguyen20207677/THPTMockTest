@@ -102,6 +102,12 @@ function toExamDetail(
     description: exam.description,
     assignedStudentIds: exam.assignedStudentIds,
     part3InputMode: exam.part3InputMode,
+    ...(exam.structureTemplateId
+      ? { structureTemplateId: exam.structureTemplateId }
+      : {}),
+    ...(exam.structureSnapshot
+      ? { structureSnapshot: exam.structureSnapshot }
+      : {}),
     pdf: exam.pdf,
     answerKey: exam.answerKey,
     questionTopicIds: exam.questionTopicIds,

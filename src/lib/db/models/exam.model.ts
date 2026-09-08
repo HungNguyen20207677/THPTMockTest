@@ -13,6 +13,7 @@ import {
   PART_ONE_CHOICES,
 } from "@/lib/constants/exam";
 import { isValidCanonicalShortAnswer } from "@/lib/exam/short-answer";
+import { examStructureSnapshotMongooseSchema } from "@/lib/db/schemas/exam-structure.schema";
 import type {
   ExamAnswerKey,
   ExamPdf,
@@ -24,6 +25,7 @@ import type {
   PartOneAnswer,
   PartTwoAnswer,
 } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 type ExamQuestionTopicObjectIds = {
   [TSection in keyof ExamQuestionTopicIds]: Types.ObjectId[][];
@@ -36,6 +38,8 @@ export interface ExamRecord {
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: Types.ObjectId[];
   part3InputMode: Part3InputMode;
+  structureTemplateId?: Types.ObjectId;
+  structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
@@ -208,6 +212,13 @@ const examSchema = new Schema<ExamRecord>(
       enum: PART3_INPUT_MODES,
       required: true,
       default: PART3_INPUT_MODE.BUBBLE,
+    },
+    structureTemplateId: {
+      type: Schema.Types.ObjectId,
+      ref: "ExamStructureTemplate",
+    },
+    structureSnapshot: {
+      type: examStructureSnapshotMongooseSchema,
     },
     pdf: { type: pdfSchema, required: true },
     settings: { type: settingsSchema, required: true },

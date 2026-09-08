@@ -17,6 +17,7 @@ import {
   ExamPdfOperationLeaseModel,
 } from "@/lib/db/models/exam.model";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
+import { cloneExamStructureSnapshot } from "@/lib/exam/structure";
 import type {
   ExamAnswerKey,
   ExamPdf,
@@ -26,6 +27,7 @@ import type {
   ExamVisibilityMode,
   Part3InputMode,
 } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 export interface ExamPersistenceRecord {
   id: string;
@@ -35,6 +37,8 @@ export interface ExamPersistenceRecord {
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
+  structureTemplateId?: string;
+  structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
@@ -53,6 +57,8 @@ export interface SaveExamRecordInput {
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
+  structureTemplateId?: string;
+  structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
@@ -124,6 +130,8 @@ interface ExamDocumentData {
   visibilityMode?: ExamVisibilityMode;
   assignedStudentIds?: Types.ObjectId[];
   part3InputMode?: Part3InputMode;
+  structureTemplateId?: Types.ObjectId;
+  structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: ExamAnswerKey;
@@ -294,6 +302,14 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     visibilityMode,
     assignedStudentIds,
     part3InputMode: exam.part3InputMode ?? PART3_INPUT_MODE.BUBBLE,
+    ...(exam.structureTemplateId
+      ? { structureTemplateId: exam.structureTemplateId.toString() }
+      : {}),
+    ...(exam.structureSnapshot
+      ? {
+          structureSnapshot: cloneExamStructureSnapshot(exam.structureSnapshot),
+        }
+      : {}),
     pdf: exam.pdf,
     settings: exam.settings,
     answerKey: exam.answerKey,

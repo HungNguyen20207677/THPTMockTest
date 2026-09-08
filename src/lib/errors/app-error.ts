@@ -67,6 +67,36 @@ export class ExamNotFoundError extends AppError {
   }
 }
 
+export class ExamStructureTemplateNotFoundError extends AppError {
+  constructor() {
+    super(
+      "Không tìm thấy mẫu cấu trúc đề thi.",
+      "EXAM_STRUCTURE_TEMPLATE_NOT_FOUND",
+      404,
+    );
+  }
+}
+
+export class ExamStructureTemplateConflictError extends AppError {
+  constructor() {
+    super(
+      "Mẫu cấu trúc đã được cập nhật ở nơi khác. Vui lòng tải lại trước khi lưu.",
+      "EXAM_STRUCTURE_TEMPLATE_CONFLICT",
+      409,
+    );
+  }
+}
+
+export class BuiltInExamStructureTemplateReadOnlyError extends AppError {
+  constructor() {
+    super(
+      "Mẫu cấu trúc dựng sẵn không thể chỉnh sửa hoặc xóa.",
+      "BUILT_IN_EXAM_STRUCTURE_TEMPLATE_READ_ONLY",
+      409,
+    );
+  }
+}
+
 export class ExamPublicationError extends AppError {
   constructor(message = "Đề thi chưa có đủ thông tin hợp lệ để xuất bản.") {
     super(message, "EXAM_NOT_READY", 422);

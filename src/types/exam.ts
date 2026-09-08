@@ -5,6 +5,7 @@ import type {
   PART_ONE_CHOICES,
   SHORT_ANSWER_SLOT_OPTIONS,
 } from "@/lib/constants/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 export type ExamStatus = (typeof EXAM_STATUS)[keyof typeof EXAM_STATUS];
 export type ExamVisibilityMode =
@@ -94,4 +95,6 @@ export interface ExamDetail extends ExamSummary {
   pdf: ExamPdf;
   answerKey: ExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
+  structureTemplateId?: string;
+  structureSnapshot?: ExamStructureSnapshot;
 }
