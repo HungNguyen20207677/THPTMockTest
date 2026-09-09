@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  ESSAY_IMAGE_MAX_COUNT,
   EXAM_ATTEMPT_STATUS,
   STUDENT_EXAM_STATE,
   TERMINAL_EXAM_ATTEMPT_STATUSES,
@@ -8,6 +9,7 @@ import {
 import { EXAM_STATUS, EXAM_STRUCTURE } from "@/lib/constants/exam";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
+  attachEssayImageToOwnedActiveExamAttempt,
   autoSubmitExpiredExamAttemptRecord,
   createExamAttemptRecord,
   findActiveExamAttemptRecord,
@@ -15,11 +17,17 @@ import {
   findLatestExamAttemptRecord,
   findOwnedExamAttemptRecord,
   listAllExamAttemptRecordsForStudent,
+  removeEssayImageFromOwnedActiveExamAttempt,
   saveOwnedActiveExamAttemptAnswers,
   setOwnedTerminalExamAttemptGradingForRevision,
   submitOwnedActiveExamAttempt,
   type ExamAttemptPersistenceRecord,
 } from "@/lib/db/dao/exam-attempt.dao";
+import {
+  createEssayImageUploadTicket,
+  deleteEssayImage,
+  verifyEssayImageAsset,
+} from "@/lib/cloudinary/essay-image";
 import {
   findExamGradingRecordById,
   findStudentExamRecordById,
@@ -39,6 +47,7 @@ import {
 } from "@/lib/db/dao/user.dao";
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
+import { examStructureContainsQuestionType } from "@/lib/exam/structure";
 import {
   gradeExamAttemptAnswers,
   isDynamicAttemptGradingSnapshot,
@@ -63,6 +72,11 @@ import {
   ExamNotPublishedError,
   ExamRetakeNotAllowedError,
   ForbiddenError,
+  EssayImageAlreadyAttachedError,
+  EssayImageExamExecutionUnsupportedError,
+  EssayImageLimitError,
+  EssayImageNotFoundError,
+  EssayImageQuestionNotFoundError,
 } from "@/lib/errors/app-error";
 import type {
   AttemptPartTwoAnswer,
@@ -71,6 +85,10 @@ import type {
   DynamicQuestionAnswerReview,
   ExamAttempt,
   ExamAttemptAnswers,
+  EssayImage,
+  EssayImageAnswer,
+  EssayImageUploadReference,
+  EssayImageUploadTicket,
   StudentExamAttemptContext,
   StudentExamAttemptResult,
   StudentExamList,
@@ -88,9 +106,11 @@ import type {
 } from "@/types/exam";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { AppUser } from "@/types/user";
+import type { EssayImageUploadIntent } from "@/lib/validations/essay-image";
 
 const ATTEMPT_DURATION_MS = EXAM_STRUCTURE.durationMinutes * 60 * 1000;
 const START_ATTEMPT_MAX_RETRIES = 3;
+const ESSAY_IMAGE_MUTATION_MAX_RETRIES = 3;
 
 class AttemptFinalizationRaceError extends Error {}
 const EXAM_STATE_ORDER: Record<StudentExamState, number> = {
@@ -102,6 +122,18 @@ const EXAM_STATE_ORDER: Record<StudentExamState, number> = {
 function assertStudent(actor: AppUser): void {
   if (actor.role !== USER_ROLE.STUDENT) {
     throw new ForbiddenError();
+  }
+}
+
+function assertExamExecutionSupported(structure?: ExamStructureSnapshot): void {
+  if (
+    structure &&
+    examStructureContainsQuestionType(
+      structure,
+      EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+    )
+  ) {
+    throw new EssayImageExamExecutionUnsupportedError();
   }
 }
 
@@ -304,6 +336,8 @@ export async function startOrResumeExamAttempt(
       throw new ExamNotFoundError();
     }
 
+    assertExamExecutionSupported(exam.structureSnapshot);
+
     if (!(await markStudentAttemptsStarted(actor.id))) {
       throw new ForbiddenError("Tài khoản học sinh không còn hoạt động.");
     }
@@ -329,6 +363,8 @@ export async function startOrResumeExamAttempt(
     if (!currentExam) {
       throw new ExamNotFoundError();
     }
+
+    assertExamExecutionSupported(currentExam.structureSnapshot);
 
     if (currentExam.status !== EXAM_STATUS.PUBLISHED) {
       throw new ExamNotPublishedError();
@@ -555,6 +591,8 @@ export async function getOwnedExamAttemptContext(
     throw new ExamNotFoundError();
   }
 
+  assertExamExecutionSupported(exam.structureSnapshot);
+
   return toFreshAttemptContext(exam, resolvedAttempt);
 }
 
@@ -605,6 +643,15 @@ export async function saveExamAttemptAnswers(
   const validatedAnswers = createAttemptAnswersSchemaForStructure(
     exam.structureSnapshot,
   ).parse(answers) as ExamAttemptAnswers;
+  const essayQuestionIds =
+    exam.structureSnapshot?.sections.flatMap((section) =>
+      section.questions
+        .filter(
+          (question) =>
+            question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        )
+        .map((question) => question.id),
+    ) ?? [];
 
   const savedAttempt = await saveOwnedActiveExamAttemptAnswers({
     attemptId,
@@ -612,6 +659,7 @@ export async function saveExamAttemptAnswers(
     studentId: actor.id,
     answers: validatedAnswers,
     now: serverNow,
+    ...(essayQuestionIds.length > 0 ? { essayQuestionIds } : {}),
   });
 
   if (savedAttempt) {
@@ -625,6 +673,311 @@ export async function saveExamAttemptAnswers(
   const currentAttempt = await resolveMutationRace(actor, examId, attemptId);
 
   if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
+    throw new ExamAttemptLockedError();
+  }
+
+  throw new ExamAttemptStateConflictError();
+}
+
+interface EssayImageAttemptContext {
+  attempt: ExamAttemptPersistenceRecord;
+  exam: StudentExamWorkspacePersistenceRecord;
+}
+
+async function getEssayImageAttemptContext(
+  actor: AppUser,
+  examId: string,
+  attemptId: string,
+  questionId: string,
+): Promise<EssayImageAttemptContext> {
+  assertStudent(actor);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const serverNow = new Date();
+
+  if (!isValidActiveAttempt(attempt, serverNow)) {
+    throw new ExamAttemptLockedError();
+  }
+
+  const exam = await findStudentExamRecordById(examId);
+
+  if (!exam) {
+    throw new ExamNotFoundError();
+  }
+
+  const question = exam.structureSnapshot?.sections
+    .flatMap((section) => section.questions)
+    .find((candidate) => candidate.id === questionId);
+
+  if (question?.type !== EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
+    throw new EssayImageQuestionNotFoundError();
+  }
+
+  return { attempt, exam };
+}
+
+function getEssayImageAnswer(
+  attempt: ExamAttemptPersistenceRecord,
+  structure: ExamStructureSnapshot,
+  questionId: string,
+): { answers: DynamicAttemptAnswers; answer: EssayImageAnswer } {
+  const answers = getAttemptAnswers(attempt, structure);
+
+  if (!isDynamicAttemptAnswers(answers)) {
+    throw new ExamAttemptStateConflictError();
+  }
+
+  const answer = answers.answersByQuestionId[questionId];
+
+  if (
+    !answer ||
+    typeof answer !== "object" ||
+    Array.isArray(answer) ||
+    !("type" in answer) ||
+    answer.type !== EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE
+  ) {
+    throw new ExamAttemptStateConflictError();
+  }
+
+  return { answers, answer };
+}
+
+function withAttachedEssayImage(
+  attempt: ExamAttemptPersistenceRecord,
+  structure: ExamStructureSnapshot,
+  questionId: string,
+  image: EssayImage,
+): DynamicAttemptAnswers {
+  const { answers, answer } = getEssayImageAnswer(
+    attempt,
+    structure,
+    questionId,
+  );
+
+  if (
+    answer.images.some((candidate) => candidate.publicId === image.publicId)
+  ) {
+    throw new EssayImageAlreadyAttachedError();
+  }
+
+  if (answer.images.length >= ESSAY_IMAGE_MAX_COUNT) {
+    throw new EssayImageLimitError();
+  }
+
+  return {
+    answersByQuestionId: {
+      ...answers.answersByQuestionId,
+      [questionId]: {
+        type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        images: [...answer.images, image],
+      },
+    },
+  };
+}
+
+function withoutEssayImage(
+  attempt: ExamAttemptPersistenceRecord,
+  structure: ExamStructureSnapshot,
+  questionId: string,
+  publicId: string,
+): { answers: DynamicAttemptAnswers; removedImage: EssayImage } {
+  const { answers, answer } = getEssayImageAnswer(
+    attempt,
+    structure,
+    questionId,
+  );
+  const removedImage = answer.images.find(
+    (candidate) => candidate.publicId === publicId,
+  );
+
+  if (!removedImage) {
+    throw new EssayImageNotFoundError();
+  }
+
+  return {
+    answers: {
+      answersByQuestionId: {
+        ...answers.answersByQuestionId,
+        [questionId]: {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          images: answer.images.filter(
+            (candidate) => candidate.publicId !== publicId,
+          ),
+        },
+      },
+    },
+    removedImage,
+  };
+}
+
+export async function issueEssayImageUploadTicket(
+  actor: AppUser,
+  examId: string,
+  attemptId: string,
+  questionId: string,
+  intent: EssayImageUploadIntent,
+): Promise<EssayImageUploadTicket> {
+  const { attempt, exam } = await getEssayImageAttemptContext(
+    actor,
+    examId,
+    attemptId,
+    questionId,
+  );
+  const structure = exam.structureSnapshot;
+
+  if (!structure) {
+    throw new EssayImageQuestionNotFoundError();
+  }
+
+  if (
+    getEssayImageAnswer(attempt, structure, questionId).answer.images.length >=
+    ESSAY_IMAGE_MAX_COUNT
+  ) {
+    throw new EssayImageLimitError();
+  }
+
+  return createEssayImageUploadTicket(
+    { studentId: actor.id, attemptId, questionId },
+    intent,
+  );
+}
+
+export async function attachEssayImage(
+  actor: AppUser,
+  examId: string,
+  attemptId: string,
+  questionId: string,
+  upload: EssayImageUploadReference,
+): Promise<StudentExamAttemptMutationResult> {
+  const { attempt, exam } = await getEssayImageAttemptContext(
+    actor,
+    examId,
+    attemptId,
+    questionId,
+  );
+  const structure = exam.structureSnapshot;
+
+  if (!structure) {
+    throw new EssayImageQuestionNotFoundError();
+  }
+
+  const currentAnswer = getEssayImageAnswer(
+    attempt,
+    structure,
+    questionId,
+  ).answer;
+
+  if (
+    currentAnswer.images.some((image) => image.publicId === upload.publicId)
+  ) {
+    throw new EssayImageAlreadyAttachedError();
+  }
+  if (currentAnswer.images.length >= ESSAY_IMAGE_MAX_COUNT) {
+    throw new EssayImageLimitError();
+  }
+
+  const image = await verifyEssayImageAsset(upload, {
+    studentId: actor.id,
+    attemptId,
+    questionId,
+  });
+  let currentAttempt = attempt;
+
+  for (let retry = 0; retry < ESSAY_IMAGE_MUTATION_MAX_RETRIES; retry += 1) {
+    const mutationNow = new Date();
+
+    if (!isValidActiveAttempt(currentAttempt, mutationNow)) {
+      throw new ExamAttemptLockedError();
+    }
+
+    const answers = withAttachedEssayImage(
+      currentAttempt,
+      structure,
+      questionId,
+      image,
+    );
+    const savedAttempt = await attachEssayImageToOwnedActiveExamAttempt({
+      attemptId,
+      examId,
+      studentId: actor.id,
+      answers,
+      expectedAnswerRevision: currentAttempt.answerRevision,
+      now: mutationNow,
+    });
+
+    if (savedAttempt) {
+      return toAttemptMutationResult(savedAttempt, mutationNow, structure);
+    }
+
+    currentAttempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  }
+
+  if (!isValidActiveAttempt(currentAttempt, new Date())) {
+    throw new ExamAttemptLockedError();
+  }
+
+  throw new ExamAttemptStateConflictError();
+}
+
+export async function removeEssayImage(
+  actor: AppUser,
+  examId: string,
+  attemptId: string,
+  questionId: string,
+  publicId: string,
+): Promise<StudentExamAttemptMutationResult> {
+  const { attempt, exam } = await getEssayImageAttemptContext(
+    actor,
+    examId,
+    attemptId,
+    questionId,
+  );
+  const structure = exam.structureSnapshot;
+
+  if (!structure) {
+    throw new EssayImageQuestionNotFoundError();
+  }
+
+  let currentAttempt = attempt;
+
+  for (let retry = 0; retry < ESSAY_IMAGE_MUTATION_MAX_RETRIES; retry += 1) {
+    const mutationNow = new Date();
+
+    if (!isValidActiveAttempt(currentAttempt, mutationNow)) {
+      throw new ExamAttemptLockedError();
+    }
+
+    const { answers, removedImage } = withoutEssayImage(
+      currentAttempt,
+      structure,
+      questionId,
+      publicId,
+    );
+    const savedAttempt = await removeEssayImageFromOwnedActiveExamAttempt({
+      attemptId,
+      examId,
+      studentId: actor.id,
+      answers,
+      expectedAnswerRevision: currentAttempt.answerRevision,
+      now: mutationNow,
+    });
+
+    if (savedAttempt) {
+      try {
+        await deleteEssayImage(removedImage.publicId);
+      } catch (error) {
+        console.error("Could not delete a Cloudinary essay image.", {
+          publicId: removedImage.publicId,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+
+      return toAttemptMutationResult(savedAttempt, mutationNow, structure);
+    }
+
+    currentAttempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  }
+
+  if (!isValidActiveAttempt(currentAttempt, new Date())) {
     throw new ExamAttemptLockedError();
   }
 

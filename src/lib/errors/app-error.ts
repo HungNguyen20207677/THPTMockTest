@@ -97,6 +97,16 @@ export class EssayImageExamCreationUnsupportedError extends AppError {
   }
 }
 
+export class EssayImageExamExecutionUnsupportedError extends AppError {
+  constructor() {
+    super(
+      "Đề thi có câu hỏi ESSAY_IMAGE chưa thể được thực hiện ở giai đoạn này.",
+      "ESSAY_IMAGE_EXECUTION_NOT_SUPPORTED",
+      422,
+    );
+  }
+}
+
 export class BuiltInExamStructureTemplateReadOnlyError extends AppError {
   constructor() {
     super(
@@ -239,6 +249,68 @@ export class ExamAttemptResultUnavailableError extends AppError {
       "Lượt làm bài chưa kết thúc nên chưa có kết quả.",
       "EXAM_ATTEMPT_RESULT_UNAVAILABLE",
       409,
+    );
+  }
+}
+
+export class EssayImageQuestionNotFoundError extends AppError {
+  constructor() {
+    super(
+      "Không tìm thấy câu hỏi tự luận ảnh trong lượt làm bài.",
+      "ESSAY_IMAGE_QUESTION_NOT_FOUND",
+      404,
+    );
+  }
+}
+
+export class EssayImageValidationError extends AppError {
+  constructor(message = "Thông tin ảnh tải lên không hợp lệ.") {
+    super(message, "INVALID_ESSAY_IMAGE", 400);
+  }
+}
+
+export class EssayImageUploadError extends AppError {
+  constructor() {
+    super(
+      "Không thể xác minh ảnh đã tải lên. Vui lòng thử lại.",
+      "ESSAY_IMAGE_UPLOAD_FAILED",
+      502,
+    );
+  }
+}
+
+export class EssayImageTooLargeError extends AppError {
+  constructor() {
+    super("Mỗi ảnh không được vượt quá 10 MB.", "ESSAY_IMAGE_TOO_LARGE", 413);
+  }
+}
+
+export class EssayImageLimitError extends AppError {
+  constructor() {
+    super(
+      "Mỗi câu tự luận chỉ được đính kèm tối đa 5 ảnh.",
+      "ESSAY_IMAGE_LIMIT_REACHED",
+      409,
+    );
+  }
+}
+
+export class EssayImageAlreadyAttachedError extends AppError {
+  constructor() {
+    super(
+      "Ảnh này đã được gắn với câu trả lời.",
+      "ESSAY_IMAGE_ALREADY_ATTACHED",
+      409,
+    );
+  }
+}
+
+export class EssayImageNotFoundError extends AppError {
+  constructor() {
+    super(
+      "Không tìm thấy ảnh trong câu trả lời.",
+      "ESSAY_IMAGE_NOT_FOUND",
+      404,
     );
   }
 }

@@ -26,3 +26,19 @@ export const STUDENT_EXAM_STATES = [
   STUDENT_EXAM_STATE.NOT_STARTED,
   STUDENT_EXAM_STATE.COMPLETED,
 ] as const;
+
+export const ESSAY_IMAGE_MAX_COUNT = 5;
+export const ESSAY_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const ESSAY_IMAGE_ALLOWED_FORMATS = [
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+] as const;
+export const ESSAY_IMAGE_ALLOWED_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+export const ESSAY_IMAGE_CLOUDINARY_FOLDER = "thpt-mock-test/essay-images";
+export const ESSAY_IMAGE_UPLOAD_SIGNATURE_MAX_AGE_SECONDS = 600;

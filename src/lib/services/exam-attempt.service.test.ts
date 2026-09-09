@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  attachEssayImageToOwnedActiveExamAttempt: vi.fn(),
   autoSubmitExpiredExamAttemptRecord: vi.fn(),
   createExamAttemptRecord: vi.fn(),
   findActiveExamAttemptRecord: vi.fn(),
@@ -8,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   findLatestExamAttemptRecord: vi.fn(),
   findOwnedExamAttemptRecord: vi.fn(),
   listAllExamAttemptRecordsForStudent: vi.fn(),
+  removeEssayImageFromOwnedActiveExamAttempt: vi.fn(),
   saveOwnedActiveExamAttemptAnswers: vi.fn(),
   setOwnedTerminalExamAttemptGradingForRevision: vi.fn(),
   submitOwnedActiveExamAttempt: vi.fn(),
@@ -21,11 +23,16 @@ const mocks = vi.hoisted(() => ({
   reserveExamForAttemptCreation: vi.fn(),
   reserveExamForAttemptGrading: vi.fn(),
   reserveStudentForAttemptCreation: vi.fn(),
+  createEssayImageUploadTicket: vi.fn(),
+  deleteEssayImage: vi.fn(),
+  verifyEssayImageAsset: vi.fn(),
   transactionSession: { id: "transaction-session" },
   withMongoTransaction: vi.fn(),
 }));
 
 vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
+  attachEssayImageToOwnedActiveExamAttempt:
+    mocks.attachEssayImageToOwnedActiveExamAttempt,
   autoSubmitExpiredExamAttemptRecord: mocks.autoSubmitExpiredExamAttemptRecord,
   createExamAttemptRecord: mocks.createExamAttemptRecord,
   findActiveExamAttemptRecord: mocks.findActiveExamAttemptRecord,
@@ -34,10 +41,18 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   findOwnedExamAttemptRecord: mocks.findOwnedExamAttemptRecord,
   listAllExamAttemptRecordsForStudent:
     mocks.listAllExamAttemptRecordsForStudent,
+  removeEssayImageFromOwnedActiveExamAttempt:
+    mocks.removeEssayImageFromOwnedActiveExamAttempt,
   saveOwnedActiveExamAttemptAnswers: mocks.saveOwnedActiveExamAttemptAnswers,
   setOwnedTerminalExamAttemptGradingForRevision:
     mocks.setOwnedTerminalExamAttemptGradingForRevision,
   submitOwnedActiveExamAttempt: mocks.submitOwnedActiveExamAttempt,
+}));
+
+vi.mock("@/lib/cloudinary/essay-image", () => ({
+  createEssayImageUploadTicket: mocks.createEssayImageUploadTicket,
+  deleteEssayImage: mocks.deleteEssayImage,
+  verifyEssayImageAsset: mocks.verifyEssayImageAsset,
 }));
 
 vi.mock("@/lib/db/dao/exam.dao", () => ({
@@ -85,16 +100,24 @@ import {
   gradeDynamicAttemptAnswers,
 } from "@/lib/exam/grading";
 import {
+  attachEssayImage,
   finalizeExpiredExamAttempt,
   getOwnedExamAttemptContext,
   getStudentExamAttemptResult,
   listStudentExams,
+  issueEssayImageUploadTicket,
+  removeEssayImage,
   saveExamAttemptAnswers,
   startOrResumeExamAttempt,
   submitExamAttempt,
 } from "@/lib/services/exam-attempt.service";
 import type { AppUser } from "@/types/user";
 import type { DynamicExamAnswerKey, ExamAnswerKey } from "@/types/exam";
+import type {
+  EssayImage,
+  EssayImageUploadReference,
+  EssayImageUploadTicket,
+} from "@/types/exam-attempt";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 const serverNow = new Date("2026-08-11T03:00:00.000Z");
@@ -209,6 +232,59 @@ const dynamicQuestionOrder = [
   "question-short-closing",
 ];
 
+const essayStructure: ExamStructureSnapshot = {
+  sections: [
+    {
+      id: "essay-section",
+      title: "Essay section",
+      questions: [
+        {
+          id: "essay-question",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          maxScoreHundredths: 500,
+        },
+        {
+          id: "essay-choice",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          maxScoreHundredths: 500,
+        },
+      ],
+    },
+  ],
+};
+
+const essayImageUpload: EssayImageUploadReference = {
+  publicId: "thpt-mock-test/essay-images/scope/image-id",
+  originalFilename: "answer.jpg",
+  timestamp: Math.floor(serverNow.getTime() / 1000),
+  signature: "a".repeat(40),
+};
+
+const verifiedEssayImage: EssayImage = {
+  publicId: essayImageUpload.publicId,
+  secureUrl:
+    "https://res.cloudinary.com/test/image/upload/v1/scope/image-id.jpg",
+  originalFilename: "answer.jpg",
+  bytes: 4096,
+  format: "jpg",
+  width: 1200,
+  height: 800,
+};
+
+const essayImageUploadTicket: EssayImageUploadTicket = {
+  uploadUrl: "https://api.cloudinary.com/v1_1/test/image/upload",
+  apiKey: "api-key",
+  signature: essayImageUpload.signature,
+  fields: {
+    timestamp: String(essayImageUpload.timestamp),
+    public_id: essayImageUpload.publicId,
+    overwrite: "0",
+    allowed_formats: "jpg,jpeg,png,webp",
+    filename_override: essayImageUpload.originalFilename,
+    type: "upload",
+  },
+};
+
 function createDynamicAnswerKey(): DynamicExamAnswerKey {
   return {
     answersByQuestionId: {
@@ -273,6 +349,22 @@ function createAttempt(
   };
 }
 
+function createEssayAttempt(
+  images: EssayImage[] = [],
+  overrides: Partial<ExamAttemptPersistenceRecord> = {},
+): ExamAttemptPersistenceRecord {
+  const answers = {
+    answersByQuestionId: {
+      "essay-question": {
+        type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        images,
+      },
+      "essay-choice": null,
+    },
+  };
+  return createAttempt({ answers, ...overrides });
+}
+
 function mockAttemptCreation(): void {
   mocks.createExamAttemptRecord.mockImplementation(
     (input: CreateExamAttemptRecordInput) =>
@@ -319,10 +411,15 @@ describe("ExamAttempt service", () => {
         operation(mocks.transactionSession),
     );
     mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(null);
+    mocks.attachEssayImageToOwnedActiveExamAttempt.mockResolvedValue(null);
+    mocks.removeEssayImageFromOwnedActiveExamAttempt.mockResolvedValue(null);
     mocks.setOwnedTerminalExamAttemptGradingForRevision.mockResolvedValue(null);
     mocks.listPublishedStudentExamRecords.mockResolvedValue([]);
     mocks.listStudentExamRecordsByIds.mockResolvedValue([]);
     mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([]);
+    mocks.createEssayImageUploadTicket.mockReturnValue(essayImageUploadTicket);
+    mocks.deleteEssayImage.mockResolvedValue(undefined);
+    mocks.verifyEssayImageAsset.mockResolvedValue(verifiedEssayImage);
     mockAttemptCreation();
   });
 
@@ -488,6 +585,29 @@ describe("ExamAttempt service", () => {
     });
     expect(mocks.findLatestExamAttemptRecord).not.toHaveBeenCalled();
     expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
+  it("keeps ESSAY_IMAGE Exam execution disabled", async () => {
+    const essayExam = createStudentExam({ structureSnapshot: essayStructure });
+    mocks.findStudentExamRecordById.mockResolvedValue(essayExam);
+
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({
+      code: "ESSAY_IMAGE_EXECUTION_NOT_SUPPORTED",
+      statusCode: 422,
+    });
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+
+    const activeAttempt = createEssayAttempt();
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+
+    await expect(
+      getOwnedExamAttemptContext(student, "exam-id", activeAttempt.id),
+    ).rejects.toMatchObject({
+      code: "ESSAY_IMAGE_EXECUTION_NOT_SUPPORTED",
+      statusCode: 422,
+    });
   });
 
   it("recovers a duplicate-key start race to the concurrent active attempt", async () => {
@@ -866,6 +986,392 @@ describe("ExamAttempt service", () => {
       mocks.transactionSession,
     );
     expect(mocks.saveOwnedActiveExamAttemptAnswers).not.toHaveBeenCalled();
+  });
+
+  it("issues an essay image upload ticket only for an owned active essay question", async () => {
+    const activeAttempt = createEssayAttempt();
+    const intent = {
+      name: "answer.jpg",
+      type: "image/jpeg" as const,
+      size: 4096,
+    };
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ structureSnapshot: essayStructure }),
+    );
+
+    await expect(
+      issueEssayImageUploadTicket(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        "essay-question",
+        intent,
+      ),
+    ).resolves.toEqual(essayImageUploadTicket);
+    expect(mocks.createEssayImageUploadTicket).toHaveBeenCalledWith(
+      {
+        studentId: student.id,
+        attemptId: activeAttempt.id,
+        questionId: "essay-question",
+      },
+      intent,
+    );
+
+    await expect(
+      issueEssayImageUploadTicket(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        "essay-choice",
+        intent,
+      ),
+    ).rejects.toMatchObject({
+      code: "ESSAY_IMAGE_QUESTION_NOT_FOUND",
+      statusCode: 404,
+    });
+  });
+
+  it("restricts essay image operations to students", async () => {
+    const admin = { ...student, role: USER_ROLE.ADMIN };
+
+    await expect(
+      issueEssayImageUploadTicket(
+        admin,
+        "exam-id",
+        "attempt-id",
+        "essay-question",
+        { name: "answer.jpg", type: "image/jpeg", size: 4096 },
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(mocks.findOwnedExamAttemptRecord).not.toHaveBeenCalled();
+    expect(mocks.createEssayImageUploadTicket).not.toHaveBeenCalled();
+  });
+
+  it("prevents IDOR for essay image ticket, attachment, and removal", async () => {
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(null);
+    const operations = [
+      () =>
+        issueEssayImageUploadTicket(
+          student,
+          "exam-id",
+          "other-attempt",
+          "essay-question",
+          { name: "answer.jpg", type: "image/jpeg", size: 4096 },
+        ),
+      () =>
+        attachEssayImage(
+          student,
+          "exam-id",
+          "other-attempt",
+          "essay-question",
+          essayImageUpload,
+        ),
+      () =>
+        removeEssayImage(
+          student,
+          "exam-id",
+          "other-attempt",
+          "essay-question",
+          essayImageUpload.publicId,
+        ),
+    ];
+
+    for (const operation of operations) {
+      await expect(operation()).rejects.toMatchObject({
+        code: "EXAM_ATTEMPT_NOT_FOUND",
+        statusCode: 404,
+      });
+    }
+    expect(mocks.verifyEssayImageAsset).not.toHaveBeenCalled();
+    expect(mocks.deleteEssayImage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "terminal",
+      createEssayAttempt([], {
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        submittedAt: serverNow,
+      }),
+    ],
+    [
+      "expired",
+      createEssayAttempt([], {
+        expiresAt: new Date("2026-08-11T02:59:59.000Z"),
+      }),
+    ],
+  ])(
+    "rejects essay image mutation for a %s attempt",
+    async (_label, attempt) => {
+      mocks.findOwnedExamAttemptRecord.mockResolvedValue(attempt);
+
+      await expect(
+        attachEssayImage(
+          student,
+          "exam-id",
+          attempt.id,
+          "essay-question",
+          essayImageUpload,
+        ),
+      ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_LOCKED", statusCode: 409 });
+      expect(mocks.findStudentExamRecordById).not.toHaveBeenCalled();
+      expect(mocks.verifyEssayImageAsset).not.toHaveBeenCalled();
+      expect(
+        mocks.attachEssayImageToOwnedActiveExamAttempt,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it("attaches a server-verified image to only the targeted essay answer", async () => {
+    const activeAttempt = createEssayAttempt();
+    const savedAttempt = createEssayAttempt([verifiedEssayImage], {
+      answerRevision: 1,
+      lastSavedAt: serverNow,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ structureSnapshot: essayStructure }),
+    );
+    mocks.attachEssayImageToOwnedActiveExamAttempt.mockResolvedValue(
+      savedAttempt,
+    );
+
+    const result = await attachEssayImage(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      "essay-question",
+      essayImageUpload,
+    );
+
+    expect(mocks.verifyEssayImageAsset).toHaveBeenCalledWith(essayImageUpload, {
+      studentId: student.id,
+      attemptId: activeAttempt.id,
+      questionId: "essay-question",
+    });
+    expect(mocks.attachEssayImageToOwnedActiveExamAttempt).toHaveBeenCalledWith(
+      {
+        attemptId: activeAttempt.id,
+        examId: "exam-id",
+        studentId: student.id,
+        answers: savedAttempt.answers,
+        expectedAnswerRevision: 0,
+        now: serverNow,
+      },
+    );
+    expect(result.attempt.answers).toEqual(savedAttempt.answers);
+  });
+
+  it("rejects duplicate and sixth essay image attachments", async () => {
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ structureSnapshot: essayStructure }),
+    );
+    mocks.findOwnedExamAttemptRecord.mockResolvedValueOnce(
+      createEssayAttempt([verifiedEssayImage]),
+    );
+
+    await expect(
+      attachEssayImage(
+        student,
+        "exam-id",
+        "attempt-id",
+        "essay-question",
+        essayImageUpload,
+      ),
+    ).rejects.toMatchObject({ code: "ESSAY_IMAGE_ALREADY_ATTACHED" });
+
+    const fiveImages = Array.from({ length: 5 }, (_, index) => ({
+      ...verifiedEssayImage,
+      publicId: `image-${index}`,
+    }));
+    mocks.findOwnedExamAttemptRecord.mockResolvedValueOnce(
+      createEssayAttempt(fiveImages),
+    );
+
+    await expect(
+      attachEssayImage(
+        student,
+        "exam-id",
+        "attempt-id",
+        "essay-question",
+        essayImageUpload,
+      ),
+    ).rejects.toMatchObject({ code: "ESSAY_IMAGE_LIMIT_REACHED" });
+    expect(mocks.verifyEssayImageAsset).not.toHaveBeenCalled();
+
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(
+      createEssayAttempt(fiveImages),
+    );
+    await expect(
+      issueEssayImageUploadTicket(
+        student,
+        "exam-id",
+        "attempt-id",
+        "essay-question",
+        { name: "sixth.jpg", type: "image/jpeg", size: 4096 },
+      ),
+    ).rejects.toMatchObject({ code: "ESSAY_IMAGE_LIMIT_REACHED" });
+    expect(mocks.createEssayImageUploadTicket).not.toHaveBeenCalled();
+  });
+
+  it("rejects an upload when Cloudinary verification fails", async () => {
+    const activeAttempt = createEssayAttempt();
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ structureSnapshot: essayStructure }),
+    );
+    mocks.verifyEssayImageAsset.mockRejectedValue({
+      code: "INVALID_ESSAY_IMAGE",
+      statusCode: 400,
+    });
+
+    await expect(
+      attachEssayImage(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        "essay-question",
+        essayImageUpload,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ESSAY_IMAGE", statusCode: 400 });
+    expect(
+      mocks.attachEssayImageToOwnedActiveExamAttempt,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("preserves persisted essay images during a stale objective autosave", async () => {
+    const activeAttempt = createEssayAttempt([verifiedEssayImage]);
+    const staleAnswers = {
+      answersByQuestionId: {
+        "essay-question": {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          images: [],
+        },
+        "essay-choice": "B" as const,
+      },
+    };
+    const savedAnswers = {
+      answersByQuestionId: {
+        "essay-question": {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          images: [verifiedEssayImage],
+        },
+        "essay-choice": "B" as const,
+      },
+    };
+    const savedAttempt = createAttempt({
+      answers: savedAnswers,
+      answerRevision: 2,
+      lastSavedAt: serverNow,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ structureSnapshot: essayStructure }),
+    );
+    mocks.saveOwnedActiveExamAttemptAnswers.mockResolvedValue(savedAttempt);
+
+    const result = await saveExamAttemptAnswers(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      staleAnswers,
+    );
+
+    expect(mocks.saveOwnedActiveExamAttemptAnswers).toHaveBeenCalledWith({
+      attemptId: activeAttempt.id,
+      examId: "exam-id",
+      studentId: student.id,
+      answers: staleAnswers,
+      now: serverNow,
+      essayQuestionIds: ["essay-question"],
+    });
+    expect(result.attempt.answers).toEqual(savedAnswers);
+  });
+
+  it("persists essay image removal before Cloudinary cleanup", async () => {
+    const activeAttempt = createEssayAttempt([verifiedEssayImage]);
+    const savedAttempt = createEssayAttempt([], {
+      answerRevision: 1,
+      lastSavedAt: serverNow,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ structureSnapshot: essayStructure }),
+    );
+    mocks.removeEssayImageFromOwnedActiveExamAttempt.mockResolvedValue(
+      savedAttempt,
+    );
+
+    const result = await removeEssayImage(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      "essay-question",
+      verifiedEssayImage.publicId,
+    );
+
+    expect(
+      mocks.removeEssayImageFromOwnedActiveExamAttempt,
+    ).toHaveBeenCalledWith({
+      attemptId: activeAttempt.id,
+      examId: "exam-id",
+      studentId: student.id,
+      answers: savedAttempt.answers,
+      expectedAnswerRevision: 0,
+      now: serverNow,
+    });
+    expect(
+      mocks.removeEssayImageFromOwnedActiveExamAttempt.mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(mocks.deleteEssayImage.mock.invocationCallOrder[0]);
+    expect(mocks.deleteEssayImage).toHaveBeenCalledWith(
+      verifiedEssayImage.publicId,
+    );
+    expect(result.attempt.answers).toEqual(savedAttempt.answers);
+  });
+
+  it("does not undo a persisted removal when Cloudinary cleanup fails", async () => {
+    const activeAttempt = createEssayAttempt([verifiedEssayImage]);
+    const savedAttempt = createEssayAttempt([], {
+      answerRevision: 1,
+      lastSavedAt: serverNow,
+    });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ structureSnapshot: essayStructure }),
+    );
+    mocks.removeEssayImageFromOwnedActiveExamAttempt.mockResolvedValue(
+      savedAttempt,
+    );
+    mocks.deleteEssayImage.mockRejectedValue(new Error("Cloudinary secret"));
+
+    await expect(
+      removeEssayImage(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        "essay-question",
+        verifiedEssayImage.publicId,
+      ),
+    ).resolves.toMatchObject({ attempt: { answers: savedAttempt.answers } });
+    expect(
+      mocks.removeEssayImageFromOwnedActiveExamAttempt,
+    ).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Could not delete a Cloudinary essay image.",
+      {
+        publicId: verifiedEssayImage.publicId,
+        errorName: "Error",
+      },
+    );
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain(
+      "Cloudinary secret",
+    );
+    consoleError.mockRestore();
   });
 
   it("atomically submits the full current payload even with unanswered questions", async () => {

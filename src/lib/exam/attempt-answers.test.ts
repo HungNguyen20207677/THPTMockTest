@@ -11,7 +11,9 @@ import {
   attemptAnswersRequestSchema,
   attemptAnswersSchema,
   createAttemptAnswersSchemaForStructure,
+  examAttemptAnswersSchema,
 } from "@/lib/validations/attempt-answers";
+import type { EssayImage } from "@/types/exam-attempt";
 import { examStructureSnapshotSchema } from "@/lib/validations/exam-structure-template";
 
 const customStructure = examStructureSnapshotSchema.parse({
@@ -51,6 +53,34 @@ const customStructure = examStructureSnapshotSchema.parse({
     },
   ],
 });
+
+const essayStructure = examStructureSnapshotSchema.parse({
+  sections: [
+    {
+      id: "essay",
+      title: "Essay",
+      questions: [
+        {
+          id: "essay-1",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          maxScoreHundredths: 1000,
+        },
+      ],
+    },
+  ],
+});
+
+function createEssayImage(index: number): EssayImage {
+  return {
+    publicId: `thpt-mock-test/essay-images/scope/image-${index}`,
+    secureUrl: `https://res.cloudinary.com/test/image/upload/v1/image-${index}.jpg`,
+    originalFilename: `answer-${index}.jpg`,
+    bytes: 1024 + index,
+    format: "jpg",
+    width: 1200,
+    height: 800,
+  };
+}
 
 describe("attempt answers", () => {
   it("creates an empty fixed 12 + 4 + 6 answer structure", () => {
@@ -273,5 +303,88 @@ describe("attempt answers", () => {
     ]) {
       expect(schema.safeParse({ answersByQuestionId }).success).toBe(false);
     }
+  });
+
+  it("validates an ordered ESSAY_IMAGE answer against its snapshot question", () => {
+    const schema = createAttemptAnswersSchemaForStructure(essayStructure);
+    const firstImage = createEssayImage(1);
+    const secondImage = createEssayImage(2);
+    const answers = {
+      answersByQuestionId: {
+        "essay-1": {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          images: [firstImage, secondImage],
+        },
+      },
+    };
+
+    expect(schema.parse(answers)).toEqual(answers);
+  });
+
+  it("rejects ESSAY_IMAGE answers for wrong, missing, or objective questions", () => {
+    const essayAnswer = {
+      type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+      images: [createEssayImage(1)],
+    };
+
+    expect(
+      createAttemptAnswersSchemaForStructure(essayStructure).safeParse({
+        answersByQuestionId: { "outside-snapshot": essayAnswer },
+      }).success,
+    ).toBe(false);
+    expect(
+      createAttemptAnswersSchemaForStructure(customStructure).safeParse({
+        answersByQuestionId: {
+          ...createEmptyAttemptAnswers(customStructure).answersByQuestionId,
+          "choice-1": essayAnswer,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("limits ESSAY_IMAGE answers to five unique Cloudinary resources", () => {
+    const schema = createAttemptAnswersSchemaForStructure(essayStructure);
+    const fiveImages = Array.from({ length: 5 }, (_, index) =>
+      createEssayImage(index),
+    );
+
+    expect(
+      schema.safeParse({
+        answersByQuestionId: {
+          "essay-1": { type: "ESSAY_IMAGE", images: fiveImages },
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      schema.safeParse({
+        answersByQuestionId: {
+          "essay-1": {
+            type: "ESSAY_IMAGE",
+            images: [...fiveImages, createEssayImage(6)],
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        answersByQuestionId: {
+          "essay-1": {
+            type: "ESSAY_IMAGE",
+            images: [fiveImages[0], fiveImages[0]],
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps legacy and dynamic objective answer formats compatible", () => {
+    expect(
+      examAttemptAnswersSchema.safeParse(createEmptyAttemptAnswers()).success,
+    ).toBe(true);
+    expect(
+      createAttemptAnswersSchemaForStructure(customStructure).safeParse(
+        createEmptyAttemptAnswers(customStructure),
+      ).success,
+    ).toBe(true);
   });
 });

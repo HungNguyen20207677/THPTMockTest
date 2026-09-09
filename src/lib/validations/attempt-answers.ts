@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ESSAY_IMAGE_MAX_COUNT } from "@/lib/constants/exam-attempt";
 import { EXAM_STRUCTURE, PART_ONE_CHOICES } from "@/lib/constants/exam";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { shortAnswerSlotsSchema } from "@/lib/validations/exam";
@@ -16,6 +17,36 @@ const attemptPartTwoAnswerSchema = z.strictObject({
   c: z.boolean().nullable(),
   d: z.boolean().nullable(),
 });
+
+export const essayImageSchema = z.strictObject({
+  publicId: z.string().trim().min(1).max(255),
+  secureUrl: z.url().refine((url) => url.startsWith("https://")),
+  originalFilename: z.string().trim().min(1).max(255),
+  bytes: z.number().int().positive(),
+  format: z.enum(["jpg", "jpeg", "png", "webp"]),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+export const essayImageAnswerSchema = z
+  .strictObject({
+    type: z.literal(EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE),
+    images: z.array(essayImageSchema).max(ESSAY_IMAGE_MAX_COUNT),
+  })
+  .superRefine((answer, context) => {
+    const publicIds = new Set<string>();
+
+    answer.images.forEach((image, index) => {
+      if (publicIds.has(image.publicId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Một ảnh không thể được gắn nhiều lần cho cùng câu hỏi.",
+          path: ["images", index, "publicId"],
+        });
+      }
+      publicIds.add(image.publicId);
+    });
+  });
 
 export const attemptAnswersSchema: z.ZodType<AttemptAnswers> = z.strictObject({
   partOne: z
@@ -37,6 +68,7 @@ export const dynamicAttemptAnswersSchema: z.ZodType<DynamicAttemptAnswers> =
         z.enum(PART_ONE_CHOICES).nullable(),
         attemptPartTwoAnswerSchema,
         shortAnswerSlotsSchema,
+        essayImageAnswerSchema,
       ]),
     ),
   });
@@ -95,7 +127,9 @@ export function createAttemptAnswersSchemaForStructure(
             ? attemptPartTwoAnswerSchema
             : question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER
               ? shortAnswerSlotsSchema
-              : null;
+              : question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE
+                ? essayImageAnswerSchema
+                : null;
 
       if (!schema || !schema.safeParse(answer).success) {
         context.addIssue({

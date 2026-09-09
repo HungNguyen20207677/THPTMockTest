@@ -1,4 +1,5 @@
 import type {
+  ESSAY_IMAGE_ALLOWED_FORMATS,
   EXAM_ATTEMPT_STATUS,
   STUDENT_EXAM_STATE,
 } from "@/lib/constants/exam-attempt";
@@ -28,14 +29,58 @@ export interface AttemptAnswers {
   partThree: ShortAnswerSlots[];
 }
 
+export type EssayImageFormat = (typeof ESSAY_IMAGE_ALLOWED_FORMATS)[number];
+
+export interface EssayImage {
+  publicId: string;
+  secureUrl: string;
+  originalFilename: string;
+  bytes: number;
+  format: EssayImageFormat;
+  width: number;
+  height: number;
+}
+
+export interface EssayImageAnswer {
+  type: "ESSAY_IMAGE";
+  images: EssayImage[];
+}
+
 export type DynamicAttemptAnswer =
-  PartOneAnswer | null | AttemptPartTwoAnswer | ShortAnswerSlots;
+  | PartOneAnswer
+  | null
+  | AttemptPartTwoAnswer
+  | ShortAnswerSlots
+  | EssayImageAnswer;
 
 export interface DynamicAttemptAnswers {
   answersByQuestionId: Record<string, DynamicAttemptAnswer>;
 }
 
 export type ExamAttemptAnswers = AttemptAnswers | DynamicAttemptAnswers;
+
+export interface EssayImageSignedUploadFields {
+  timestamp: string;
+  public_id: string;
+  overwrite: "0";
+  allowed_formats: "jpg,jpeg,png,webp";
+  filename_override: string;
+  type: "upload";
+}
+
+export interface EssayImageUploadTicket {
+  uploadUrl: string;
+  apiKey: string;
+  signature: string;
+  fields: EssayImageSignedUploadFields;
+}
+
+export interface EssayImageUploadReference {
+  publicId: string;
+  originalFilename: string;
+  timestamp: number;
+  signature: string;
+}
 
 export interface AttemptAnswerProgress {
   answeredQuestions: number;

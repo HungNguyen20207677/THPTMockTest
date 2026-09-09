@@ -9,7 +9,10 @@ import {
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { ExamAttemptModel } from "@/lib/db/models/exam-attempt.model";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
-import { examAttemptAnswersSchema } from "@/lib/validations/attempt-answers";
+import {
+  examAttemptAnswersSchema,
+  isDynamicAttemptAnswers,
+} from "@/lib/validations/attempt-answers";
 import { examAttemptGradingSnapshotSchema } from "@/lib/validations/attempt-grading";
 import type {
   ExamAttemptStatus,
@@ -51,6 +54,16 @@ export interface MutateOwnedExamAttemptInput {
   examId: string;
   studentId: string;
   answers: ExamAttemptAnswers;
+  now: Date;
+  essayQuestionIds?: string[];
+}
+
+export interface MutateOwnedEssayImageInput {
+  attemptId: string;
+  examId: string;
+  studentId: string;
+  answers: ExamAttemptAnswers;
+  expectedAnswerRevision: number;
   now: Date;
 }
 
@@ -112,6 +125,16 @@ function getAutoSubmitUpdate(now: Date, grading: ExamAttemptGradingSnapshot) {
       },
     },
   ];
+}
+
+function getExpectedAnswerRevisionFilter(
+  expectedAnswerRevision: number,
+): Record<string, unknown> {
+  return expectedAnswerRevision === 0
+    ? {
+        $or: [{ answerRevision: 0 }, { answerRevision: { $exists: false } }],
+      }
+    : { answerRevision: expectedAnswerRevision };
 }
 
 async function prepareExamAttemptModel(): Promise<void> {
@@ -280,6 +303,55 @@ export async function saveOwnedActiveExamAttemptAnswers(
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
 
+  const essayQuestionIds = new Set(input.essayQuestionIds ?? []);
+  const dynamicAnswers = isDynamicAttemptAnswers(input.answers)
+    ? input.answers
+    : null;
+  const shouldMergeObjectiveAnswers =
+    essayQuestionIds.size > 0 && dynamicAnswers !== null;
+  const update = shouldMergeObjectiveAnswers
+    ? [
+        {
+          $set: {
+            answers: {
+              $mergeObjects: [
+                { $ifNull: ["$answers", {}] },
+                {
+                  answersByQuestionId: {
+                    $mergeObjects: [
+                      {
+                        $ifNull: ["$answers.answersByQuestionId", {}],
+                      },
+                      {
+                        $literal: Object.fromEntries(
+                          Object.entries(
+                            dynamicAnswers?.answersByQuestionId ?? {},
+                          ).filter(
+                            ([questionId]) => !essayQuestionIds.has(questionId),
+                          ),
+                        ),
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            lastSavedAt: input.now,
+            answerRevision: {
+              $add: [{ $ifNull: ["$answerRevision", 0] }, 1],
+            },
+            updatedAt: input.now,
+          },
+        },
+      ]
+    : {
+        $set: {
+          answers: input.answers,
+          lastSavedAt: input.now,
+        },
+        $inc: { answerRevision: 1 },
+      };
+
   const attempt = await ExamAttemptModel.findOneAndUpdate(
     {
       _id: input.attemptId,
@@ -287,6 +359,32 @@ export async function saveOwnedActiveExamAttemptAnswers(
       studentId: input.studentId,
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
       expiresAt: { $gt: input.now },
+    },
+    update,
+    {
+      returnDocument: "after",
+      ...(shouldMergeObjectiveAnswers ? {} : { runValidators: true }),
+    },
+  )
+    .lean<ExamAttemptDocumentData>()
+    .exec();
+
+  return attempt ? toExamAttemptRecord(attempt) : null;
+}
+
+async function mutateOwnedActiveEssayImageAnswer(
+  input: MutateOwnedEssayImageInput,
+): Promise<ExamAttemptPersistenceRecord | null> {
+  await prepareExamAttemptModel();
+
+  const attempt = await ExamAttemptModel.findOneAndUpdate(
+    {
+      _id: input.attemptId,
+      examId: input.examId,
+      studentId: input.studentId,
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      expiresAt: { $gt: input.now },
+      ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
     },
     {
       $set: {
@@ -301,6 +399,18 @@ export async function saveOwnedActiveExamAttemptAnswers(
     .exec();
 
   return attempt ? toExamAttemptRecord(attempt) : null;
+}
+
+export async function attachEssayImageToOwnedActiveExamAttempt(
+  input: MutateOwnedEssayImageInput,
+): Promise<ExamAttemptPersistenceRecord | null> {
+  return mutateOwnedActiveEssayImageAnswer(input);
+}
+
+export async function removeEssayImageFromOwnedActiveExamAttempt(
+  input: MutateOwnedEssayImageInput,
+): Promise<ExamAttemptPersistenceRecord | null> {
+  return mutateOwnedActiveEssayImageAnswer(input);
 }
 
 export async function submitOwnedActiveExamAttempt(
@@ -351,14 +461,7 @@ export async function autoSubmitExpiredExamAttemptRecord(
       _id: attemptId,
       studentId,
       examId,
-      ...(expectedAnswerRevision === 0
-        ? {
-            $or: [
-              { answerRevision: 0 },
-              { answerRevision: { $exists: false } },
-            ],
-          }
-        : { answerRevision: expectedAnswerRevision }),
+      ...getExpectedAnswerRevisionFilter(expectedAnswerRevision),
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
       expiresAt: { $lte: now },
     },

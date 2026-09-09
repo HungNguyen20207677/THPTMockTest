@@ -119,8 +119,23 @@ export function isDynamicQuestionAnswered(
       answer !== undefined &&
       typeof answer === "object" &&
       !Array.isArray(answer) &&
+      !("type" in answer) &&
       countAnsweredPartTwoStatements(answer) ===
         EXAM_STRUCTURE.partTwoStatementsPerQuestion
+    );
+  }
+
+  if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
+    return (
+      answer !== null &&
+      answer !== undefined &&
+      typeof answer === "object" &&
+      !Array.isArray(answer) &&
+      "type" in answer &&
+      answer.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE &&
+      "images" in answer &&
+      Array.isArray(answer.images) &&
+      answer.images.length > 0
     );
   }
 

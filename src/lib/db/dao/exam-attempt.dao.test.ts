@@ -22,8 +22,10 @@ vi.mock("@/lib/db/models/exam-attempt.model", () => ({
 }));
 
 import {
+  attachEssayImageToOwnedActiveExamAttempt,
   deleteExamAttemptRecordsByExamId,
   deleteExamAttemptRecordsByStudentId,
+  removeEssayImageFromOwnedActiveExamAttempt,
   replaceTerminalExamAttemptGradings,
   saveOwnedActiveExamAttemptAnswers,
   submitOwnedActiveExamAttempt,
@@ -136,6 +138,102 @@ describe("ExamAttempt cascade DAO", () => {
       expiresAt: { $gt: now },
     });
     expect(mocks.findOneAndUpdate.mock.calls[1][2]).toMatchObject({ session });
+  });
+
+  it("atomically merges objective autosave fields without replacing essay images", async () => {
+    const now = new Date("2026-08-11T03:00:00.000Z");
+    const staleImage = {
+      publicId: "stale-public-id",
+      secureUrl: "https://res.cloudinary.com/test/image/upload/stale.jpg",
+      originalFilename: "stale.jpg",
+      bytes: 100,
+      format: "jpg" as const,
+      width: 10,
+      height: 10,
+    };
+
+    await saveOwnedActiveExamAttemptAnswers({
+      attemptId: "attempt-id",
+      examId: "exam-id",
+      studentId: "student-id",
+      answers: {
+        answersByQuestionId: {
+          choice: "B",
+          essay: { type: "ESSAY_IMAGE", images: [staleImage] },
+        },
+      },
+      essayQuestionIds: ["essay"],
+      now,
+    });
+
+    const [filter, update, options] = mocks.findOneAndUpdate.mock.calls[0];
+    expect(filter).toMatchObject({
+      _id: "attempt-id",
+      examId: "exam-id",
+      studentId: "student-id",
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      expiresAt: { $gt: now },
+    });
+    expect(update).toEqual([
+      {
+        $set: {
+          answers: {
+            $mergeObjects: [
+              { $ifNull: ["$answers", {}] },
+              {
+                answersByQuestionId: {
+                  $mergeObjects: [
+                    { $ifNull: ["$answers.answersByQuestionId", {}] },
+                    { $literal: { choice: "B" } },
+                  ],
+                },
+              },
+            ],
+          },
+          lastSavedAt: now,
+          answerRevision: {
+            $add: [{ $ifNull: ["$answerRevision", 0] }, 1],
+          },
+          updatedAt: now,
+        },
+      },
+    ]);
+    expect(options).toEqual({ returnDocument: "after" });
+    expect(JSON.stringify(update)).not.toContain("stale-public-id");
+  });
+
+  it("guards dedicated essay image mutations by owner, lifecycle, and revision", async () => {
+    const now = new Date("2026-08-11T03:00:00.000Z");
+    const mutation = {
+      attemptId: "attempt-id",
+      examId: "exam-id",
+      studentId: "student-id",
+      answers: {
+        answersByQuestionId: {
+          essay: { type: "ESSAY_IMAGE" as const, images: [] },
+        },
+      },
+      expectedAnswerRevision: 3,
+      now,
+    };
+
+    await attachEssayImageToOwnedActiveExamAttempt(mutation);
+    await removeEssayImageFromOwnedActiveExamAttempt(mutation);
+
+    for (const call of mocks.findOneAndUpdate.mock.calls) {
+      expect(call[0]).toMatchObject({
+        _id: "attempt-id",
+        examId: "exam-id",
+        studentId: "student-id",
+        answerRevision: 3,
+        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+        expiresAt: { $gt: now },
+      });
+      expect(call[1]).toMatchObject({
+        $set: { answers: mutation.answers, lastSavedAt: now },
+        $inc: { answerRevision: 1 },
+      });
+    }
   });
 
   it("replaces only grading fields for terminal attempts", async () => {
