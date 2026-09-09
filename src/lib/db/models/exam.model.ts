@@ -16,6 +16,7 @@ import { anyExamAnswerKeySchema } from "@/lib/validations/exam";
 import type {
   AnyExamAnswerKey,
   ExamPdf,
+  ExamQuestionTopic,
   ExamQuestionTopicIds,
   ExamSettings,
   ExamStatus,
@@ -24,9 +25,14 @@ import type {
 } from "@/types/exam";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
-type ExamQuestionTopicObjectIds = {
+type LegacyExamQuestionTopicObjectIds = {
   [TSection in keyof ExamQuestionTopicIds]: Types.ObjectId[][];
 };
+
+interface ExamQuestionTopicObjectIds {
+  questionId: string;
+  topicIds: Types.ObjectId[];
+}
 
 export interface ExamRecord {
   title: string;
@@ -40,7 +46,8 @@ export interface ExamRecord {
   pdf: ExamPdf;
   settings: ExamSettings;
   answerKey: AnyExamAnswerKey;
-  questionTopicIds: ExamQuestionTopicObjectIds;
+  questionTopicIds: LegacyExamQuestionTopicObjectIds;
+  questionTopics?: ExamQuestionTopicObjectIds[];
   answerKeyRevision: number;
   attemptsStarted: boolean;
   attemptOperationVersion: number;
@@ -87,7 +94,7 @@ function isValidQuestionTopicSection(
   );
 }
 
-const questionTopicIdsSchema = new Schema<ExamQuestionTopicObjectIds>(
+const questionTopicIdsSchema = new Schema<LegacyExamQuestionTopicObjectIds>(
   {
     partOne: {
       type: [[{ type: Schema.Types.ObjectId, ref: "Topic" }]],
@@ -123,6 +130,23 @@ const questionTopicIdsSchema = new Schema<ExamQuestionTopicObjectIds>(
             EXAM_STRUCTURE.partThreeQuestions,
           ),
         message: "Part III topic assignments must contain exactly 6 questions.",
+      },
+    },
+  },
+  { _id: false },
+);
+
+const questionTopicSchema = new Schema<ExamQuestionTopicObjectIds>(
+  {
+    questionId: { type: String, required: true, trim: true },
+    topicIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: "Topic" }],
+      default: [],
+      validate: {
+        validator: (topicIds: Types.ObjectId[]) =>
+          new Set(topicIds.map((topicId) => topicId.toString())).size ===
+          topicIds.length,
+        message: "Question topic IDs must be unique.",
       },
     },
   },
@@ -202,6 +226,17 @@ const examSchema = new Schema<ExamRecord>(
           () => [],
         ),
       }),
+    },
+    questionTopics: {
+      type: [questionTopicSchema],
+      default: undefined,
+      validate: {
+        validator: (questionTopics: ExamQuestionTopic[]) =>
+          new Set(
+            questionTopics.map((questionTopic) => questionTopic.questionId),
+          ).size === questionTopics.length,
+        message: "Question topic assignments must use unique question IDs.",
+      },
     },
     answerKeyRevision: {
       type: Number,

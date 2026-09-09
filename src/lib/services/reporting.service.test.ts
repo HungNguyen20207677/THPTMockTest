@@ -58,6 +58,7 @@ vi.mock("@/lib/services/exam-attempt.service", () => ({
 
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
 import { EXAM_STATUS } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { USER_ROLE } from "@/lib/constants/roles";
 import type { ExamAttemptPersistenceRecord } from "@/lib/db/dao/exam-attempt.dao";
 import type { ExamReportingPersistenceRecord } from "@/lib/db/dao/exam.dao";
@@ -72,8 +73,12 @@ import {
   getStudentExamAttemptHistory,
   listAdminResults,
 } from "@/lib/services/reporting.service";
-import type { AttemptGradingSnapshot } from "@/types/exam-attempt";
+import type {
+  AttemptGradingSnapshot,
+  DynamicAttemptGradingSnapshot,
+} from "@/types/exam-attempt";
 import type { ExamAnswerKey } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { AppUser } from "@/types/user";
 
 const now = new Date("2026-08-11T03:00:00.000Z");
@@ -88,6 +93,37 @@ const studentActor: AppUser = {
   username: "student",
   fullName: "Nguyen Van An",
   role: USER_ROLE.STUDENT,
+};
+const dynamicStructure: ExamStructureSnapshot = {
+  sections: [
+    {
+      id: "section-z",
+      title: "Section Z",
+      questions: [
+        {
+          id: "choice-question",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          maxScoreHundredths: 150,
+        },
+        {
+          id: "true-false-question",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+          maxScoreHundredths: 300,
+        },
+      ],
+    },
+    {
+      id: "section-a",
+      title: "Section A",
+      questions: [
+        {
+          id: "short-question",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+          maxScoreHundredths: 550,
+        },
+      ],
+    },
+  ],
 };
 
 function createAnswerKey(): ExamAnswerKey {
@@ -147,6 +183,75 @@ function createExam(
     },
     questionTopicIds: createEmptyQuestionTopicIds(),
     ...overrides,
+  };
+}
+
+function createDynamicExam(
+  overrides: Partial<ExamReportingPersistenceRecord> = {},
+): ExamReportingPersistenceRecord {
+  return createExam({
+    answerKey: {
+      answersByQuestionId: {
+        "choice-question": "A",
+        "true-false-question": { a: true, b: true, c: true, d: true },
+        "short-question": "1",
+      },
+    },
+    structureSnapshot: dynamicStructure,
+    questionTopics: dynamicStructure.sections.flatMap((section) =>
+      section.questions.map((question) => ({
+        questionId: question.id,
+        topicIds: [],
+      })),
+    ),
+    ...overrides,
+  });
+}
+
+function createDynamicGrading({
+  answerKeyRevision = 1,
+  choiceCorrect = true,
+  trueFalseScoreHundredths = 150,
+  trueFalseCorrectStatementCount = 3,
+  shortCorrect = false,
+}: {
+  answerKeyRevision?: number;
+  choiceCorrect?: boolean;
+  trueFalseScoreHundredths?: number;
+  trueFalseCorrectStatementCount?: number;
+  shortCorrect?: boolean;
+} = {}): DynamicAttemptGradingSnapshot {
+  const choiceScoreHundredths = choiceCorrect ? 150 : 0;
+  const shortScoreHundredths = shortCorrect ? 550 : 0;
+
+  return {
+    answerKeyRevision,
+    totalScoreHundredths:
+      choiceScoreHundredths + trueFalseScoreHundredths + shortScoreHundredths,
+    sectionScoresHundredths: {
+      "section-z": choiceScoreHundredths + trueFalseScoreHundredths,
+      "section-a": shortScoreHundredths,
+    },
+    questionsById: {
+      "choice-question": {
+        isCorrect: choiceCorrect,
+        scoreHundredths: choiceScoreHundredths,
+      },
+      "true-false-question": {
+        correctStatementCount: trueFalseCorrectStatementCount,
+        scoreHundredths: trueFalseScoreHundredths,
+        statements: {
+          a: trueFalseCorrectStatementCount >= 1,
+          b: trueFalseCorrectStatementCount >= 2,
+          c: trueFalseCorrectStatementCount >= 3,
+          d: trueFalseCorrectStatementCount >= 4,
+        },
+      },
+      "short-question": {
+        isCorrect: shortCorrect,
+        scoreHundredths: shortScoreHundredths,
+      },
+    },
   };
 }
 
@@ -444,6 +549,332 @@ describe("reporting service", () => {
     const detail = await getAdminStudentDetail(admin, studentActor.id);
 
     expect(detail.topicStatistics).toEqual([]);
+  });
+
+  describe("Phase 2B dynamic reporting", () => {
+    it("returns ordered dynamic Exam question and Topic analytics from persisted grading", async () => {
+      const exam = createDynamicExam({
+        questionTopics: [
+          { questionId: "choice-question", topicIds: ["shared-topic"] },
+          {
+            questionId: "true-false-question",
+            topicIds: ["shared-topic"],
+          },
+          { questionId: "short-question", topicIds: ["short-topic"] },
+        ],
+      });
+      const attempts = [
+        createAttempt({
+          id: "dynamic-attempt-one",
+          grading: createDynamicGrading(),
+        }),
+        createAttempt({
+          id: "dynamic-attempt-two",
+          studentId: "student-two",
+          status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+          grading: createDynamicGrading({
+            choiceCorrect: false,
+            trueFalseScoreHundredths: 300,
+            trueFalseCorrectStatementCount: 4,
+            shortCorrect: true,
+          }),
+        }),
+      ];
+      mocks.findExamReportingRecordById.mockResolvedValue(exam);
+      mocks.listTerminalExamAttemptRecords.mockResolvedValue(attempts);
+
+      const report = await getAdminExamResults(admin, exam.id);
+
+      expect(
+        report.dynamicQuestionStatistics?.sections.map((section) => ({
+          sectionId: section.sectionId,
+          questionIds: section.questions.map((question) => question.questionId),
+          questionNumbers: section.questions.map(
+            (question) => question.questionNumber,
+          ),
+        })),
+      ).toEqual([
+        {
+          sectionId: "section-z",
+          questionIds: ["choice-question", "true-false-question"],
+          questionNumbers: [1, 2],
+        },
+        {
+          sectionId: "section-a",
+          questionIds: ["short-question"],
+          questionNumbers: [1],
+        },
+      ]);
+      expect(
+        report.dynamicQuestionStatistics?.sections[0].questions[0],
+      ).toEqual({
+        sectionId: "section-z",
+        sectionTitle: "Section Z",
+        questionId: "choice-question",
+        questionNumber: 1,
+        questionType: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+        completedAttemptCount: 2,
+        correctCount: 1,
+        incorrectCount: 1,
+        correctRatePercent: 50,
+      });
+      expect(
+        report.dynamicQuestionStatistics?.sections[0].questions[1],
+      ).toEqual({
+        sectionId: "section-z",
+        sectionTitle: "Section Z",
+        questionId: "true-false-question",
+        questionNumber: 2,
+        questionType: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+        completedAttemptCount: 2,
+        fullCorrectCount: 1,
+        fullCorrectRatePercent: 50,
+        averageScoreHundredths: 225,
+        statements: {
+          a: { correctCount: 2, correctRatePercent: 100 },
+          b: { correctCount: 2, correctRatePercent: 100 },
+          c: { correctCount: 2, correctRatePercent: 100 },
+          d: { correctCount: 1, correctRatePercent: 50 },
+        },
+      });
+      expect(report.topicStatistics).toEqual([
+        {
+          topicId: "shared-topic",
+          topicName: "shared-topic",
+          taggedQuestionCount: 2,
+          observationCount: 4,
+          averagePerformancePercent: 62.5,
+        },
+        {
+          topicId: "short-topic",
+          topicName: "short-topic",
+          taggedQuestionCount: 1,
+          observationCount: 2,
+          averagePerformancePercent: 50,
+        },
+      ]);
+      expect(report.questionStatistics).toEqual({
+        partOne: [],
+        partTwo: [],
+        partThree: [],
+      });
+      expect(mocks.findStudentUsersByIds).toHaveBeenCalledTimes(1);
+      expect(mocks.findStudentUsersByIds).toHaveBeenCalledWith([
+        studentActor.id,
+        "student-two",
+      ]);
+      expect(mocks.findTopicRecordsByIds).toHaveBeenCalledTimes(1);
+      expect(mocks.findTopicRecordsByIds).toHaveBeenCalledWith([
+        "shared-topic",
+        "short-topic",
+      ]);
+      expect(mocks.ensureTerminalAttemptGrading).not.toHaveBeenCalled();
+    });
+
+    it("applies current dynamic Topic edits to historical persisted grading without regrading", async () => {
+      const originalExam = createDynamicExam({
+        questionTopics: [
+          { questionId: "choice-question", topicIds: ["edited-topic"] },
+          { questionId: "true-false-question", topicIds: [] },
+          { questionId: "short-question", topicIds: [] },
+        ],
+      });
+      const editedExam = createDynamicExam({
+        questionTopics: [
+          { questionId: "choice-question", topicIds: [] },
+          { questionId: "true-false-question", topicIds: [] },
+          { questionId: "short-question", topicIds: ["edited-topic"] },
+        ],
+      });
+      const grading = createDynamicGrading();
+      const attempt = createAttempt({ grading });
+      mocks.listTerminalExamAttemptRecords.mockResolvedValue([attempt]);
+      mocks.findExamReportingRecordById
+        .mockResolvedValueOnce(originalExam)
+        .mockResolvedValueOnce(editedExam);
+
+      const originalReport = await getAdminExamResults(admin, originalExam.id);
+      const editedReport = await getAdminExamResults(admin, editedExam.id);
+
+      expect(originalReport.topicStatistics[0]).toMatchObject({
+        topicId: "edited-topic",
+        averagePerformancePercent: 100,
+      });
+      expect(editedReport.topicStatistics[0]).toMatchObject({
+        topicId: "edited-topic",
+        averagePerformancePercent: 0,
+      });
+      expect(attempt.grading).toBe(grading);
+      expect(mocks.ensureTerminalAttemptGrading).not.toHaveBeenCalled();
+    });
+
+    it("uses a reconciled dynamic grading snapshot for question and Topic analytics", async () => {
+      const exam = createDynamicExam({
+        answerKeyRevision: 2,
+        questionTopics: [
+          { questionId: "choice-question", topicIds: ["updated-topic"] },
+          { questionId: "true-false-question", topicIds: [] },
+          { questionId: "short-question", topicIds: [] },
+        ],
+      });
+      const staleAttempt = createAttempt({
+        grading: createDynamicGrading({
+          answerKeyRevision: 1,
+          choiceCorrect: false,
+        }),
+      });
+      const revisedAttempt = createAttempt({
+        grading: createDynamicGrading({
+          answerKeyRevision: 2,
+          choiceCorrect: true,
+        }),
+      });
+      mocks.findExamReportingRecordById.mockResolvedValue(exam);
+      mocks.listTerminalExamAttemptRecords.mockResolvedValue([staleAttempt]);
+      mocks.ensureTerminalAttemptGrading.mockResolvedValue({
+        attempt: revisedAttempt,
+        exam,
+      });
+
+      const report = await getAdminExamResults(admin, exam.id);
+
+      expect(mocks.ensureTerminalAttemptGrading).toHaveBeenCalledWith(
+        staleAttempt,
+        exam,
+        now,
+      );
+      expect(
+        report.dynamicQuestionStatistics?.sections[0].questions[0],
+      ).toMatchObject({
+        questionId: "choice-question",
+        correctCount: 1,
+        incorrectCount: 0,
+        correctRatePercent: 100,
+      });
+      expect(report.topicStatistics[0]).toMatchObject({
+        topicId: "updated-topic",
+        observationCount: 1,
+        averagePerformancePercent: 100,
+      });
+    });
+
+    it("merges one student's legacy and dynamic Topic analytics through batched lookups", async () => {
+      const legacyTopicIds = createEmptyQuestionTopicIds();
+      legacyTopicIds.partOne[0] = ["shared-topic", "legacy-topic"];
+      const legacyExam = createExam({
+        id: "legacy-exam",
+        title: "Legacy Exam",
+        questionTopicIds: legacyTopicIds,
+      });
+      const hiddenDynamicExam = createDynamicExam({
+        id: "hidden-dynamic-exam",
+        title: "Hidden dynamic Exam",
+        status: EXAM_STATUS.HIDDEN,
+        questionTopics: [
+          { questionId: "choice-question", topicIds: [] },
+          {
+            questionId: "true-false-question",
+            topicIds: ["shared-topic", "dynamic-topic"],
+          },
+          { questionId: "short-question", topicIds: [] },
+        ],
+      });
+      const allAttempts = [
+        createAttempt({
+          id: "requested-legacy-attempt",
+          examId: legacyExam.id,
+          grading: createFirstQuestionGrading(true),
+        }),
+        createAttempt({
+          id: "requested-dynamic-attempt",
+          examId: hiddenDynamicExam.id,
+          grading: createDynamicGrading(),
+        }),
+        createAttempt({
+          id: "other-student-attempt",
+          examId: "other-student-exam",
+          studentId: "other-student",
+          grading: createDynamicGrading({
+            trueFalseScoreHundredths: 300,
+            trueFalseCorrectStatementCount: 4,
+          }),
+        }),
+      ];
+      const examsById = new Map([
+        [legacyExam.id, legacyExam],
+        [hiddenDynamicExam.id, hiddenDynamicExam],
+      ]);
+      mocks.listTerminalExamAttemptRecords.mockImplementation(
+        ({ studentId }: { studentId?: string }) =>
+          Promise.resolve(
+            allAttempts.filter((attempt) => attempt.studentId === studentId),
+          ),
+      );
+      mocks.findExamReportingRecordsByIds.mockImplementation(
+        (examIds: string[]) =>
+          Promise.resolve(
+            examIds.flatMap((examId) => {
+              const exam = examsById.get(examId);
+              return exam ? [exam] : [];
+            }),
+          ),
+      );
+
+      const detail = await getAdminStudentDetail(admin, studentActor.id);
+
+      expect(detail).toMatchObject({
+        distinctExamCount: 2,
+        statistics: { completedAttemptCount: 2 },
+      });
+      expect(detail.topicStatistics).toEqual([
+        {
+          topicId: "shared-topic",
+          topicName: "shared-topic",
+          observationCount: 2,
+          averagePerformancePercent: 75,
+        },
+        {
+          topicId: "dynamic-topic",
+          topicName: "dynamic-topic",
+          observationCount: 1,
+          averagePerformancePercent: 50,
+        },
+        {
+          topicId: "legacy-topic",
+          topicName: "legacy-topic",
+          observationCount: 1,
+          averagePerformancePercent: 100,
+        },
+      ]);
+      expect(detail.exams).toContainEqual(
+        expect.objectContaining({
+          exam: expect.objectContaining({
+            id: hiddenDynamicExam.id,
+            status: EXAM_STATUS.HIDDEN,
+          }),
+          statistics: expect.objectContaining({ completedAttemptCount: 1 }),
+        }),
+      );
+      expect(mocks.listTerminalExamAttemptRecords).toHaveBeenCalledWith({
+        studentId: studentActor.id,
+      });
+      expect(mocks.listActiveExamAttemptRecords).toHaveBeenCalledWith({
+        studentId: studentActor.id,
+      });
+      expect(mocks.findExamReportingRecordById).not.toHaveBeenCalled();
+      expect(mocks.findExamReportingRecordsByIds).toHaveBeenCalledTimes(1);
+      expect(mocks.findExamReportingRecordsByIds).toHaveBeenCalledWith([
+        legacyExam.id,
+        hiddenDynamicExam.id,
+      ]);
+      expect(mocks.findTopicRecordsByIds).toHaveBeenCalledTimes(1);
+      expect(mocks.findTopicRecordsByIds).toHaveBeenCalledWith([
+        "shared-topic",
+        "legacy-topic",
+        "dynamic-topic",
+      ]);
+      expect(mocks.ensureTerminalAttemptGrading).not.toHaveBeenCalled();
+    });
   });
 
   it("returns paginated result DTOs with batched identities and immutable grading", async () => {

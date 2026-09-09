@@ -1,16 +1,23 @@
 import { EXAM_STRUCTURE, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
   isDynamicAttemptGradingSnapshot,
   scoreHundredthsToPoints,
 } from "@/lib/exam/grading";
+import {
+  getExamQuestionTopicAssignments,
+  type ExamQuestionTopicsSource,
+} from "@/lib/exam/question-topics";
 import type {
-  AttemptGradingSnapshot,
+  DynamicAttemptGradingSnapshot,
   ExamAttemptGradingSnapshot,
   ExamAttemptStatus,
 } from "@/types/exam-attempt";
 import type { ExamQuestionTopicIds } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type {
+  AdminExamDynamicQuestionStatistics,
   AdminExamQuestionStatistics,
   AdminExamTopicStatistics,
   AdminStudentTopicStatistics,
@@ -226,6 +233,101 @@ export function calculateQuestionStatistics(
   };
 }
 
+export function calculateDynamicQuestionStatistics(
+  structure: ExamStructureSnapshot,
+  attempts: ScoredAttempt[],
+): AdminExamDynamicQuestionStatistics {
+  const completedAttempts = attempts.filter(
+    (attempt) =>
+      (attempt.status === EXAM_ATTEMPT_STATUS.SUBMITTED ||
+        attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED) &&
+      isDynamicAttemptGradingSnapshot(attempt.grading),
+  );
+  const completedAttemptCount = completedAttempts.length;
+  const toRate = (correctCount: number): number | null =>
+    completedAttemptCount === 0
+      ? null
+      : (correctCount * 100) / completedAttemptCount;
+
+  return {
+    sections: structure.sections.map((section) => ({
+      sectionId: section.id,
+      sectionTitle: section.title,
+      questions: section.questions.map((question, questionIndex) => {
+        const results = completedAttempts.map(
+          (attempt) =>
+            (attempt.grading as DynamicAttemptGradingSnapshot).questionsById[
+              question.id
+            ],
+        );
+        const identity = {
+          sectionId: section.id,
+          sectionTitle: section.title,
+          questionId: question.id,
+          questionNumber: questionIndex + 1,
+          questionType: question.type,
+        };
+
+        if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE) {
+          const trueFalseResults = results.filter(
+            (result) => result && "correctStatementCount" in result,
+          );
+          const fullCorrectCount = trueFalseResults.filter(
+            (result) => result.correctStatementCount === 4,
+          ).length;
+          const statementCorrectCounts = { a: 0, b: 0, c: 0, d: 0 };
+          let totalScoreHundredths = 0;
+
+          for (const result of trueFalseResults) {
+            totalScoreHundredths += result.scoreHundredths;
+            for (const statement of PART_TWO_STATEMENTS) {
+              if (result.statements[statement]) {
+                statementCorrectCounts[statement] += 1;
+              }
+            }
+          }
+
+          return {
+            ...identity,
+            completedAttemptCount,
+            fullCorrectCount,
+            fullCorrectRatePercent: toRate(fullCorrectCount),
+            averageScoreHundredths:
+              completedAttemptCount === 0
+                ? null
+                : totalScoreHundredths / completedAttemptCount,
+            statements: Object.fromEntries(
+              PART_TWO_STATEMENTS.map((statement) => [
+                statement,
+                {
+                  correctCount: statementCorrectCounts[statement],
+                  correctRatePercent: toRate(statementCorrectCounts[statement]),
+                },
+              ]),
+            ) as {
+              a: { correctCount: number; correctRatePercent: number | null };
+              b: { correctCount: number; correctRatePercent: number | null };
+              c: { correctCount: number; correctRatePercent: number | null };
+              d: { correctCount: number; correctRatePercent: number | null };
+            },
+          };
+        }
+
+        const correctCount = results.filter(
+          (result) => result && "isCorrect" in result && result.isCorrect,
+        ).length;
+        return {
+          ...identity,
+          completedAttemptCount,
+          correctCount,
+          incorrectCount: completedAttemptCount - correctCount,
+          correctRatePercent: toRate(correctCount),
+        };
+      }),
+    })),
+  };
+}
+
 interface TopicPerformanceAggregate {
   taggedQuestionCount: number;
   observationCount: number;
@@ -234,29 +336,12 @@ interface TopicPerformanceAggregate {
 
 function accumulateTopicPerformance(
   aggregateByTopicId: Map<string, TopicPerformanceAggregate>,
-  questionTopicIds: ExamQuestionTopicIds,
+  source: ExamQuestionTopicIds | ExamQuestionTopicsSource,
   attempts: ScoredAttempt[],
 ): void {
-  const questions: Array<{
-    topicIds: string[];
-    getPerformance: (grading: AttemptGradingSnapshot) => number;
-  }> = [
-    ...questionTopicIds.partOne.map((topicIds, questionIndex) => ({
-      topicIds: [...new Set(topicIds)],
-      getPerformance: (grading: AttemptGradingSnapshot) =>
-        grading.partOne[questionIndex].isCorrect ? 100 : 0,
-    })),
-    ...questionTopicIds.partTwo.map((topicIds, questionIndex) => ({
-      topicIds: [...new Set(topicIds)],
-      getPerformance: (grading: AttemptGradingSnapshot) =>
-        grading.partTwo[questionIndex].scoreHundredths,
-    })),
-    ...questionTopicIds.partThree.map((topicIds, questionIndex) => ({
-      topicIds: [...new Set(topicIds)],
-      getPerformance: (grading: AttemptGradingSnapshot) =>
-        grading.partThree[questionIndex].isCorrect ? 100 : 0,
-    })),
-  ];
+  const normalizedSource: ExamQuestionTopicsSource =
+    "partOne" in source ? { questionTopicIds: source } : source;
+  const questions = getExamQuestionTopicAssignments(normalizedSource);
 
   for (const question of questions) {
     for (const topicId of question.topicIds) {
@@ -278,16 +363,41 @@ function accumulateTopicPerformance(
       continue;
     }
 
-    if (isDynamicAttemptGradingSnapshot(attempt.grading)) {
-      continue;
-    }
-
     for (const question of questions) {
       if (question.topicIds.length === 0) {
         continue;
       }
 
-      const performance = question.getPerformance(attempt.grading);
+      let performance: number;
+
+      if (isDynamicAttemptGradingSnapshot(attempt.grading)) {
+        if (!normalizedSource.structureSnapshot) {
+          continue;
+        }
+
+        const result = attempt.grading.questionsById[question.questionId];
+        if (!result) {
+          continue;
+        }
+        performance =
+          (result.scoreHundredths * 100) / question.maxScoreHundredths;
+      } else {
+        if (normalizedSource.structureSnapshot) {
+          continue;
+        }
+
+        const questionIndex = question.questionNumber - 1;
+        performance =
+          question.questionType === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE
+            ? attempt.grading.partOne[questionIndex].isCorrect
+              ? 100
+              : 0
+            : question.questionType === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE
+              ? attempt.grading.partTwo[questionIndex].scoreHundredths
+              : attempt.grading.partThree[questionIndex].isCorrect
+                ? 100
+                : 0;
+      }
 
       for (const topicId of question.topicIds) {
         const aggregate = aggregateByTopicId.get(topicId);
@@ -302,12 +412,12 @@ function accumulateTopicPerformance(
 }
 
 export function calculateTopicStatistics(
-  questionTopicIds: ExamQuestionTopicIds,
+  source: ExamQuestionTopicIds | ExamQuestionTopicsSource,
   attempts: ScoredAttempt[],
   topics: Array<{ id: string; name: string }>,
 ): AdminExamTopicStatistics[] {
   const aggregateByTopicId = new Map<string, TopicPerformanceAggregate>();
-  accumulateTopicPerformance(aggregateByTopicId, questionTopicIds, attempts);
+  accumulateTopicPerformance(aggregateByTopicId, source, attempts);
 
   const topicNameById = new Map(
     topics.map((topic) => [topic.id, topic.name] as const),
@@ -345,6 +455,8 @@ export function calculateTopicStatistics(
 export function calculateStudentTopicStatistics(
   exams: Array<{
     questionTopicIds: ExamQuestionTopicIds;
+    questionTopics?: ExamQuestionTopicsSource["questionTopics"];
+    structureSnapshot?: ExamStructureSnapshot;
     attempts: ScoredAttempt[];
   }>,
   topics: Array<{ id: string; name: string }>,
@@ -352,11 +464,7 @@ export function calculateStudentTopicStatistics(
   const aggregateByTopicId = new Map<string, TopicPerformanceAggregate>();
 
   for (const exam of exams) {
-    accumulateTopicPerformance(
-      aggregateByTopicId,
-      exam.questionTopicIds,
-      exam.attempts,
-    );
+    accumulateTopicPerformance(aggregateByTopicId, exam, exam.attempts);
   }
 
   const topicNameById = new Map(

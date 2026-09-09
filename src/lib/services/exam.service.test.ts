@@ -104,7 +104,10 @@ import type { ExamStructureTemplatePersistenceRecord } from "@/lib/db/dao/exam-s
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { isDynamicExamAnswerKey } from "@/lib/exam/answer-key";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
-import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
+import {
+  createEmptyQuestionTopicIds,
+  createEmptyQuestionTopics,
+} from "@/lib/exam/question-topics";
 import type {
   DynamicExamUpsertInput,
   UpdateExamInput,
@@ -203,6 +206,25 @@ function createDynamicAnswerKey(
       "question-y-short-answer": "0.5",
       "question-b-choice": "D",
     },
+  };
+}
+
+function createDynamicInput(
+  structure = createDynamicStructureSnapshot(),
+): DynamicExamUpsertInput {
+  const legacyInput = createValidInput();
+
+  return {
+    title: legacyInput.title,
+    description: legacyInput.description,
+    status: legacyInput.status,
+    visibilityMode: legacyInput.visibilityMode,
+    assignedStudentIds: legacyInput.assignedStudentIds,
+    part3InputMode: legacyInput.part3InputMode,
+    settings: legacyInput.settings,
+    structureTemplateId,
+    answerKey: createDynamicAnswerKey(),
+    questionTopics: createEmptyQuestionTopics(structure),
   };
 }
 
@@ -429,17 +451,44 @@ describe("exam service", () => {
     expect(mocks.createExamRecord).not.toHaveBeenCalled();
   });
 
-  it("resolves and snapshots a custom template in exact structure order", async () => {
+  it("rejects dynamic question Topic IDs that do not exist", async () => {
+    const input = createDynamicInput();
+    input.questionTopics[0].topicIds = [firstTopicId];
+    mocks.findExamStructureTemplateRecordById.mockResolvedValue(
+      createStructureTemplate(),
+    );
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.countTopicRecordsByIds.mockResolvedValue(0);
+    mocks.discardExamPdfUpload.mockResolvedValue(undefined);
+
+    await expect(
+      createExam(admin, input, replacementPdfUpload),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", statusCode: 400 });
+    expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
+      [firstTopicId],
+      mocks.transactionSession,
+    );
+    expect(mocks.createExamRecord).not.toHaveBeenCalled();
+  });
+
+  it("snapshots a custom template and persists dynamic Topics in canonical order", async () => {
     const template = createStructureTemplate();
     const expectedSnapshot = structuredClone({ sections: template.sections });
-    const input = {
-      ...createValidInput(),
-      structureTemplateId,
-      answerKey: createDynamicAnswerKey(),
-    } satisfies DynamicExamUpsertInput;
+    const input = createDynamicInput();
+    input.questionTopics = [
+      { questionId: "question-b-choice", topicIds: [secondTopicId] },
+      { questionId: "question-z-choice", topicIds: [firstTopicId] },
+    ];
+    const expectedQuestionTopics = [
+      { questionId: "question-z-choice", topicIds: [firstTopicId] },
+      { questionId: "question-a-true-false", topicIds: [] },
+      { questionId: "question-y-short-answer", topicIds: [] },
+      { questionId: "question-b-choice", topicIds: [secondTopicId] },
+    ];
     let persistedInput: SaveExamRecordInput | undefined;
     mocks.findExamStructureTemplateRecordById.mockResolvedValue(template);
     mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.countTopicRecordsByIds.mockResolvedValue(2);
     mocks.createExamRecord.mockImplementation(
       async (examInput: SaveExamRecordInput, createdBy: string) => {
         persistedInput = examInput;
@@ -456,8 +505,13 @@ describe("exam service", () => {
       expect.objectContaining({
         structureTemplateId,
         structureSnapshot: expectedSnapshot,
+        questionTopics: expectedQuestionTopics,
       }),
       admin.id,
+      mocks.transactionSession,
+    );
+    expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
+      [firstTopicId, secondTopicId],
       mocks.transactionSession,
     );
 
@@ -467,7 +521,9 @@ describe("exam service", () => {
     template.sections[0].questions[0].id = "mutated-question";
 
     expect(persistedInput?.structureSnapshot).toEqual(expectedSnapshot);
+    expect(persistedInput?.questionTopics).toEqual(expectedQuestionTopics);
     expect(result.structureSnapshot).toEqual(expectedSnapshot);
+    expect(result.questionTopics).toEqual(expectedQuestionTopics);
   });
 
   it("rejects Exam creation from an ESSAY_IMAGE template", async () => {
@@ -487,8 +543,7 @@ describe("exam service", () => {
       ],
     });
     const input = {
-      ...createValidInput(),
-      structureTemplateId,
+      ...createDynamicInput(template),
       answerKey: {
         answersByQuestionId: { "essay-image-question": "A" },
       },
@@ -891,9 +946,17 @@ describe("exam service", () => {
         "question-z-choice": "B",
       },
     };
+    const baseInput = createDynamicInput(structureSnapshot);
     const input: UpdateExamInput = {
-      ...createValidInput(),
+      title: baseInput.title,
+      description: baseInput.description,
+      status: baseInput.status,
+      visibilityMode: baseInput.visibilityMode,
+      assignedStudentIds: baseInput.assignedStudentIds,
+      part3InputMode: baseInput.part3InputMode,
+      settings: baseInput.settings,
       answerKey: correctedAnswerKey,
+      questionTopics: baseInput.questionTopics,
       expectedUpdatedAt: currentExam.updatedAt.toISOString(),
     };
     mocks.findExamRecordById.mockResolvedValue(currentExam);
@@ -1268,6 +1331,74 @@ describe("exam service", () => {
     );
     expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
       [firstTopicId, secondTopicId],
+      mocks.transactionSession,
+    );
+    expect(mocks.updateExamMetadataRecord.mock.calls[0][1]).not.toHaveProperty(
+      "answerKeyRevision",
+    );
+    expect(mocks.updateExamRecord).not.toHaveBeenCalled();
+    expect(mocks.updateExamAnswerKeyRecord).not.toHaveBeenCalled();
+    expect(mocks.listTerminalExamAttemptRegradeSources).not.toHaveBeenCalled();
+    expect(mocks.replaceTerminalExamAttemptGradings).not.toHaveBeenCalled();
+  });
+
+  it("updates dynamic Topics as metadata after attempts without changing grading revision", async () => {
+    const structureSnapshot = createDynamicStructureSnapshot();
+    const currentExam = createStoredExam({
+      structureTemplateId,
+      structureSnapshot,
+      answerKey: createDynamicAnswerKey(),
+      questionTopics: createEmptyQuestionTopics(structureSnapshot),
+      attemptsStarted: true,
+    });
+    const baseInput = createDynamicInput(structureSnapshot);
+    const input: UpdateExamInput = {
+      title: baseInput.title,
+      description: baseInput.description,
+      status: baseInput.status,
+      visibilityMode: baseInput.visibilityMode,
+      assignedStudentIds: baseInput.assignedStudentIds,
+      part3InputMode: baseInput.part3InputMode,
+      settings: baseInput.settings,
+      answerKey: baseInput.answerKey,
+      questionTopics: [
+        { questionId: "question-b-choice", topicIds: [secondTopicId] },
+        { questionId: "question-z-choice", topicIds: [firstTopicId] },
+      ],
+      expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+    };
+    const expectedQuestionTopics = [
+      { questionId: "question-z-choice", topicIds: [firstTopicId] },
+      { questionId: "question-a-true-false", topicIds: [] },
+      { questionId: "question-y-short-answer", topicIds: [] },
+      { questionId: "question-b-choice", topicIds: [secondTopicId] },
+    ];
+    const updatedExam = createStoredExam({
+      structureTemplateId,
+      structureSnapshot,
+      answerKey: createDynamicAnswerKey(),
+      questionTopics: expectedQuestionTopics,
+      attemptsStarted: true,
+    });
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.countTopicRecordsByIds.mockResolvedValue(2);
+    mocks.updateExamMetadataRecord.mockResolvedValue(updatedExam);
+
+    const result = await editExam(admin, currentExam.id, input);
+
+    expect(result.questionTopics).toEqual(expectedQuestionTopics);
+    expect(result.hasAttempts).toBe(true);
+    expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
+      [firstTopicId, secondTopicId],
+      mocks.transactionSession,
+    );
+    expect(mocks.updateExamMetadataRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      expect.objectContaining({
+        questionTopicIds: currentExam.questionTopicIds,
+        questionTopics: expectedQuestionTopics,
+      }),
+      currentExam.updatedAt,
       mocks.transactionSession,
     );
     expect(mocks.updateExamMetadataRecord.mock.calls[0][1]).not.toHaveProperty(

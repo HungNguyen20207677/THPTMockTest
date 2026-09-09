@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
+  calculateDynamicQuestionStatistics,
   calculatePerformanceStatistics,
   calculateQuestionStatistics,
   calculateScoreAggregate,
@@ -12,7 +14,11 @@ import {
   type ScoredAttempt,
 } from "@/lib/exam/attempt-statistics";
 import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
-import type { AttemptGradingSnapshot } from "@/types/exam-attempt";
+import type {
+  AttemptGradingSnapshot,
+  DynamicAttemptGradingSnapshot,
+} from "@/types/exam-attempt";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 function createGrading(score: number): AttemptGradingSnapshot {
   return {
@@ -42,6 +48,27 @@ function createAttempt(
     expiresAt: new Date("2026-08-11T02:30:00.000Z"),
     submittedAt: new Date(submittedAt),
     grading: createGrading(score),
+  };
+}
+
+function createDynamicAttempt(
+  attemptNumber: number,
+  questionsById: DynamicAttemptGradingSnapshot["questionsById"],
+  status: ScoredAttempt["status"] = EXAM_ATTEMPT_STATUS.SUBMITTED,
+): ScoredAttempt {
+  return {
+    ...createAttempt(
+      0,
+      attemptNumber,
+      `2026-08-${String(attemptNumber).padStart(2, "0")}T00:00:00.000Z`,
+    ),
+    status,
+    grading: {
+      answerKeyRevision: 1,
+      totalScoreHundredths: 0,
+      sectionScoresHundredths: {},
+      questionsById,
+    },
   };
 }
 
@@ -228,6 +255,199 @@ describe("attempt statistics", () => {
     });
   });
 
+  it("aggregates a variable dynamic structure in snapshot order and excludes active retakes", () => {
+    const structure: ExamStructureSnapshot = {
+      sections: [
+        {
+          id: "mixed-section",
+          title: "Mixed section",
+          questions: [
+            {
+              id: "short-answer",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+              maxScoreHundredths: 100,
+            },
+            {
+              id: "single-choice",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              maxScoreHundredths: 100,
+            },
+          ],
+        },
+        {
+          id: "true-false-section",
+          title: "True/false section",
+          questions: [
+            {
+              id: "true-false",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+              maxScoreHundredths: 200,
+            },
+          ],
+        },
+      ],
+    };
+    const submittedAttempt = createDynamicAttempt(1, {
+      "true-false": {
+        correctStatementCount: 4,
+        scoreHundredths: 200,
+        statements: { a: true, b: true, c: true, d: true },
+      },
+      "single-choice": { isCorrect: true, scoreHundredths: 100 },
+      "short-answer": { isCorrect: false, scoreHundredths: 0 },
+    });
+    const autoSubmittedRetake = createDynamicAttempt(
+      2,
+      {
+        "single-choice": { isCorrect: false, scoreHundredths: 0 },
+        "short-answer": { isCorrect: true, scoreHundredths: 100 },
+        "true-false": {
+          correctStatementCount: 2,
+          scoreHundredths: 50,
+          statements: { a: true, b: false, c: true, d: false },
+        },
+      },
+      EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+    );
+    const activeRetake = createDynamicAttempt(
+      3,
+      {
+        "short-answer": { isCorrect: true, scoreHundredths: 100 },
+        "single-choice": { isCorrect: true, scoreHundredths: 100 },
+        "true-false": {
+          correctStatementCount: 4,
+          scoreHundredths: 200,
+          statements: { a: true, b: true, c: true, d: true },
+        },
+      },
+      EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+    );
+
+    expect(
+      calculateDynamicQuestionStatistics(structure, [
+        submittedAttempt,
+        autoSubmittedRetake,
+        activeRetake,
+      ]),
+    ).toEqual({
+      sections: [
+        {
+          sectionId: "mixed-section",
+          sectionTitle: "Mixed section",
+          questions: [
+            {
+              sectionId: "mixed-section",
+              sectionTitle: "Mixed section",
+              questionId: "short-answer",
+              questionNumber: 1,
+              questionType: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+              completedAttemptCount: 2,
+              correctCount: 1,
+              incorrectCount: 1,
+              correctRatePercent: 50,
+            },
+            {
+              sectionId: "mixed-section",
+              sectionTitle: "Mixed section",
+              questionId: "single-choice",
+              questionNumber: 2,
+              questionType: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              completedAttemptCount: 2,
+              correctCount: 1,
+              incorrectCount: 1,
+              correctRatePercent: 50,
+            },
+          ],
+        },
+        {
+          sectionId: "true-false-section",
+          sectionTitle: "True/false section",
+          questions: [
+            {
+              sectionId: "true-false-section",
+              sectionTitle: "True/false section",
+              questionId: "true-false",
+              questionNumber: 1,
+              questionType: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+              completedAttemptCount: 2,
+              fullCorrectCount: 1,
+              fullCorrectRatePercent: 50,
+              averageScoreHundredths: 125,
+              statements: {
+                a: { correctCount: 2, correctRatePercent: 100 },
+                b: { correctCount: 1, correctRatePercent: 50 },
+                c: { correctCount: 2, correctRatePercent: 100 },
+                d: { correctCount: 1, correctRatePercent: 50 },
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("returns null dynamic rates when there are no completed attempts", () => {
+    const structure: ExamStructureSnapshot = {
+      sections: [
+        {
+          id: "empty-section",
+          title: "Empty section",
+          questions: [
+            {
+              id: "empty-choice",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              maxScoreHundredths: 100,
+            },
+            {
+              id: "empty-true-false",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+              maxScoreHundredths: 100,
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(calculateDynamicQuestionStatistics(structure, [])).toEqual({
+      sections: [
+        {
+          sectionId: "empty-section",
+          sectionTitle: "Empty section",
+          questions: [
+            {
+              sectionId: "empty-section",
+              sectionTitle: "Empty section",
+              questionId: "empty-choice",
+              questionNumber: 1,
+              questionType: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              completedAttemptCount: 0,
+              correctCount: 0,
+              incorrectCount: 0,
+              correctRatePercent: null,
+            },
+            {
+              sectionId: "empty-section",
+              sectionTitle: "Empty section",
+              questionId: "empty-true-false",
+              questionNumber: 2,
+              questionType: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+              completedAttemptCount: 0,
+              fullCorrectCount: 0,
+              fullCorrectRatePercent: null,
+              averageScoreHundredths: null,
+              statements: {
+                a: { correctCount: 0, correctRatePercent: null },
+                b: { correctCount: 0, correctRatePercent: null },
+                c: { correctCount: 0, correctRatePercent: null },
+                d: { correctCount: 0, correctRatePercent: null },
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it("normalizes Part I and Part III correctness to 0 or 100 percent", () => {
     const questionTopicIds = createEmptyQuestionTopicIds();
     questionTopicIds.partOne[0] = ["part-one-topic"];
@@ -392,6 +612,72 @@ describe("attempt statistics", () => {
     ).toEqual([]);
   });
 
+  it("normalizes ID-keyed dynamic Exam Topics by max score and fully credits each Topic", () => {
+    const structure: ExamStructureSnapshot = {
+      sections: [
+        {
+          id: "dynamic-section",
+          title: "Dynamic section",
+          questions: [
+            {
+              id: "unassigned-question",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              maxScoreHundredths: 100,
+            },
+            {
+              id: "weighted-question",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+              maxScoreHundredths: 200,
+            },
+          ],
+        },
+      ],
+    };
+    const attempt = createDynamicAttempt(1, {
+      "weighted-question": {
+        correctStatementCount: 3,
+        scoreHundredths: 100,
+        statements: { a: true, b: true, c: true, d: false },
+      },
+      "unassigned-question": { isCorrect: true, scoreHundredths: 100 },
+    });
+
+    expect(
+      calculateTopicStatistics(
+        {
+          questionTopicIds: createEmptyQuestionTopicIds(),
+          questionTopics: [
+            {
+              questionId: "weighted-question",
+              topicIds: ["topic-b", "topic-a"],
+            },
+          ],
+          structureSnapshot: structure,
+        },
+        [attempt],
+        [
+          { id: "topic-b", name: "Beta" },
+          { id: "topic-a", name: "Alpha" },
+        ],
+      ),
+    ).toEqual([
+      {
+        topicId: "topic-a",
+        topicName: "Alpha",
+        taggedQuestionCount: 1,
+        observationCount: 1,
+        averagePerformancePercent: 50,
+      },
+      {
+        topicId: "topic-b",
+        topicName: "Beta",
+        taggedQuestionCount: 1,
+        observationCount: 1,
+        averagePerformancePercent: 50,
+      },
+    ]);
+  });
+
   it("merges student topic observations across Exams with shared normalization", () => {
     const firstExamTopicIds = createEmptyQuestionTopicIds();
     firstExamTopicIds.partOne[0] = ["shared-topic"];
@@ -507,6 +793,68 @@ describe("attempt statistics", () => {
       ),
     ).toEqual([]);
     expect(calculateStudentTopicStatistics([], [])).toEqual([]);
+  });
+
+  it("merges one legacy and one dynamic Exam into the same Student Topic ID", () => {
+    const legacyTopicIds = createEmptyQuestionTopicIds();
+    legacyTopicIds.partOne[0] = ["shared-topic"];
+    const dynamicStructure: ExamStructureSnapshot = {
+      sections: [
+        {
+          id: "dynamic-section",
+          title: "Dynamic section",
+          questions: [
+            {
+              id: "dynamic-shared-question",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+              maxScoreHundredths: 200,
+            },
+          ],
+        },
+      ],
+    };
+    const dynamicAttempt = createDynamicAttempt(1, {
+      "dynamic-shared-question": {
+        correctStatementCount: 3,
+        scoreHundredths: 100,
+        statements: { a: true, b: true, c: true, d: false },
+      },
+    });
+
+    expect(
+      calculateStudentTopicStatistics(
+        [
+          {
+            questionTopicIds: legacyTopicIds,
+            attempts: [
+              {
+                ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+                grading: createQuestionGrading({ partOneCorrect: [0] }),
+              },
+            ],
+          },
+          {
+            questionTopicIds: createEmptyQuestionTopicIds(),
+            questionTopics: [
+              {
+                questionId: "dynamic-shared-question",
+                topicIds: ["shared-topic"],
+              },
+            ],
+            structureSnapshot: dynamicStructure,
+            attempts: [dynamicAttempt],
+          },
+        ],
+        [{ id: "shared-topic", name: "Shared" }],
+      ),
+    ).toEqual([
+      {
+        topicId: "shared-topic",
+        topicName: "Shared",
+        observationCount: 2,
+        averagePerformancePercent: 75,
+      },
+    ]);
   });
 
   it("uses expiration for auto-submit duration and submission for manual duration", () => {

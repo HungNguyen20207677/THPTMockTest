@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchAdminExamResults } from "@/lib/api/reporting";
 import { formatScore, scoreFormatter } from "@/lib/formatting";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import type {
+  AdminExamDynamicQuestionStatistics,
   AdminExamPartTwoQuestionStatistics,
   AdminExamQuestionCorrectnessStatistics,
   AdminExamResults,
@@ -42,6 +44,116 @@ function getRequestError(error: unknown): string {
   }
 
   return "Không thể tải thống kê đề thi. Vui lòng thử lại.";
+}
+
+const questionTypeLabels = {
+  [EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE]: "Trắc nghiệm",
+  [EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE]: "Đúng/Sai",
+  [EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER]: "Trả lời ngắn",
+  [EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE]: "Tự luận hình ảnh",
+} as const;
+
+function DynamicQuestionStatistics({
+  statistics,
+}: {
+  statistics: AdminExamDynamicQuestionStatistics;
+}) {
+  return (
+    <div className="space-y-6">
+      {statistics.sections.map((section) => (
+        <div key={section.sectionId} className="space-y-3">
+          <h3 className="font-semibold">{section.sectionTitle}</h3>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {section.questions.map((question) => (
+              <article
+                key={question.questionId}
+                className="border-border space-y-3 rounded-xl border p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="font-medium">Câu {question.questionNumber}</h4>
+                  <span className="text-muted-foreground text-xs">
+                    {questionTypeLabels[question.questionType]}
+                  </span>
+                </div>
+                {"statements" in question ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                      <div>
+                        <p className="text-muted-foreground">Số lượt</p>
+                        <p className="font-medium tabular-nums">
+                          {question.completedAttemptCount}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Đúng toàn bộ</p>
+                        <p className="font-medium tabular-nums">
+                          {question.fullCorrectCount} ·{" "}
+                          {formatRatePercent(question.fullCorrectRatePercent)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Điểm TB</p>
+                        <p className="font-medium tabular-nums">
+                          {formatAverageScoreHundredths(
+                            question.averageScoreHundredths,
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 text-sm">
+                      {(["a", "b", "c", "d"] as const).map((statement) => (
+                        <div
+                          key={statement}
+                          className="bg-muted/50 rounded-lg px-2 py-2 text-center"
+                        >
+                          <p className="font-medium">{statement}</p>
+                          <p
+                            className="text-muted-foreground tabular-nums"
+                            title={`${question.statements[statement].correctCount} lượt đúng`}
+                          >
+                            {formatRatePercent(
+                              question.statements[statement].correctRatePercent,
+                            )}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <div>
+                      <p className="text-muted-foreground">Số lượt</p>
+                      <p className="font-medium tabular-nums">
+                        {question.completedAttemptCount}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Đúng</p>
+                      <p className="font-medium tabular-nums">
+                        {question.correctCount}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Sai</p>
+                      <p className="font-medium tabular-nums">
+                        {question.incorrectCount}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Tỷ lệ đúng</p>
+                      <p className="font-medium tabular-nums">
+                        {formatRatePercent(question.correctRatePercent)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatImprovement(value: number | null): string {
@@ -354,15 +466,25 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
             Tính trên các lượt đã nộp; mỗi lần làm lại được tính là một lượt.
           </p>
         </div>
-        <QuestionCorrectnessTable
-          label="Phần I - Trắc nghiệm"
-          questions={report.questionStatistics.partOne}
-        />
-        <PartTwoQuestionTable questions={report.questionStatistics.partTwo} />
-        <QuestionCorrectnessTable
-          label="Phần III - Trả lời ngắn"
-          questions={report.questionStatistics.partThree}
-        />
+        {report.dynamicQuestionStatistics ? (
+          <DynamicQuestionStatistics
+            statistics={report.dynamicQuestionStatistics}
+          />
+        ) : (
+          <>
+            <QuestionCorrectnessTable
+              label="Phần I - Trắc nghiệm"
+              questions={report.questionStatistics.partOne}
+            />
+            <PartTwoQuestionTable
+              questions={report.questionStatistics.partTwo}
+            />
+            <QuestionCorrectnessTable
+              label="Phần III - Trả lời ngắn"
+              questions={report.questionStatistics.partThree}
+            />
+          </>
+        )}
       </section>
 
       <section aria-labelledby="exam-students-heading" className="space-y-4">

@@ -11,12 +11,18 @@ import {
   PART_TWO_STATEMENTS,
   SHORT_ANSWER_SLOT_OPTIONS,
 } from "@/lib/constants/exam";
-import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
+import {
+  EXAM_STRUCTURE_ITEM_ID_MAX_LENGTH,
+  EXAM_STRUCTURE_QUESTION_TYPE,
+} from "@/lib/constants/exam-structure-template";
 import {
   isValidCanonicalShortAnswer,
   shortAnswerSlotsToCanonicalValue,
 } from "@/lib/exam/short-answer";
-import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
+import {
+  createEmptyQuestionTopicIds,
+  normalizeExamQuestionTopics,
+} from "@/lib/exam/question-topics";
 import { examPdfUploadReferenceSchema } from "@/lib/validations/exam-pdf";
 import { examStructureTemplateIdSchema } from "@/lib/validations/exam-structure-template";
 import { topicIdSchema } from "@/lib/validations/topic";
@@ -172,6 +178,54 @@ export const examQuestionTopicIdsSchema = z.strictObject({
     ),
 });
 
+const examQuestionTopicSchema = z.strictObject({
+  questionId: z.string().trim().min(1).max(EXAM_STRUCTURE_ITEM_ID_MAX_LENGTH),
+  topicIds: questionTopicIdListSchema,
+});
+
+export const examQuestionTopicsSchema = z
+  .array(examQuestionTopicSchema)
+  .superRefine((questionTopics, context) => {
+    const questionIds = new Set<string>();
+
+    questionTopics.forEach((questionTopic, index) => {
+      if (questionIds.has(questionTopic.questionId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Mỗi câu hỏi chỉ được có một danh sách chủ đề.",
+          path: [index, "questionId"],
+        });
+      }
+      questionIds.add(questionTopic.questionId);
+    });
+  });
+
+export function createDynamicExamQuestionTopicsSchema(
+  structure: ExamStructureSnapshot,
+) {
+  const questionIds = new Set(
+    structure.sections.flatMap((section) =>
+      section.questions.map((question) => question.id),
+    ),
+  );
+
+  return examQuestionTopicsSchema
+    .superRefine((questionTopics, context) => {
+      questionTopics.forEach((questionTopic, index) => {
+        if (!questionIds.has(questionTopic.questionId)) {
+          context.addIssue({
+            code: "custom",
+            message: "Câu hỏi được gắn chủ đề không thuộc cấu trúc đề thi.",
+            path: [index, "questionId"],
+          });
+        }
+      });
+    })
+    .transform((questionTopics) =>
+      normalizeExamQuestionTopics(structure, questionTopics),
+    );
+}
+
 const titleSchema = z
   .string()
   .trim()
@@ -274,9 +328,7 @@ const dynamicExamUpsertSchema = z
     assignedStudentIds: assignedStudentIdListSchema.optional(),
     structureTemplateId: examStructureTemplateIdSchema,
     answerKey: dynamicExamAnswerKeySchema,
-    questionTopicIds: examQuestionTopicIdsSchema
-      .optional()
-      .default(createEmptyQuestionTopicIds),
+    questionTopics: examQuestionTopicsSchema.optional().default([]),
   })
   .superRefine(validateExamAssignmentPair)
   .transform(normalizeLegacyExamAssignment);
@@ -298,9 +350,27 @@ export const updateExamSchema = z
     assignedStudentIds: assignedStudentIdListSchema.optional(),
     answerKey: anyExamAnswerKeySchema,
     questionTopicIds: examQuestionTopicIdsSchema.optional(),
+    questionTopics: examQuestionTopicsSchema.optional(),
     expectedUpdatedAt: z.string().datetime(),
   })
-  .superRefine(validateExamAssignmentPair)
+  .superRefine((exam, context) => {
+    validateExamAssignmentPair(exam, context);
+    const isDynamic = "answersByQuestionId" in exam.answerKey;
+
+    if (isDynamic && exam.questionTopicIds !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Đề thi động phải gắn chủ đề theo mã câu hỏi.",
+        path: ["questionTopicIds"],
+      });
+    } else if (!isDynamic && exam.questionTopics !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Đề thi cũ phải gắn chủ đề theo cấu trúc cố định.",
+        path: ["questionTopics"],
+      });
+    }
+  })
   .transform((exam) =>
     exam.visibilityMode === EXAM_VISIBILITY_MODE.ALL_STUDENTS
       ? { ...exam, assignedStudentIds: [] }
@@ -432,7 +502,7 @@ const dynamicExamEditorSchema = z
   .strictObject({
     ...examFields,
     structureTemplateId: examStructureTemplateIdSchema,
-    questionTopicIds: examQuestionTopicIdsSchema,
+    questionTopics: examQuestionTopicsSchema,
     answerKey: z.strictObject({
       answersByQuestionId: z.record(
         z.string(),

@@ -18,10 +18,12 @@ import {
 } from "@/lib/db/models/exam.model";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { cloneExamAnswerKey } from "@/lib/exam/answer-key";
+import { normalizeExamQuestionTopics } from "@/lib/exam/question-topics";
 import { cloneExamStructureSnapshot } from "@/lib/exam/structure";
 import type {
   AnyExamAnswerKey,
   ExamPdf,
+  ExamQuestionTopic,
   ExamQuestionTopicIds,
   ExamSettings,
   ExamStatus,
@@ -44,6 +46,7 @@ export interface ExamPersistenceRecord {
   settings: ExamSettings;
   answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
+  questionTopics?: ExamQuestionTopic[];
   answerKeyRevision: number;
   attemptsStarted: boolean;
   createdBy: string;
@@ -64,6 +67,7 @@ export interface SaveExamRecordInput {
   settings: ExamSettings;
   answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
+  questionTopics?: ExamQuestionTopic[];
 }
 
 export interface UpdateExamMetadataRecordInput {
@@ -74,6 +78,7 @@ export interface UpdateExamMetadataRecordInput {
   assignedStudentIds: string[];
   settings: ExamSettings;
   questionTopicIds: ExamQuestionTopicIds;
+  questionTopics?: ExamQuestionTopic[];
 }
 
 export interface UpdateExamAnswerKeyRecordInput extends UpdateExamMetadataRecordInput {
@@ -118,6 +123,7 @@ export interface ExamGradingPersistenceRecord {
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
   >;
   questionTopicIds?: ExamQuestionTopicIds;
+  questionTopics?: ExamQuestionTopic[];
 }
 
 export interface ExamReportingPersistenceRecord extends ExamGradingPersistenceRecord {
@@ -128,6 +134,11 @@ interface ExamQuestionTopicDocumentData {
   partOne?: Types.ObjectId[][];
   partTwo?: Types.ObjectId[][];
   partThree?: Types.ObjectId[][];
+}
+
+interface DynamicExamQuestionTopicDocumentData {
+  questionId: string;
+  topicIds?: Types.ObjectId[];
 }
 
 interface ExamDocumentData {
@@ -144,6 +155,7 @@ interface ExamDocumentData {
   settings: ExamSettings;
   answerKey: AnyExamAnswerKey;
   questionTopicIds?: ExamQuestionTopicDocumentData;
+  questionTopics?: DynamicExamQuestionTopicDocumentData[];
   answerKeyRevision?: number;
   attemptsStarted?: boolean;
   createdBy: Types.ObjectId;
@@ -185,6 +197,7 @@ interface ExamGradingDocumentData {
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
   >;
   questionTopicIds?: ExamQuestionTopicDocumentData;
+  questionTopics?: DynamicExamQuestionTopicDocumentData[];
 }
 
 type ExamReportingDocumentData = ExamGradingDocumentData;
@@ -290,6 +303,23 @@ function toQuestionTopicIds(
   };
 }
 
+function toQuestionTopics(
+  questionTopics: DynamicExamQuestionTopicDocumentData[] | undefined,
+  structure: ExamStructureSnapshot,
+): ExamQuestionTopic[] {
+  return normalizeExamQuestionTopics(
+    structure,
+    (questionTopics ?? []).map((questionTopic) => ({
+      questionId: questionTopic.questionId,
+      topicIds: [
+        ...new Set(
+          (questionTopic.topicIds ?? []).map((topicId) => topicId.toString()),
+        ),
+      ],
+    })),
+  );
+}
+
 function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
   const visibilityMode =
     exam.visibilityMode ?? EXAM_VISIBILITY_MODE.ALL_STUDENTS;
@@ -324,6 +354,14 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     settings: exam.settings,
     answerKey: cloneExamAnswerKey(exam.answerKey),
     questionTopicIds: toQuestionTopicIds(exam.questionTopicIds),
+    ...(exam.structureSnapshot
+      ? {
+          questionTopics: toQuestionTopics(
+            exam.questionTopics,
+            exam.structureSnapshot,
+          ),
+        }
+      : {}),
     answerKeyRevision: exam.answerKeyRevision ?? INITIAL_ANSWER_KEY_REVISION,
     attemptsStarted: exam.attemptsStarted === true,
     createdBy: exam.createdBy.toString(),
@@ -414,6 +452,14 @@ function toExamGradingRecord(
     settings: exam.settings,
     ...(exam.questionTopicIds
       ? { questionTopicIds: toQuestionTopicIds(exam.questionTopicIds) }
+      : {}),
+    ...(exam.structureSnapshot
+      ? {
+          questionTopics: toQuestionTopics(
+            exam.questionTopics,
+            exam.structureSnapshot,
+          ),
+        }
       : {}),
   };
 }
@@ -626,6 +672,7 @@ export async function reserveExamForAttemptGrading(
       "settings.showScoreAfterSubmission": 1,
       "settings.showAnswersAfterSubmission": 1,
       questionTopicIds: 1,
+      questionTopics: 1,
     })
     .lean<ExamGradingDocumentData>()
     .exec();
@@ -668,6 +715,7 @@ export async function findExamReportingRecordById(
       structureSnapshot: 1,
       settings: 1,
       questionTopicIds: 1,
+      questionTopics: 1,
     })
     .lean<ExamReportingDocumentData>()
     .exec();
@@ -693,6 +741,7 @@ export async function findExamReportingRecordsByIds(
       structureSnapshot: 1,
       settings: 1,
       questionTopicIds: 1,
+      questionTopics: 1,
     })
     .lean<ExamReportingDocumentData[]>()
     .exec();

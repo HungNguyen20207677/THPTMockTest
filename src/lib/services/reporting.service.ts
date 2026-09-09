@@ -29,6 +29,7 @@ import {
 } from "@/lib/db/dao/user.dao";
 import {
   calculatePerformanceStatistics,
+  calculateDynamicQuestionStatistics,
   calculateQuestionStatistics,
   calculateScoreAggregate,
   calculateStudentTopicStatistics,
@@ -290,6 +291,10 @@ async function prepareTerminalAttempts(
             graded.exam.questionTopicIds ??
             latestExam?.questionTopicIds ??
             exam.questionTopicIds,
+          questionTopics:
+            graded.exam.questionTopics ??
+            latestExam?.questionTopics ??
+            exam.questionTopics,
         });
       }
 
@@ -488,10 +493,12 @@ export async function getAdminStudentDetail(
     ([examId, attempts]) => {
       const exam = examMap.get(examId);
 
-      return exam && !exam.structureSnapshot
+      return exam
         ? [
             {
               questionTopicIds: exam.questionTopicIds,
+              questionTopics: exam.questionTopics,
+              structureSnapshot: exam.structureSnapshot,
               attempts: attempts.map(toScoredAttempt),
             },
           ]
@@ -499,11 +506,7 @@ export async function getAdminStudentDetail(
     },
   );
   const topics = await findTopicRecordsByIds(
-    uniqueIds(
-      topicExamAttempts.flatMap(({ questionTopicIds }) =>
-        getUniqueExamTopicIds(questionTopicIds),
-      ),
-    ),
+    uniqueIds(topicExamAttempts.flatMap((exam) => getUniqueExamTopicIds(exam))),
   );
 
   const exams = examIds.map((examId) => {
@@ -566,7 +569,7 @@ export async function getAdminExamResults(
   const currentExam = examMap.get(exam.id) ?? exam;
   const [studentMap, topics] = await Promise.all([
     getStudentMap(terminalAttempts.map((attempt) => attempt.studentId)),
-    findTopicRecordsByIds(getUniqueExamTopicIds(currentExam.questionTopicIds)),
+    findTopicRecordsByIds(getUniqueExamTopicIds(currentExam)),
   ]);
   const attemptsByStudent = new Map<string, PreparedTerminalAttempt[]>();
 
@@ -612,13 +615,19 @@ export async function getAdminExamResults(
     questionStatistics: currentExam.structureSnapshot
       ? { partOne: [], partTwo: [], partThree: [] }
       : calculateQuestionStatistics(terminalAttempts.map(toScoredAttempt)),
-    topicStatistics: currentExam.structureSnapshot
-      ? []
-      : calculateTopicStatistics(
-          currentExam.questionTopicIds,
-          terminalAttempts.map(toScoredAttempt),
-          topics,
-        ),
+    ...(currentExam.structureSnapshot
+      ? {
+          dynamicQuestionStatistics: calculateDynamicQuestionStatistics(
+            currentExam.structureSnapshot,
+            terminalAttempts.map(toScoredAttempt),
+          ),
+        }
+      : {}),
+    topicStatistics: calculateTopicStatistics(
+      currentExam,
+      terminalAttempts.map(toScoredAttempt),
+      topics,
+    ),
     students,
   };
 }

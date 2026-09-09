@@ -6,11 +6,46 @@ import {
   EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
+  createDynamicExamQuestionTopicsSchema,
   examUpsertSchema,
   updateExamRequestSchema,
 } from "@/lib/validations/exam";
 import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
+
+const dynamicStructure: ExamStructureSnapshot = {
+  sections: [
+    {
+      id: "section-z",
+      title: "First section",
+      questions: [
+        {
+          id: "question-z",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          maxScoreHundredths: 500,
+        },
+        {
+          id: "question-a",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+          maxScoreHundredths: 500,
+        },
+      ],
+    },
+    {
+      id: "section-a",
+      title: "Second section",
+      questions: [
+        {
+          id: "question-m",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+          maxScoreHundredths: 500,
+        },
+      ],
+    },
+  ],
+};
 
 function createValidExamInput() {
   return {
@@ -48,6 +83,9 @@ describe("exam answer-key validation", () => {
     expect(parsed.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
     expect(parsed.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
     expect(parsed.assignedStudentIds).toEqual([]);
+    if (!("questionTopicIds" in parsed)) {
+      throw new Error("Expected legacy Exam input.");
+    }
     expect(parsed.questionTopicIds).toEqual(createEmptyQuestionTopicIds());
   });
 
@@ -64,6 +102,9 @@ describe("exam answer-key validation", () => {
       questionTopicIds,
     });
 
+    if (!("questionTopicIds" in parsed)) {
+      throw new Error("Expected legacy Exam input.");
+    }
     expect(parsed.questionTopicIds.partOne[0]).toEqual([
       firstTopicId,
       secondTopicId,
@@ -194,5 +235,55 @@ describe("exam answer-key validation", () => {
         confirmAnswerKeyCorrection: false,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("dynamic Exam question-topic validation", () => {
+  const firstTopicId = "64b000000000000000000011";
+  const secondTopicId = "64b000000000000000000012";
+  const schema = createDynamicExamQuestionTopicsSchema(dynamicStructure);
+
+  it("assigns topics by question ID in canonical snapshot order", () => {
+    const parsed = schema.parse([
+      { questionId: "question-a", topicIds: [secondTopicId] },
+      { questionId: "question-z", topicIds: [firstTopicId] },
+    ]);
+
+    expect(parsed).toEqual([
+      { questionId: "question-z", topicIds: [firstTopicId] },
+      { questionId: "question-a", topicIds: [secondTopicId] },
+      { questionId: "question-m", topicIds: [] },
+    ]);
+  });
+
+  it("rejects a question ID outside the structure snapshot", () => {
+    expect(
+      schema.safeParse([
+        { questionId: "unknown-question", topicIds: [firstTopicId] },
+      ]).success,
+    ).toBe(false);
+  });
+
+  it("rejects duplicate question IDs", () => {
+    expect(
+      schema.safeParse([
+        { questionId: "question-z", topicIds: [firstTopicId] },
+        { questionId: "question-z", topicIds: [secondTopicId] },
+      ]).success,
+    ).toBe(false);
+  });
+
+  it("deduplicates topic IDs within a question assignment", () => {
+    const parsed = schema.parse([
+      {
+        questionId: "question-z",
+        topicIds: [firstTopicId, secondTopicId, firstTopicId],
+      },
+    ]);
+
+    expect(parsed[0]).toEqual({
+      questionId: "question-z",
+      topicIds: [firstTopicId, secondTopicId],
+    });
   });
 });

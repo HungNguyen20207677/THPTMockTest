@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Types } from "mongoose";
 
 import {
   EXAM_VISIBILITY_MODE,
@@ -21,5 +22,18 @@ describe("Exam model", () => {
     expect(exam.toObject().questionTopicIds).toEqual(
       createEmptyQuestionTopicIds(),
     );
+  });
+
+  it("casts dynamic Topic IDs without adding assignment subdocument IDs", () => {
+    const topicId = "64b000000000000000000011";
+    const exam = new ExamModel({
+      questionTopics: [{ questionId: "question-z", topicIds: [topicId] }],
+    });
+    const [questionTopic] = exam.toObject().questionTopics ?? [];
+
+    expect(questionTopic.questionId).toBe("question-z");
+    expect(questionTopic.topicIds[0]).toBeInstanceOf(Types.ObjectId);
+    expect(questionTopic.topicIds[0].toString()).toBe(topicId);
+    expect(questionTopic).not.toHaveProperty("_id");
   });
 });

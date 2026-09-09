@@ -35,6 +35,7 @@ import {
   updateExamRecordStatus,
   type ExamPdfOperationLease,
   type ExamPersistenceRecord,
+  type SaveExamRecordInput,
 } from "@/lib/db/dao/exam.dao";
 import { countTopicRecordsByIds } from "@/lib/db/dao/topic.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
@@ -42,7 +43,10 @@ import { withMongoTransaction } from "@/lib/db/mongoose";
 import { reserveStudentsForExamAssignment } from "@/lib/db/dao/user.dao";
 import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
 import { gradeExamAttemptAnswers } from "@/lib/exam/grading";
-import { getUniqueExamTopicIds } from "@/lib/exam/question-topics";
+import {
+  createEmptyQuestionTopicIds,
+  getUniqueExamTopicIds,
+} from "@/lib/exam/question-topics";
 import {
   createExamStructureSnapshot,
   examStructureContainsQuestionType,
@@ -62,6 +66,7 @@ import {
 } from "@/lib/errors/app-error";
 import {
   createDynamicExamAnswerKeySchema,
+  createDynamicExamQuestionTopicsSchema,
   examAnswerKeySchema,
   examPdfSchema,
   part3InputModeSchema,
@@ -75,6 +80,7 @@ import type {
   ExamPdf,
   ExamPdfUploadReference,
   ExamPdfUploadTicket,
+  ExamQuestionTopic,
   ExamQuestionTopicIds,
   ExamStatus,
   ExamSummary,
@@ -128,6 +134,7 @@ function toExamDetail(
     pdf: exam.pdf,
     answerKey: exam.answerKey,
     questionTopicIds: exam.questionTopicIds,
+    ...(exam.questionTopics ? { questionTopics: exam.questionTopics } : {}),
   };
 }
 
@@ -168,10 +175,14 @@ async function reserveExamAssignment(
 }
 
 async function assertExamTopicsExist(
-  questionTopicIds: ExamQuestionTopicIds,
+  source: {
+    questionTopicIds: ExamQuestionTopicIds;
+    questionTopics?: ExamQuestionTopic[];
+    structureSnapshot?: ExamStructureSnapshot;
+  },
   session: ClientSession,
 ): Promise<void> {
-  const topicIds = getUniqueExamTopicIds(questionTopicIds);
+  const topicIds = getUniqueExamTopicIds(source);
 
   if (
     topicIds.length > 0 &&
@@ -181,6 +192,23 @@ async function assertExamTopicsExist(
       "Một hoặc nhiều chủ đề được chọn không tồn tại.",
     );
   }
+}
+
+function normalizeDynamicQuestionTopics(
+  questionTopics: ExamQuestionTopic[],
+  structure: ExamStructureSnapshot,
+): ExamQuestionTopic[] {
+  const parsed =
+    createDynamicExamQuestionTopicsSchema(structure).safeParse(questionTopics);
+
+  if (!parsed.success) {
+    throw new RequestValidationError(
+      parsed.error.issues[0]?.message ??
+        "Danh sách chủ đề của câu hỏi không hợp lệ.",
+    );
+  }
+
+  return parsed.data;
 }
 
 function getAnswerKeyValidationError(
@@ -424,11 +452,29 @@ export async function createExam(
     }
 
     assertAnswerKeyMatchesStructure(input.answerKey, structureSnapshot);
-    const examInput = {
-      ...input,
-      ...normalizeExamAssignment(input),
-      ...(structureSnapshot ? { structureSnapshot } : {}),
-    };
+    let examInput: Omit<SaveExamRecordInput, "pdf">;
+
+    if ("structureTemplateId" in input) {
+      if (!structureSnapshot) {
+        throw new ExamStructureTemplateNotFoundError();
+      }
+
+      examInput = {
+        ...input,
+        ...normalizeExamAssignment(input),
+        questionTopicIds: createEmptyQuestionTopicIds(),
+        questionTopics: normalizeDynamicQuestionTopics(
+          input.questionTopics,
+          structureSnapshot,
+        ),
+        structureSnapshot,
+      };
+    } else {
+      examInput = {
+        ...input,
+        ...normalizeExamAssignment(input),
+      };
+    }
     const pdf = await verifyExamPdfAsset(pdfUpload);
 
     if (examInput.status === EXAM_STATUS.PUBLISHED) {
@@ -443,7 +489,7 @@ export async function createExam(
 
     const exam = await withMongoTransaction(async (session) => {
       await reserveExamAssignment(examInput, session);
-      await assertExamTopicsExist(examInput.questionTopicIds, session);
+      await assertExamTopicsExist(examInput, session);
       return createExamRecord({ ...examInput, pdf }, actor.id, session);
     });
     return toExamDetail(exam, false);
@@ -526,8 +572,33 @@ export async function editExam(
           assignedStudentIds: input.assignedStudentIds ?? [],
         };
   const assignment = normalizeExamAssignment(requestedAssignment);
-  const questionTopicIds =
-    input.questionTopicIds ?? currentExam.questionTopicIds;
+  let questionTopicIds = currentExam.questionTopicIds;
+  let questionTopics = currentExam.questionTopics;
+
+  if (currentExam.structureSnapshot) {
+    if (input.questionTopicIds !== undefined) {
+      throw new RequestValidationError(
+        "Đề thi động phải gắn chủ đề theo mã câu hỏi.",
+      );
+    }
+
+    questionTopics = normalizeDynamicQuestionTopics(
+      input.questionTopics ?? questionTopics ?? [],
+      currentExam.structureSnapshot,
+    );
+  } else {
+    if (input.questionTopics !== undefined) {
+      throw new RequestValidationError(
+        "Đề thi cũ phải gắn chủ đề theo cấu trúc cố định.",
+      );
+    }
+
+    questionTopicIds = input.questionTopicIds ?? questionTopicIds;
+  }
+
+  const topicMetadata = currentExam.structureSnapshot
+    ? { questionTopicIds, questionTopics }
+    : { questionTopicIds };
 
   const examInput = {
     title: input.title,
@@ -537,7 +608,7 @@ export async function editExam(
     part3InputMode: input.part3InputMode,
     settings: input.settings,
     answerKey: input.answerKey,
-    questionTopicIds,
+    ...topicMetadata,
   };
   const replacementLeases = replacementPdfUpload
     ? await acquirePdfUploadLeases(replacementPdfUpload, [
@@ -570,7 +641,13 @@ export async function editExam(
       : currentExam.answerKeyRevision;
     const updatedExam = await withMongoTransaction(async (session) => {
       await reserveExamAssignment(assignment, session);
-      await assertExamTopicsExist(examInput.questionTopicIds, session);
+      await assertExamTopicsExist(
+        {
+          ...topicMetadata,
+          structureSnapshot: currentExam.structureSnapshot,
+        },
+        session,
+      );
 
       if (hasAttempts && answerKeyChanged) {
         const correctedExam = await updateExamAnswerKeyRecord(
@@ -583,7 +660,7 @@ export async function editExam(
             assignedStudentIds: examInput.assignedStudentIds,
             settings: examInput.settings,
             answerKey: examInput.answerKey,
-            questionTopicIds: examInput.questionTopicIds,
+            ...topicMetadata,
           },
           currentExam.updatedAt,
           currentExam.answerKeyRevision,
@@ -636,7 +713,7 @@ export async function editExam(
             visibilityMode: examInput.visibilityMode,
             assignedStudentIds: examInput.assignedStudentIds,
             settings: examInput.settings,
-            questionTopicIds: examInput.questionTopicIds,
+            ...topicMetadata,
           },
           currentExam.updatedAt,
           session,

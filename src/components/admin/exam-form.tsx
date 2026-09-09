@@ -43,13 +43,18 @@ import {
   areExamAnswerKeysEqual,
   isDynamicExamAnswerKey,
 } from "@/lib/exam/answer-key";
-import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
+import {
+  createEmptyQuestionTopicIds,
+  createEmptyQuestionTopics,
+  normalizeExamQuestionTopics,
+} from "@/lib/exam/question-topics";
 import {
   canonicalShortAnswerToSlots,
   createEmptyShortAnswerSlots,
 } from "@/lib/exam/short-answer";
 import {
   createDynamicExamAnswerKeySchema,
+  createDynamicExamQuestionTopicsSchema,
   examEditorSchema,
   type ExamEditorInput,
   type ExamEditorOutput,
@@ -59,6 +64,7 @@ import type {
   AnyExamAnswerKey,
   ExamDetail,
   ExamPdf,
+  ExamQuestionTopic,
   Part3InputMode,
   PartOneAnswer,
   ShortAnswerSlots,
@@ -130,19 +136,20 @@ function createEmptyEditorValues(mode: ExamFormProps["mode"]): ExamEditorInput {
       showScoreAfterSubmission: true,
       showAnswersAfterSubmission: false,
     },
-    questionTopicIds: createEmptyQuestionTopicIds(),
   };
 
   if (mode === "create") {
     return {
       ...commonValues,
       structureTemplateId: "",
+      questionTopics: [],
       answerKey: { answersByQuestionId: {} },
     };
   }
 
   return {
     ...commonValues,
+    questionTopicIds: createEmptyQuestionTopicIds(),
     answerKey: {
       partOne: Array.from(
         { length: EXAM_STRUCTURE.partOneQuestions },
@@ -171,13 +178,6 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     assignedStudentIds: [...exam.assignedStudentIds],
     part3InputMode: exam.part3InputMode,
     settings: { ...exam.settings },
-    questionTopicIds: {
-      partOne: exam.questionTopicIds.partOne.map((topicIds) => [...topicIds]),
-      partTwo: exam.questionTopicIds.partTwo.map((topicIds) => [...topicIds]),
-      partThree: exam.questionTopicIds.partThree.map((topicIds) => [
-        ...topicIds,
-      ]),
-    },
   };
 
   if (exam.structureSnapshot && isDynamicExamAnswerKey(exam.answerKey)) {
@@ -206,6 +206,10 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     return {
       ...commonValues,
       structureTemplateId: exam.structureTemplateId ?? "",
+      questionTopics: normalizeExamQuestionTopics(
+        exam.structureSnapshot,
+        exam.questionTopics,
+      ),
       answerKey: { answersByQuestionId },
     };
   }
@@ -216,6 +220,13 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
 
   return {
     ...commonValues,
+    questionTopicIds: {
+      partOne: exam.questionTopicIds.partOne.map((topicIds) => [...topicIds]),
+      partTwo: exam.questionTopicIds.partTwo.map((topicIds) => [...topicIds]),
+      partThree: exam.questionTopicIds.partThree.map((topicIds) => [
+        ...topicIds,
+      ]),
+    },
     answerKey: {
       partOne: [...exam.answerKey.partOne],
       partTwo: exam.answerKey.partTwo.map((answer) => ({ ...answer })),
@@ -308,6 +319,10 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const structureTemplateId = useWatch({
     control,
     name: "structureTemplateId",
+  });
+  const dynamicQuestionTopics = useWatch({
+    control,
+    name: "questionTopics",
   });
   const selectedTemplate = templates.find(
     (template) => template.id === structureTemplateId,
@@ -529,6 +544,11 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
         : { answersByQuestionId: {} },
       { shouldDirty: true, shouldValidate: false },
     );
+    setValue(
+      "questionTopics",
+      template ? createEmptyQuestionTopics(template) : [],
+      { shouldDirty: true, shouldValidate: false },
+    );
     setDynamicShortAnswerTextValidity(
       template
         ? Object.fromEntries(
@@ -609,6 +629,26 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
 
       return { ...currentValidity, [questionId]: isValid };
     });
+  }
+
+  function setDynamicQuestionTopicIds(questionId: string, topicIds: string[]) {
+    if (!activeStructure) {
+      return;
+    }
+
+    const currentQuestionTopics = Array.isArray(dynamicQuestionTopics)
+      ? dynamicQuestionTopics
+      : [];
+    setValue(
+      "questionTopics",
+      normalizeExamQuestionTopics(activeStructure, [
+        ...currentQuestionTopics.filter(
+          (questionTopic) => questionTopic.questionId !== questionId,
+        ),
+        { questionId, topicIds },
+      ]),
+      { shouldDirty: true, shouldValidate: true },
+    );
   }
 
   async function saveExam(
@@ -697,6 +737,20 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
       ) {
         setSubmissionError(
           "Đáp án không khớp với cấu trúc đã chọn. Vui lòng kiểm tra lại.",
+        );
+        return;
+      }
+
+      if (
+        activeStructure &&
+        (!("questionTopics" in input) ||
+          !Array.isArray(input.questionTopics) ||
+          !createDynamicExamQuestionTopicsSchema(activeStructure).safeParse(
+            input.questionTopics,
+          ).success)
+      ) {
+        setSubmissionError(
+          "Chủ đề câu hỏi không khớp với cấu trúc đã chọn. Vui lòng kiểm tra lại.",
         );
         return;
       }
@@ -841,6 +895,32 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                         {section.questions.map((question, questionIndex) => {
                           const answer = answersByQuestionId[question.id];
                           const questionLabel = `Câu ${questionIndex + 1}`;
+                          const questionTopicIds = Array.isArray(
+                            dynamicQuestionTopics,
+                          )
+                            ? (dynamicQuestionTopics.find(
+                                (questionTopic: ExamQuestionTopic) =>
+                                  questionTopic.questionId === question.id,
+                              )?.topicIds ?? [])
+                            : [];
+                          const topicSelector = (
+                            <QuestionTopicSelector
+                              label="Chủ đề kiến thức"
+                              topics={topics}
+                              value={questionTopicIds}
+                              disabled={isBusy}
+                              isLoading={isLoadingTopics}
+                              loadError={topicLoadError}
+                              onChange={(topicIds) =>
+                                setDynamicQuestionTopicIds(
+                                  question.id,
+                                  topicIds,
+                                )
+                              }
+                              onCreateTopic={handleCreateTopic}
+                              onRetry={retryTopicLoad}
+                            />
+                          );
                           const scoreLabel = `${(
                             question.maxScoreHundredths / 100
                           ).toLocaleString("vi-VN", {
@@ -886,6 +966,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                                     </option>
                                   ))}
                                 </select>
+                                {topicSelector}
                               </div>
                             );
                           }
@@ -909,6 +990,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                                 <legend className="px-1 font-medium">
                                   {questionLabel} · {scoreLabel}
                                 </legend>
+                                {topicSelector}
                                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                                   {PART_TWO_STATEMENTS.map((statement) => (
                                     <div key={statement} className="space-y-2">
@@ -960,7 +1042,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                             return (
                               <div
                                 key={question.id}
-                                className="border-border rounded-lg border p-4"
+                                className="border-border space-y-4 rounded-lg border p-4"
                               >
                                 {part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
                                   <ShortAnswerBubbleInput
@@ -989,6 +1071,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                                     }
                                   />
                                 )}
+                                {topicSelector}
                               </div>
                             );
                           }

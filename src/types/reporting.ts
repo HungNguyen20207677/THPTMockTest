@@ -4,6 +4,7 @@ import type {
 } from "@/types/exam-attempt";
 import type { ExamStatus } from "@/types/exam";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
+import type { ExamStructureQuestionType } from "@/types/exam-structure-template";
 import type { StudentAccount } from "@/types/user";
 
 export interface PaginationMetadata {
@@ -161,6 +162,46 @@ export interface AdminExamQuestionStatistics {
   partThree: AdminExamQuestionCorrectnessStatistics[];
 }
 
+interface AdminExamDynamicQuestionIdentity {
+  sectionId: string;
+  sectionTitle: string;
+  questionId: string;
+  questionNumber: number;
+  questionType: ExamStructureQuestionType;
+}
+
+export interface AdminExamDynamicQuestionCorrectnessStatistics extends AdminExamDynamicQuestionIdentity {
+  completedAttemptCount: number;
+  correctCount: number;
+  incorrectCount: number;
+  correctRatePercent: number | null;
+}
+
+export interface AdminExamDynamicTrueFalseQuestionStatistics extends AdminExamDynamicQuestionIdentity {
+  completedAttemptCount: number;
+  fullCorrectCount: number;
+  fullCorrectRatePercent: number | null;
+  averageScoreHundredths: number | null;
+  statements: {
+    a: AdminExamPartTwoStatementStatistics;
+    b: AdminExamPartTwoStatementStatistics;
+    c: AdminExamPartTwoStatementStatistics;
+    d: AdminExamPartTwoStatementStatistics;
+  };
+}
+
+export type AdminExamDynamicQuestionStatisticsItem =
+  | AdminExamDynamicQuestionCorrectnessStatistics
+  | AdminExamDynamicTrueFalseQuestionStatistics;
+
+export interface AdminExamDynamicQuestionStatistics {
+  sections: Array<{
+    sectionId: string;
+    sectionTitle: string;
+    questions: AdminExamDynamicQuestionStatisticsItem[];
+  }>;
+}
+
 export interface AdminExamTopicStatistics {
   topicId: string;
   topicName: string;
@@ -178,6 +219,7 @@ export interface AdminExamResults {
   autoSubmittedAttemptCount: number;
   statistics: ScoreStatistics;
   questionStatistics: AdminExamQuestionStatistics;
+  dynamicQuestionStatistics?: AdminExamDynamicQuestionStatistics;
   topicStatistics: AdminExamTopicStatistics[];
   students: AdminExamStudentPerformance[];
 }

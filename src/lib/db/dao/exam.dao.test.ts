@@ -34,7 +34,11 @@ import {
   EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
-import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
+import {
+  createEmptyQuestionTopicIds,
+  createEmptyQuestionTopics,
+} from "@/lib/exam/question-topics";
 import {
   findExamRecordById,
   findStudentExamRecordById,
@@ -44,6 +48,28 @@ import {
   removeStudentFromExamAssignments,
   reserveExamForAttemptCreation,
 } from "@/lib/db/dao/exam.dao";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
+
+const dynamicStructureSnapshot: ExamStructureSnapshot = {
+  sections: [
+    {
+      id: "section-z",
+      title: "First section",
+      questions: [
+        {
+          id: "question-z",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          maxScoreHundredths: 500,
+        },
+        {
+          id: "question-a",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+          maxScoreHundredths: 500,
+        },
+      ],
+    },
+  ],
+};
 
 const legacyExam = {
   _id: { toString: () => "legacy-exam-id" },
@@ -92,6 +118,60 @@ describe("Exam DAO compatibility", () => {
     expect(exam?.questionTopicIds).toEqual(createEmptyQuestionTopicIds());
     expect(exam).not.toHaveProperty("structureTemplateId");
     expect(exam).not.toHaveProperty("structureSnapshot");
+  });
+
+  it("maps stored dynamic Topic assignments by snapshot question order", async () => {
+    const firstTopicId = "64b000000000000000000011";
+    const secondTopicId = "64b000000000000000000012";
+    mocks.findById.mockReturnValue({
+      lean: () => ({
+        exec: () =>
+          Promise.resolve({
+            ...legacyExam,
+            structureTemplateId: { toString: () => "template-id" },
+            structureSnapshot: dynamicStructureSnapshot,
+            questionTopics: [
+              {
+                questionId: "question-a",
+                topicIds: [
+                  { toString: () => secondTopicId },
+                  { toString: () => secondTopicId },
+                ],
+              },
+              {
+                questionId: "question-z",
+                topicIds: [{ toString: () => firstTopicId }],
+              },
+            ],
+          }),
+      }),
+    });
+
+    const exam = await findExamRecordById("legacy-exam-id");
+
+    expect(exam?.questionTopics).toEqual([
+      { questionId: "question-z", topicIds: [firstTopicId] },
+      { questionId: "question-a", topicIds: [secondTopicId] },
+    ]);
+  });
+
+  it("hydrates an old dynamic record without questionTopics as empty assignments", async () => {
+    mocks.findById.mockReturnValue({
+      lean: () => ({
+        exec: () =>
+          Promise.resolve({
+            ...legacyExam,
+            structureTemplateId: { toString: () => "template-id" },
+            structureSnapshot: dynamicStructureSnapshot,
+          }),
+      }),
+    });
+
+    const exam = await findExamRecordById("legacy-exam-id");
+
+    expect(exam?.questionTopics).toEqual(
+      createEmptyQuestionTopics(dynamicStructureSnapshot),
+    );
   });
 
   it("maps the legacy student workspace safely to BUBBLE", async () => {
