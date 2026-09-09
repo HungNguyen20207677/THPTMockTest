@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  EXAM_STRUCTURE_QUESTION_TYPE,
   EXAM_STRUCTURE_ITEM_ID_MAX_LENGTH,
   EXAM_STRUCTURE_MAX_QUESTIONS_PER_SECTION,
   EXAM_STRUCTURE_MAX_SECTIONS,
@@ -112,6 +113,23 @@ function validateExamStructure(
         });
       }
       questionIds.add(question.id);
+
+      if (
+        question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE &&
+        question.maxScoreHundredths % 20 !== 0
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Điểm tối đa của câu Đúng/Sai phải chia hết cho 0,20 điểm.",
+          path: [
+            "sections",
+            sectionIndex,
+            "questions",
+            questionIndex,
+            "maxScoreHundredths",
+          ],
+        });
+      }
     });
   });
 

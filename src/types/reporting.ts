@@ -3,6 +3,7 @@ import type {
   StudentExamAttemptResult,
 } from "@/types/exam-attempt";
 import type { ExamStatus } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { StudentAccount } from "@/types/user";
 
 export interface PaginationMetadata {
@@ -27,11 +28,12 @@ export interface ReportingExamIdentity {
 
 export interface AttemptScoreSummary {
   total: number;
-  sections: {
+  sections?: {
     partOne: number;
     partTwo: number;
     partThree: number;
   };
+  sectionsById?: Record<string, number>;
 }
 
 export interface ScoreStatistics {
@@ -88,6 +90,8 @@ export interface AdminAttemptDetail {
   };
   score?: AttemptScoreSummary;
   answerReview?: StudentExamAttemptResult["answerReview"];
+  structureSnapshot?: ExamStructureSnapshot;
+  dynamicAnswerReview?: StudentExamAttemptResult["dynamicAnswerReview"];
 }
 
 export interface AdminStudentExamPerformance {

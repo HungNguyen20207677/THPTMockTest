@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   deleteExamPdf: vi.fn(),
   acquireExamPdfOperationLease: vi.fn(),
   createExamRecord: vi.fn(),
+  findExamStructureTemplateRecordById: vi.fn(),
   deleteExamAttemptRecordsByExamId: vi.fn(),
   listTerminalExamAttemptRegradeSources: vi.fn(),
   replaceTerminalExamAttemptGradings: vi.fn(),
@@ -53,6 +54,11 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
   updateExamRecordStatus: mocks.updateExamRecordStatus,
 }));
 
+vi.mock("@/lib/db/dao/exam-structure-template.dao", () => ({
+  findExamStructureTemplateRecordById:
+    mocks.findExamStructureTemplateRecordById,
+}));
+
 vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   deleteExamAttemptRecordsByExamId: mocks.deleteExamAttemptRecordsByExamId,
   findExamIdsWithAttemptRecords: mocks.findExamIdsWithAttemptRecords,
@@ -80,6 +86,7 @@ import {
   EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
   changeExamStatus,
@@ -89,13 +96,27 @@ import {
   issueExamPdfUploadTicket,
   listExams,
 } from "@/lib/services/exam.service";
-import type { ExamPersistenceRecord } from "@/lib/db/dao/exam.dao";
+import type {
+  ExamPersistenceRecord,
+  SaveExamRecordInput,
+} from "@/lib/db/dao/exam.dao";
+import type { ExamStructureTemplatePersistenceRecord } from "@/lib/db/dao/exam-structure-template.dao";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
+import { isDynamicExamAnswerKey } from "@/lib/exam/answer-key";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
 import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
-import type { UpdateExamInput, UpsertExamInput } from "@/lib/validations/exam";
+import type {
+  DynamicExamUpsertInput,
+  UpdateExamInput,
+  UpsertExamInput,
+} from "@/lib/validations/exam";
+import type { DynamicAttemptAnswers } from "@/types/exam-attempt";
+import type {
+  DynamicExamAnswerKey,
+  ExamPdfUploadReference,
+} from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { AppUser } from "@/types/user";
-import type { ExamPdfUploadReference } from "@/types/exam";
 
 const admin: AppUser = {
   id: "admin-id",
@@ -131,6 +152,72 @@ const replacementPdfUpload: ExamPdfUploadReference = {
 };
 const firstTopicId = "64b000000000000000000011";
 const secondTopicId = "64b000000000000000000012";
+const structureTemplateId = "64b000000000000000000021";
+
+function createDynamicStructureSnapshot(): ExamStructureSnapshot {
+  return {
+    sections: [
+      {
+        id: "section-z",
+        title: "Phần hiển thị thứ nhất",
+        questions: [
+          {
+            id: "question-z-choice",
+            type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+            maxScoreHundredths: 250,
+          },
+          {
+            id: "question-a-true-false",
+            type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+            maxScoreHundredths: 200,
+          },
+        ],
+      },
+      {
+        id: "section-a",
+        title: "Phần hiển thị thứ hai",
+        questions: [
+          {
+            id: "question-y-short-answer",
+            type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+            maxScoreHundredths: 300,
+          },
+          {
+            id: "question-b-choice",
+            type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+            maxScoreHundredths: 250,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function createDynamicAnswerKey(
+  firstChoice: "A" | "B" = "A",
+): DynamicExamAnswerKey {
+  return {
+    answersByQuestionId: {
+      "question-z-choice": firstChoice,
+      "question-a-true-false": { a: true, b: false, c: true, d: false },
+      "question-y-short-answer": "0.5",
+      "question-b-choice": "D",
+    },
+  };
+}
+
+function createStructureTemplate(
+  structure = createDynamicStructureSnapshot(),
+): ExamStructureTemplatePersistenceRecord {
+  return {
+    id: structureTemplateId,
+    name: "Mẫu cấu trúc tùy chỉnh",
+    isBuiltIn: false,
+    sections: structure.sections,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+  };
+}
 
 function createValidInput(): UpsertExamInput {
   return {
@@ -196,6 +283,8 @@ describe("exam service", () => {
       Promise.resolve({ publicId, token: `lease-${publicId}` }),
     );
     mocks.createExamRecord.mockReset();
+    mocks.findExamStructureTemplateRecordById.mockReset();
+    mocks.findExamStructureTemplateRecordById.mockResolvedValue(null);
     mocks.deleteExamAttemptRecordsByExamId.mockReset();
     mocks.deleteExamAttemptRecordsByExamId.mockResolvedValue(0);
     mocks.listTerminalExamAttemptRegradeSources.mockReset();
@@ -251,6 +340,9 @@ describe("exam service", () => {
 
   it("rejects publication when the stored answer key is incomplete", async () => {
     const draft = createStoredExam();
+    if (isDynamicExamAnswerKey(draft.answerKey)) {
+      throw new Error("Expected a legacy answer key fixture.");
+    }
     const incompleteAnswerKey = {
       ...draft.answerKey,
       partOne: draft.answerKey.partOne.slice(0, 11),
@@ -334,6 +426,82 @@ describe("exam service", () => {
       [firstTopicId],
       mocks.transactionSession,
     );
+    expect(mocks.createExamRecord).not.toHaveBeenCalled();
+  });
+
+  it("resolves and snapshots a custom template in exact structure order", async () => {
+    const template = createStructureTemplate();
+    const expectedSnapshot = structuredClone({ sections: template.sections });
+    const input = {
+      ...createValidInput(),
+      structureTemplateId,
+      answerKey: createDynamicAnswerKey(),
+    } satisfies DynamicExamUpsertInput;
+    let persistedInput: SaveExamRecordInput | undefined;
+    mocks.findExamStructureTemplateRecordById.mockResolvedValue(template);
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.createExamRecord.mockImplementation(
+      async (examInput: SaveExamRecordInput, createdBy: string) => {
+        persistedInput = examInput;
+        return createStoredExam({ ...examInput, createdBy });
+      },
+    );
+
+    const result = await createExam(admin, input, replacementPdfUpload);
+
+    expect(mocks.findExamStructureTemplateRecordById).toHaveBeenCalledWith(
+      structureTemplateId,
+    );
+    expect(mocks.createExamRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        structureTemplateId,
+        structureSnapshot: expectedSnapshot,
+      }),
+      admin.id,
+      mocks.transactionSession,
+    );
+
+    template.sections.reverse();
+    template.sections[0].title = "Đã thay đổi";
+    template.sections[0].questions.reverse();
+    template.sections[0].questions[0].id = "mutated-question";
+
+    expect(persistedInput?.structureSnapshot).toEqual(expectedSnapshot);
+    expect(result.structureSnapshot).toEqual(expectedSnapshot);
+  });
+
+  it("rejects Exam creation from an ESSAY_IMAGE template", async () => {
+    const template = createStructureTemplate({
+      sections: [
+        {
+          id: "essay-section",
+          title: "Phần tự luận hình ảnh",
+          questions: [
+            {
+              id: "essay-image-question",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+              maxScoreHundredths: 1000,
+            },
+          ],
+        },
+      ],
+    });
+    const input = {
+      ...createValidInput(),
+      structureTemplateId,
+      answerKey: {
+        answersByQuestionId: { "essay-image-question": "A" },
+      },
+    } satisfies DynamicExamUpsertInput;
+    mocks.findExamStructureTemplateRecordById.mockResolvedValue(template);
+
+    await expect(
+      createExam(admin, input, replacementPdfUpload),
+    ).rejects.toMatchObject({
+      code: "ESSAY_IMAGE_NOT_SUPPORTED",
+      statusCode: 422,
+    });
+    expect(mocks.verifyExamPdfAsset).not.toHaveBeenCalled();
     expect(mocks.createExamRecord).not.toHaveBeenCalled();
   });
 
@@ -694,6 +862,99 @@ describe("exam service", () => {
     ).toBe(true);
     expect(replacements[0].grading.totalScoreHundredths).toBe(25);
     expect(replacements[1].grading.totalScoreHundredths).toBe(0);
+  });
+
+  it("corrects and dynamically regrades ID-keyed answers for a custom Exam", async () => {
+    const structureSnapshot = createDynamicStructureSnapshot();
+    const currentExam = createStoredExam({
+      structureTemplateId,
+      structureSnapshot,
+      answerKey: createDynamicAnswerKey(),
+    });
+    const correctedAnswerKey = createDynamicAnswerKey("B");
+    const correctedExam = createStoredExam({
+      structureTemplateId,
+      structureSnapshot,
+      answerKey: correctedAnswerKey,
+      answerKeyRevision: 2,
+    });
+    const answers: DynamicAttemptAnswers = {
+      answersByQuestionId: {
+        "question-b-choice": "D",
+        "question-y-short-answer": ["0", ",", "5", null],
+        "question-a-true-false": {
+          a: true,
+          b: false,
+          c: true,
+          d: false,
+        },
+        "question-z-choice": "B",
+      },
+    };
+    const input: UpdateExamInput = {
+      ...createValidInput(),
+      answerKey: correctedAnswerKey,
+      expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+    };
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+    mocks.updateExamAnswerKeyRecord.mockResolvedValue(correctedExam);
+    mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([
+      { id: "dynamic-attempt", answers },
+    ]);
+    mocks.replaceTerminalExamAttemptGradings.mockResolvedValue(1);
+
+    const result = await editExam(
+      admin,
+      currentExam.id,
+      input,
+      undefined,
+      true,
+    );
+
+    expect(result.answerKey).toEqual(correctedAnswerKey);
+    expect(mocks.listTerminalExamAttemptRegradeSources).toHaveBeenCalledWith(
+      currentExam.id,
+      mocks.transactionSession,
+      structureSnapshot,
+    );
+    expect(mocks.replaceTerminalExamAttemptGradings).toHaveBeenCalledWith(
+      currentExam.id,
+      [
+        {
+          attemptId: "dynamic-attempt",
+          grading: {
+            answerKeyRevision: 2,
+            totalScoreHundredths: 1000,
+            sectionScoresHundredths: {
+              "section-z": 450,
+              "section-a": 550,
+            },
+            questionsById: {
+              "question-z-choice": {
+                isCorrect: true,
+                scoreHundredths: 250,
+              },
+              "question-a-true-false": {
+                correctStatementCount: 4,
+                scoreHundredths: 200,
+                statements: { a: true, b: true, c: true, d: true },
+              },
+              "question-y-short-answer": {
+                isCorrect: true,
+                scoreHundredths: 300,
+              },
+              "question-b-choice": {
+                isCorrect: true,
+                scoreHundredths: 250,
+              },
+            },
+          },
+        },
+      ],
+      expect.any(Date),
+      mocks.transactionSession,
+    );
   });
 
   it("rolls back the corrected key and regrades when the transaction fails", async () => {

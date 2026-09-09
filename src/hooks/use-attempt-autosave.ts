@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { AttemptAnswers } from "@/types/exam-attempt";
+import type { ExamAttemptAnswers } from "@/types/exam-attempt";
 
 const AUTOSAVE_DEBOUNCE_MS = 700;
 const AUTOSAVE_RETRY_MS = 3000;
@@ -22,17 +22,17 @@ interface SaveAnswersResult {
 }
 
 interface UseAttemptAutosaveOptions {
-  answers: AttemptAnswers;
-  initialAnswers: AttemptAnswers;
+  answers: ExamAttemptAnswers;
+  initialAnswers: ExamAttemptAnswers;
   initialLastSavedAt?: string;
   enabled: boolean;
   isPayloadValid: boolean;
   hasLocalDraft?: boolean;
-  saveAnswers: (answers: AttemptAnswers) => Promise<SaveAnswersResult>;
+  saveAnswers: (answers: ExamAttemptAnswers) => Promise<SaveAnswersResult>;
 }
 
 interface AnswerSnapshot {
-  answers: AttemptAnswers;
+  answers: ExamAttemptAnswers;
   fingerprint: string;
 }
 
@@ -41,7 +41,7 @@ interface FlushWaiter {
   reject: (error: unknown) => void;
 }
 
-function createSnapshot(answers: AttemptAnswers): AnswerSnapshot {
+function createSnapshot(answers: ExamAttemptAnswers): AnswerSnapshot {
   return {
     answers,
     fingerprint: JSON.stringify(answers),

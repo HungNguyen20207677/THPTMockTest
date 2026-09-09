@@ -2,14 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  useEffect,
-  useEffectEvent,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { CountdownTimer } from "@/components/exam/countdown-timer";
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
@@ -34,6 +27,7 @@ import {
   submitStudentExamAttempt,
 } from "@/lib/api/student-exams";
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
   EXAM_STRUCTURE,
   PART3_INPUT_MODE,
@@ -42,6 +36,7 @@ import {
 } from "@/lib/constants/exam";
 import {
   countAnsweredPartTwoStatements,
+  getDynamicAttemptAnswerProgress,
   getAttemptAnswerProgress,
 } from "@/lib/exam/attempt-answers";
 import {
@@ -60,10 +55,18 @@ import {
   type AutosaveStatus,
 } from "@/hooks/use-attempt-autosave";
 import { cn } from "@/lib/utils";
-import { attemptAnswersSchema } from "@/lib/validations/attempt-answers";
+import {
+  createAttemptAnswersSchemaForStructure,
+  isDynamicAttemptAnswers,
+} from "@/lib/validations/attempt-answers";
 import type {
   AttemptAnswerProgress,
   AttemptAnswers,
+  AttemptPartTwoAnswer,
+  DynamicAttemptAnswer,
+  DynamicAttemptAnswerProgress,
+  DynamicAttemptAnswers,
+  ExamAttemptAnswers,
   StudentExamAttemptContext,
 } from "@/types/exam-attempt";
 import type {
@@ -71,6 +74,7 @@ import type {
   PartOneAnswer,
   ShortAnswerSlots,
 } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 const submittedAtFormatter = new Intl.DateTimeFormat("vi-VN", {
   dateStyle: "medium",
@@ -94,7 +98,7 @@ function getResultHref(examId: string, attemptId: string): string {
 
 interface AnswerSheetProps {
   answers: AttemptAnswers;
-  setAnswers: Dispatch<SetStateAction<AttemptAnswers>>;
+  updateAnswers: (updater: (answers: AttemptAnswers) => AttemptAnswers) => void;
   disabled: boolean;
   progress: AttemptAnswerProgress;
   part3InputMode: Part3InputMode;
@@ -217,14 +221,58 @@ function QuestionOverview({
   );
 }
 
+function getDynamicQuestionTargetId(
+  sectionIndex: number,
+  questionIndex: number,
+): string {
+  return `dynamic-question-${sectionIndex + 1}-${questionIndex + 1}`;
+}
+
+function DynamicQuestionOverview({
+  structure,
+  progress,
+  onQuestionSelect,
+}: {
+  structure: ExamStructureSnapshot;
+  progress: DynamicAttemptAnswerProgress;
+  onQuestionSelect: (targetId: string) => void;
+}) {
+  return (
+    <nav aria-label="Tổng quan câu trả lời" className="space-y-3">
+      {structure.sections.map((section, sectionIndex) => (
+        <div key={section.id} className="flex items-start gap-3">
+          <p className="w-20 shrink-0 pt-1.5 text-xs font-semibold">
+            {section.title}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {section.questions.map((question, questionIndex) => (
+              <QuestionStatusLink
+                key={question.id}
+                targetId={getDynamicQuestionTargetId(
+                  sectionIndex,
+                  questionIndex,
+                )}
+                questionNumber={questionIndex + 1}
+                answered={progress.byQuestionId[question.id] ?? false}
+                sectionLabel={section.title}
+                onSelect={onQuestionSelect}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
 function PartOneSection({
   answers,
-  setAnswers,
+  updateAnswers,
   disabled,
   progress,
 }: AnswerSheetProps) {
   function selectAnswer(questionIndex: number, choice: PartOneAnswer) {
-    setAnswers((currentAnswers) => {
+    updateAnswers((currentAnswers) => {
       const partOne = [...currentAnswers.partOne];
       partOne[questionIndex] = choice;
       return { ...currentAnswers, partOne };
@@ -292,7 +340,7 @@ function PartOneSection({
 
 function PartTwoSection({
   answers,
-  setAnswers,
+  updateAnswers,
   disabled,
   progress,
 }: AnswerSheetProps) {
@@ -301,7 +349,7 @@ function PartTwoSection({
     statement: (typeof PART_TWO_STATEMENTS)[number],
     value: boolean,
   ) {
-    setAnswers((currentAnswers) => {
+    updateAnswers((currentAnswers) => {
       const partTwo = currentAnswers.partTwo.map((answer, index) =>
         index === questionIndex ? { ...answer, [statement]: value } : answer,
       );
@@ -405,13 +453,13 @@ function PartTwoSection({
 
 function PartThreeSection({
   answers,
-  setAnswers,
+  updateAnswers,
   disabled,
   part3InputMode,
   onPartThreeTextValidityChange,
 }: AnswerSheetProps) {
   function updateShortAnswer(questionIndex: number, value: ShortAnswerSlots) {
-    setAnswers((currentAnswers) => {
+    updateAnswers((currentAnswers) => {
       const partThree = [...currentAnswers.partThree];
       partThree[questionIndex] = value;
       return { ...currentAnswers, partThree };
@@ -472,6 +520,222 @@ function AnswerSheet(props: AnswerSheetProps) {
       <PartOneSection {...props} />
       <PartTwoSection {...props} />
       <PartThreeSection {...props} />
+    </div>
+  );
+}
+
+interface DynamicAnswerSheetProps {
+  structure: ExamStructureSnapshot;
+  answers: DynamicAttemptAnswers;
+  updateAnswer: (questionId: string, answer: DynamicAttemptAnswer) => void;
+  disabled: boolean;
+  progress: DynamicAttemptAnswerProgress;
+  shortAnswerInputMode: Part3InputMode;
+  onShortAnswerTextValidityChange: (
+    questionId: string,
+    isValid: boolean,
+  ) => void;
+}
+
+const dynamicQuestionTypeLabels = {
+  SINGLE_CHOICE: "Trắc nghiệm nhiều lựa chọn",
+  TRUE_FALSE: "Trắc nghiệm đúng/sai",
+  SHORT_ANSWER: "Trắc nghiệm trả lời ngắn",
+  ESSAY_IMAGE: "Tự luận bằng hình ảnh",
+} as const;
+
+function DynamicAnswerSheet({
+  structure,
+  answers,
+  updateAnswer,
+  disabled,
+  progress,
+  shortAnswerInputMode,
+  onShortAnswerTextValidityChange,
+}: DynamicAnswerSheetProps) {
+  return (
+    <div className="space-y-8 p-4 sm:p-5">
+      {structure.sections.map((section, sectionIndex) => (
+        <section
+          key={section.id}
+          aria-labelledby={`dynamic-section-${sectionIndex + 1}-heading`}
+          className="space-y-3"
+        >
+          <div>
+            <p className="text-primary text-xs font-bold tracking-wider">
+              PHẦN {sectionIndex + 1}
+            </p>
+            <h2
+              id={`dynamic-section-${sectionIndex + 1}-heading`}
+              className="mt-1 text-lg font-semibold"
+            >
+              {section.title}
+            </h2>
+          </div>
+
+          <div className="space-y-3">
+            {section.questions.map((question, questionIndex) => {
+              const answer = answers.answersByQuestionId[question.id];
+              const targetId = getDynamicQuestionTargetId(
+                sectionIndex,
+                questionIndex,
+              );
+              const label = `Câu ${questionIndex + 1}`;
+              const answered = progress.byQuestionId[question.id] ?? false;
+
+              if (
+                question.type === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE
+              ) {
+                const selectedAnswer = answer as PartOneAnswer | null;
+                return (
+                  <fieldset
+                    key={question.id}
+                    id={targetId}
+                    disabled={disabled}
+                    className={cn(
+                      "scroll-mt-40 rounded-lg border p-3",
+                      answered
+                        ? "border-emerald-600/40"
+                        : "border-border border-dashed",
+                    )}
+                  >
+                    <legend className="px-1 text-sm font-semibold">
+                      {label}
+                    </legend>
+                    <p className="text-muted-foreground mb-2 text-xs">
+                      {dynamicQuestionTypeLabels[question.type]}
+                    </p>
+                    <div className="grid grid-cols-4 gap-2">
+                      {PART_ONE_CHOICES.map((choice) => (
+                        <label
+                          key={choice}
+                          className={cn(
+                            "focus-within:border-ring focus-within:ring-ring/50 relative flex h-9 cursor-pointer items-center justify-center rounded-md border text-sm font-semibold transition-colors focus-within:ring-3",
+                            selectedAnswer === choice
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-input bg-background hover:border-primary",
+                            disabled && "cursor-not-allowed opacity-60",
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            name={`dynamic-single-${sectionIndex}-${questionIndex}`}
+                            value={choice}
+                            checked={selectedAnswer === choice}
+                            className="sr-only"
+                            onChange={() => updateAnswer(question.id, choice)}
+                          />
+                          {choice}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                );
+              }
+
+              if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE) {
+                const statementAnswer = answer as AttemptPartTwoAnswer;
+                const answeredStatements =
+                  countAnsweredPartTwoStatements(statementAnswer);
+                return (
+                  <fieldset
+                    key={question.id}
+                    id={targetId}
+                    disabled={disabled}
+                    className={cn(
+                      "scroll-mt-40 rounded-lg border p-3",
+                      answered
+                        ? "border-emerald-600/40"
+                        : "border-border border-dashed",
+                    )}
+                  >
+                    <legend className="px-1 text-sm font-semibold">
+                      {label}
+                    </legend>
+                    <p className="text-muted-foreground mb-2 text-xs">
+                      Đã trả lời {answeredStatements}/
+                      {EXAM_STRUCTURE.partTwoStatementsPerQuestion} ý
+                    </p>
+                    <div className="divide-border divide-y">
+                      {PART_TWO_STATEMENTS.map((statement) => (
+                        <div
+                          key={statement}
+                          className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0"
+                        >
+                          <span className="text-sm font-semibold">
+                            Ý {statement}
+                          </span>
+                          <div className="grid grid-cols-2 gap-2">
+                            {[
+                              { label: "Đúng", value: true },
+                              { label: "Sai", value: false },
+                            ].map((option) => (
+                              <label
+                                key={option.label}
+                                className={cn(
+                                  "focus-within:border-ring focus-within:ring-ring/50 relative flex h-8 min-w-16 cursor-pointer items-center justify-center rounded-md border px-2 text-xs font-medium focus-within:ring-3",
+                                  statementAnswer[statement] === option.value
+                                    ? "border-primary bg-primary text-primary-foreground"
+                                    : "border-input bg-background hover:border-primary",
+                                  disabled && "cursor-not-allowed opacity-60",
+                                )}
+                              >
+                                <input
+                                  type="radio"
+                                  name={`dynamic-true-false-${sectionIndex}-${questionIndex}-${statement}`}
+                                  checked={
+                                    statementAnswer[statement] === option.value
+                                  }
+                                  className="sr-only"
+                                  onChange={() =>
+                                    updateAnswer(question.id, {
+                                      ...statementAnswer,
+                                      [statement]: option.value,
+                                    })
+                                  }
+                                />
+                                {option.label}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </fieldset>
+                );
+              }
+
+              if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER) {
+                const shortAnswer = answer as ShortAnswerSlots;
+                return (
+                  <div key={question.id} id={targetId} className="scroll-mt-40">
+                    {shortAnswerInputMode === PART3_INPUT_MODE.BUBBLE ? (
+                      <ShortAnswerBubbleInput
+                        value={shortAnswer}
+                        onChange={(value) => updateAnswer(question.id, value)}
+                        label={label}
+                        disabled={disabled}
+                      />
+                    ) : (
+                      <ShortAnswerTextInput
+                        value={shortAnswer}
+                        onChange={(value) => updateAnswer(question.id, value)}
+                        label={label}
+                        disabled={disabled}
+                        onValidityChange={(isValid) =>
+                          onShortAnswerTextValidityChange(question.id, isValid)
+                        }
+                      />
+                    )}
+                  </div>
+                );
+              }
+
+              return null;
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -612,7 +876,7 @@ function ActiveAttemptWorkspace({
   const router = useRouter();
   const { exam, attempt: initialAttempt } = initialContext;
   const [context, setContext] = useState(initialContext);
-  const [answers, setAnswers] = useState<AttemptAnswers>(
+  const [answers, setAnswers] = useState<ExamAttemptAnswers>(
     initialAttempt.answers,
   );
   const [hasCountdownExpired, setHasCountdownExpired] = useState(false);
@@ -628,8 +892,24 @@ function ActiveAttemptWorkspace({
     "loading" | "ready" | "error"
   >("loading");
   const [pdfLoadVersion, setPdfLoadVersion] = useState(0);
-  const [partThreeTextValidity, setPartThreeTextValidity] = useState(() =>
-    Array.from({ length: EXAM_STRUCTURE.partThreeQuestions }, () => true),
+  const [shortAnswerTextValidity, setShortAnswerTextValidity] = useState<
+    Record<string, boolean>
+  >(() =>
+    Object.fromEntries(
+      exam.structureSnapshot
+        ? exam.structureSnapshot.sections.flatMap((section) =>
+            section.questions
+              .filter(
+                (question) =>
+                  question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+              )
+              .map((question) => [question.id, true] as const),
+          )
+        : Array.from(
+            { length: EXAM_STRUCTURE.partThreeQuestions },
+            (_, index) => [`legacy-${index}`, true] as const,
+          ),
+    ),
   );
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenSupported, setFullscreenSupported] = useState(true);
@@ -654,7 +934,7 @@ function ActiveAttemptWorkspace({
   const answerSheetRef = useRef<HTMLElement>(null);
   const answerSheetHeaderRef = useRef<HTMLDivElement>(null);
   const fullscreenTrackingRef = useRef(createExamFullscreenTrackingState());
-  const fullscreenExitAnswersRef = useRef<AttemptAnswers | null>(null);
+  const fullscreenExitAnswersRef = useRef<ExamAttemptAnswers | null>(null);
   const leftExamScreenRef = useRef(false);
   const autoSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -664,10 +944,13 @@ function ActiveAttemptWorkspace({
     context.canEditAnswers &&
     !hasCountdownExpired &&
     !isSubmitting;
-  const answerPayloadIsValid = attemptAnswersSchema.safeParse(answers).success;
+  const answerPayloadIsValid = createAttemptAnswersSchemaForStructure(
+    exam.structureSnapshot,
+  ).safeParse(answers).success;
   const hasInvalidPartThreeText =
-    exam.part3InputMode === PART3_INPUT_MODE.TEXT &&
-    partThreeTextValidity.some((isValid) => !isValid);
+    (exam.shortAnswerInputMode ?? exam.part3InputMode) ===
+      PART3_INPUT_MODE.TEXT &&
+    Object.values(shortAnswerTextValidity).some((isValid) => !isValid);
   const canSubmitAnswers = answerPayloadIsValid && !hasInvalidPartThreeText;
   const autosave = useAttemptAutosave({
     answers,
@@ -700,21 +983,48 @@ function ActiveAttemptWorkspace({
       }
     },
   });
-  const progress = getAttemptAnswerProgress(answers);
+  const dynamicAnswers =
+    exam.structureSnapshot && isDynamicAttemptAnswers(answers) ? answers : null;
+  const legacyAnswers =
+    !exam.structureSnapshot && !isDynamicAttemptAnswers(answers)
+      ? answers
+      : null;
+  const dynamicProgress =
+    dynamicAnswers && exam.structureSnapshot
+      ? getDynamicAttemptAnswerProgress(dynamicAnswers, exam.structureSnapshot)
+      : null;
+  const legacyProgress = legacyAnswers
+    ? getAttemptAnswerProgress(legacyAnswers)
+    : null;
+  const progress = dynamicProgress ??
+    legacyProgress ?? {
+      answeredQuestions: 0,
+      totalQuestions: 0,
+    };
 
   function setPartThreeTextAnswerValidity(
     questionIndex: number,
     isValid: boolean,
   ) {
-    setPartThreeTextValidity((currentValidity) => {
-      if (currentValidity[questionIndex] === isValid) {
+    const questionId = `legacy-${questionIndex}`;
+    setShortAnswerTextValidity((currentValidity) => {
+      if (currentValidity[questionId] === isValid) {
         return currentValidity;
       }
 
-      return currentValidity.map((currentValue, index) =>
-        index === questionIndex ? isValid : currentValue,
-      );
+      return { ...currentValidity, [questionId]: isValid };
     });
+  }
+
+  function setDynamicShortAnswerTextValidity(
+    questionId: string,
+    isValid: boolean,
+  ) {
+    setShortAnswerTextValidity((currentValidity) =>
+      currentValidity[questionId] === isValid
+        ? currentValidity
+        : { ...currentValidity, [questionId]: isValid },
+    );
   }
 
   async function handleFullscreenToggle() {
@@ -787,7 +1097,9 @@ function ActiveAttemptWorkspace({
     );
   }
 
-  async function submitFullscreenExitAnswers(answerSnapshot: AttemptAnswers) {
+  async function submitFullscreenExitAnswers(
+    answerSnapshot: ExamAttemptAnswers,
+  ) {
     if (finalSubmissionInFlightRef.current) {
       return;
     }
@@ -842,7 +1154,7 @@ function ActiveAttemptWorkspace({
     }
   }
 
-  function beginFullscreenExitSubmission(answerSnapshot: AttemptAnswers) {
+  function beginFullscreenExitSubmission(answerSnapshot: ExamAttemptAnswers) {
     if (finalSubmissionInFlightRef.current || expirationStartedRef.current) {
       return;
     }
@@ -1465,7 +1777,7 @@ function ActiveAttemptWorkspace({
                 title={
                   canSubmitAnswers
                     ? undefined
-                    : "Hãy hoàn thành hoặc xóa đáp án Phần III chưa hợp lệ."
+                    : "Hãy hoàn thành hoặc xóa đáp án trả lời ngắn chưa hợp lệ."
                 }
                 onClick={() => setIsSubmitDialogOpen(true)}
               >
@@ -1620,14 +1932,22 @@ function ActiveAttemptWorkspace({
                   {progress.answeredQuestions}/{progress.totalQuestions}
                 </span>
               </div>
-              <QuestionOverview
-                progress={progress}
-                onQuestionSelect={navigateToQuestion}
-              />
+              {dynamicProgress && exam.structureSnapshot ? (
+                <DynamicQuestionOverview
+                  structure={exam.structureSnapshot}
+                  progress={dynamicProgress}
+                  onQuestionSelect={navigateToQuestion}
+                />
+              ) : legacyProgress ? (
+                <QuestionOverview
+                  progress={legacyProgress}
+                  onQuestionSelect={navigateToQuestion}
+                />
+              ) : null}
               {!canSubmitAnswers && (
                 <p role="alert" className="text-destructive text-xs leading-5">
-                  Có đáp án Phần III chưa hợp lệ. Hãy hoàn thành giá trị hoặc
-                  xóa nội dung đang nhập để tiếp tục lưu.
+                  Có đáp án trả lời ngắn chưa hợp lệ. Hãy hoàn thành giá trị
+                  hoặc xóa nội dung đang nhập để tiếp tục lưu.
                 </p>
               )}
               <p className="text-muted-foreground text-xs leading-5">
@@ -1636,16 +1956,55 @@ function ActiveAttemptWorkspace({
               </p>
             </div>
 
-            <AnswerSheet
-              answers={answers}
-              setAnswers={setAnswers}
-              disabled={
-                hasCountdownExpired || isExpirationPending || isSubmitting
-              }
-              progress={progress}
-              part3InputMode={exam.part3InputMode}
-              onPartThreeTextValidityChange={setPartThreeTextAnswerValidity}
-            />
+            {dynamicAnswers && dynamicProgress && exam.structureSnapshot ? (
+              <DynamicAnswerSheet
+                structure={exam.structureSnapshot}
+                answers={dynamicAnswers}
+                updateAnswer={(questionId, answer) =>
+                  setAnswers((currentAnswers) =>
+                    isDynamicAttemptAnswers(currentAnswers)
+                      ? {
+                          answersByQuestionId: {
+                            ...currentAnswers.answersByQuestionId,
+                            [questionId]: answer,
+                          },
+                        }
+                      : currentAnswers,
+                  )
+                }
+                disabled={
+                  hasCountdownExpired || isExpirationPending || isSubmitting
+                }
+                progress={dynamicProgress}
+                shortAnswerInputMode={
+                  exam.shortAnswerInputMode ?? exam.part3InputMode
+                }
+                onShortAnswerTextValidityChange={
+                  setDynamicShortAnswerTextValidity
+                }
+              />
+            ) : legacyAnswers && legacyProgress ? (
+              <AnswerSheet
+                answers={legacyAnswers}
+                updateAnswers={(updater) =>
+                  setAnswers((currentAnswers) =>
+                    isDynamicAttemptAnswers(currentAnswers)
+                      ? currentAnswers
+                      : updater(currentAnswers),
+                  )
+                }
+                disabled={
+                  hasCountdownExpired || isExpirationPending || isSubmitting
+                }
+                progress={legacyProgress}
+                part3InputMode={exam.part3InputMode}
+                onPartThreeTextValidityChange={setPartThreeTextAnswerValidity}
+              />
+            ) : (
+              <p role="alert" className="text-destructive p-4 text-sm">
+                Phiếu trả lời không khớp với cấu trúc đề thi.
+              </p>
+            )}
           </section>
         </div>
       </div>

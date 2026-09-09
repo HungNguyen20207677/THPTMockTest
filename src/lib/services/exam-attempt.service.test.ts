@@ -69,6 +69,7 @@ import {
   EXAM_STRUCTURE,
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { USER_ROLE } from "@/lib/constants/roles";
 import type {
   CreateExamAttemptRecordInput,
@@ -79,7 +80,10 @@ import type {
   StudentExamWorkspacePersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
-import { gradeAttemptAnswers } from "@/lib/exam/grading";
+import {
+  gradeAttemptAnswers,
+  gradeDynamicAttemptAnswers,
+} from "@/lib/exam/grading";
 import {
   finalizeExpiredExamAttempt,
   getOwnedExamAttemptContext,
@@ -90,7 +94,8 @@ import {
   submitExamAttempt,
 } from "@/lib/services/exam-attempt.service";
 import type { AppUser } from "@/types/user";
-import type { ExamAnswerKey } from "@/types/exam";
+import type { DynamicExamAnswerKey, ExamAnswerKey } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 const serverNow = new Date("2026-08-11T03:00:00.000Z");
 const student: AppUser = {
@@ -152,6 +157,101 @@ function createGradingExam(
     },
     ...overrides,
   };
+}
+
+const dynamicStructure: ExamStructureSnapshot = {
+  sections: [
+    {
+      id: "section-zeta",
+      title: "Opening section",
+      questions: [
+        {
+          id: "question-short-opening",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+          maxScoreHundredths: 180,
+        },
+        {
+          id: "question-choice-opening",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          maxScoreHundredths: 120,
+        },
+      ],
+    },
+    {
+      id: "section-alpha",
+      title: "Closing section",
+      questions: [
+        {
+          id: "question-true-false",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+          maxScoreHundredths: 200,
+        },
+        {
+          id: "question-choice-closing",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          maxScoreHundredths: 150,
+        },
+        {
+          id: "question-short-closing",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+          maxScoreHundredths: 350,
+        },
+      ],
+    },
+  ],
+};
+
+const dynamicQuestionOrder = [
+  "question-short-opening",
+  "question-choice-opening",
+  "question-true-false",
+  "question-choice-closing",
+  "question-short-closing",
+];
+
+function createDynamicAnswerKey(): DynamicExamAnswerKey {
+  return {
+    answersByQuestionId: {
+      "question-short-opening": "1.2",
+      "question-choice-opening": "B",
+      "question-true-false": { a: true, b: false, c: true, d: false },
+      "question-choice-closing": "D",
+      "question-short-closing": "-0.5",
+    },
+  };
+}
+
+function createDynamicAnswers() {
+  const answers = createEmptyAttemptAnswers(dynamicStructure);
+  answers.answersByQuestionId["question-short-opening"] = ["1", ",", "2", null];
+  answers.answersByQuestionId["question-choice-opening"] = "B";
+  answers.answersByQuestionId["question-true-false"] = {
+    a: true,
+    b: false,
+    c: true,
+    d: true,
+  };
+  answers.answersByQuestionId["question-choice-closing"] = "C";
+  answers.answersByQuestionId["question-short-closing"] = ["-", "0", ",", "5"];
+  return answers;
+}
+
+function createDynamicGradingExam(
+  overrides: Partial<ExamGradingPersistenceRecord> = {},
+): ExamGradingPersistenceRecord {
+  return createGradingExam({
+    structureSnapshot: dynamicStructure,
+    answerKey: createDynamicAnswerKey(),
+    ...overrides,
+  });
+}
+
+function createDynamicGrading() {
+  return gradeDynamicAttemptAnswers(
+    createDynamicAnswers(),
+    createDynamicAnswerKey(),
+    dynamicStructure,
+  );
 }
 
 function createAttempt(
@@ -1328,6 +1428,296 @@ describe("ExamAttempt service", () => {
 
     expect(result.attempt.status).toBe(EXAM_ATTEMPT_STATUS.SUBMITTED);
     expect(result.canEditAnswers).toBe(false);
+  });
+
+  describe("dynamic Exam attempts", () => {
+    it("autosaves and resumes dynamic answers keyed by question ID", async () => {
+      const savedAnswers = createDynamicAnswers();
+      const activeAttempt = createAttempt({
+        answers: createEmptyAttemptAnswers(dynamicStructure),
+      });
+      const savedAttempt = createAttempt({
+        answers: savedAnswers,
+        lastSavedAt: serverNow,
+      });
+      mocks.findStudentExamRecordById.mockResolvedValue(
+        createStudentExam({ structureSnapshot: dynamicStructure }),
+      );
+      mocks.findOwnedExamAttemptRecord
+        .mockResolvedValueOnce(activeAttempt)
+        .mockResolvedValueOnce(savedAttempt);
+      mocks.saveOwnedActiveExamAttemptAnswers.mockResolvedValue(savedAttempt);
+
+      const saveResult = await saveExamAttemptAnswers(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        savedAnswers,
+      );
+      const resumeResult = await startOrResumeExamAttempt(
+        student,
+        "exam-id",
+        activeAttempt.id,
+      );
+
+      expect(mocks.saveOwnedActiveExamAttemptAnswers).toHaveBeenCalledWith({
+        attemptId: activeAttempt.id,
+        examId: "exam-id",
+        studentId: student.id,
+        answers: savedAnswers,
+        now: serverNow,
+      });
+      expect(saveResult.attempt.answers).toEqual(savedAnswers);
+      expect(resumeResult.exam.structureSnapshot).toEqual(dynamicStructure);
+      expect(resumeResult.attempt.answers).toEqual(savedAnswers);
+      expect(
+        Object.keys(
+          (resumeResult.attempt.answers as typeof savedAnswers)
+            .answersByQuestionId,
+        ),
+      ).toEqual(dynamicQuestionOrder);
+      expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+    });
+
+    it("manually submits and grades a dynamic attempt", async () => {
+      const answers = createDynamicAnswers();
+      const grading = createDynamicGrading();
+      const activeAttempt = createAttempt({
+        answers: createEmptyAttemptAnswers(dynamicStructure),
+      });
+      const submittedAttempt = createAttempt({
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        submittedAt: serverNow,
+        lastSavedAt: serverNow,
+        answers,
+        grading,
+        gradedAt: serverNow,
+      });
+      mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+      mocks.reserveExamForAttemptGrading.mockResolvedValue(
+        createDynamicGradingExam(),
+      );
+      mocks.submitOwnedActiveExamAttempt.mockResolvedValue(submittedAttempt);
+
+      const result = await submitExamAttempt(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        answers,
+      );
+
+      expect(grading).toEqual({
+        answerKeyRevision: 1,
+        totalScoreHundredths: 750,
+        sectionScoresHundredths: {
+          "section-zeta": 300,
+          "section-alpha": 450,
+        },
+        questionsById: {
+          "question-short-opening": {
+            isCorrect: true,
+            scoreHundredths: 180,
+          },
+          "question-choice-opening": {
+            isCorrect: true,
+            scoreHundredths: 120,
+          },
+          "question-true-false": {
+            correctStatementCount: 3,
+            scoreHundredths: 100,
+            statements: { a: true, b: true, c: true, d: false },
+          },
+          "question-choice-closing": {
+            isCorrect: false,
+            scoreHundredths: 0,
+          },
+          "question-short-closing": {
+            isCorrect: true,
+            scoreHundredths: 350,
+          },
+        },
+      });
+      expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledWith(
+        {
+          attemptId: activeAttempt.id,
+          examId: "exam-id",
+          studentId: student.id,
+          answers,
+          grading,
+          now: serverNow,
+        },
+        mocks.transactionSession,
+      );
+      expect(result.attempt).toMatchObject({
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        answers,
+      });
+      expect(result.canEditAnswers).toBe(false);
+    });
+
+    it("finalizes one expired dynamic attempt from persisted answers", async () => {
+      const expiresAt = new Date("2026-08-11T02:59:00.000Z");
+      const answers = createDynamicAnswers();
+      const grading = createDynamicGrading();
+      const expiredAttempt = createAttempt({ expiresAt, answers });
+      const autoSubmittedAttempt = createAttempt({
+        expiresAt,
+        status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+        submittedAt: expiresAt,
+        answers,
+        grading,
+        gradedAt: serverNow,
+      });
+      mocks.findOwnedExamAttemptRecord.mockResolvedValue(expiredAttempt);
+      mocks.reserveExamForAttemptGrading.mockResolvedValue(
+        createDynamicGradingExam(),
+      );
+      mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(
+        autoSubmittedAttempt,
+      );
+
+      const result = await finalizeExpiredExamAttempt(
+        student,
+        "exam-id",
+        expiredAttempt.id,
+      );
+
+      expect(mocks.autoSubmitExpiredExamAttemptRecord).toHaveBeenCalledWith(
+        expiredAttempt.id,
+        student.id,
+        expiredAttempt.examId,
+        expiredAttempt.answerRevision,
+        grading,
+        serverNow,
+        mocks.transactionSession,
+      );
+      expect(result.attempt).toMatchObject({
+        status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+        submittedAt: expiresAt.toISOString(),
+        answers,
+      });
+      expect(result.canEditAnswers).toBe(false);
+    });
+
+    it.each([
+      { label: "score-only", score: true, answers: false },
+      { label: "answers-only", score: false, answers: true },
+      { label: "neither", score: false, answers: false },
+    ])(
+      "applies $label visibility to a dynamic result",
+      async ({ score, answers: showAnswers }) => {
+        const answers = createDynamicAnswers();
+        const grading = createDynamicGrading();
+        const terminalAttempt = createAttempt({
+          status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+          submittedAt: serverNow,
+          answers,
+          grading,
+          gradedAt: serverNow,
+        });
+        mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
+        mocks.findExamGradingRecordById.mockResolvedValue(
+          createDynamicGradingExam({
+            settings: {
+              showScoreAfterSubmission: score,
+              showAnswersAfterSubmission: showAnswers,
+            },
+          }),
+        );
+
+        const result = await getStudentExamAttemptResult(
+          student,
+          "exam-id",
+          terminalAttempt.id,
+        );
+
+        expect(result.visibility).toEqual({ score, answers: showAnswers });
+        expect(result.exam.structureSnapshot).toEqual(dynamicStructure);
+        expect(
+          result.exam.structureSnapshot?.sections.map((section) => ({
+            sectionId: section.id,
+            questionIds: section.questions.map((question) => question.id),
+          })),
+        ).toEqual([
+          {
+            sectionId: "section-zeta",
+            questionIds: ["question-short-opening", "question-choice-opening"],
+          },
+          {
+            sectionId: "section-alpha",
+            questionIds: [
+              "question-true-false",
+              "question-choice-closing",
+              "question-short-closing",
+            ],
+          },
+        ]);
+        expect(result).not.toHaveProperty("answerReview");
+
+        if (score) {
+          expect(result.score).toEqual({
+            total: 7.5,
+            sectionsById: {
+              "section-zeta": 3,
+              "section-alpha": 4.5,
+            },
+          });
+          expect(Object.keys(result.score?.sectionsById ?? {})).toEqual([
+            "section-zeta",
+            "section-alpha",
+          ]);
+        } else {
+          expect(result).not.toHaveProperty("score");
+        }
+
+        if (showAnswers) {
+          expect(
+            Object.keys(result.dynamicAnswerReview?.questionsById ?? {}),
+          ).toEqual(dynamicQuestionOrder);
+          expect(
+            result.dynamicAnswerReview?.questionsById["question-short-opening"],
+          ).toMatchObject({
+            type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+            studentDisplayAnswer: "1,2",
+            correctDisplayAnswer: "1,2",
+            isCorrect: true,
+          });
+          expect(
+            result.dynamicAnswerReview?.questionsById[
+              "question-choice-opening"
+            ],
+          ).toMatchObject({
+            type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+            studentAnswer: "B",
+            correctAnswer: "B",
+            isCorrect: true,
+          });
+          expect(
+            result.dynamicAnswerReview?.questionsById["question-true-false"],
+          ).toMatchObject({
+            type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+            correctStatementCount: 3,
+            statements: {
+              a: { isCorrect: true },
+              b: { isCorrect: true },
+              c: { isCorrect: true },
+              d: { isCorrect: false },
+            },
+          });
+          expect(
+            result.dynamicAnswerReview?.questionsById["question-true-false"],
+          ).not.toHaveProperty("score");
+        } else {
+          expect(result).not.toHaveProperty("dynamicAnswerReview");
+        }
+
+        if (!score && !showAnswers) {
+          expect(Object.keys(result).sort()).toEqual(
+            ["attempt", "exam", "visibility"].sort(),
+          );
+        }
+      },
+    );
   });
 
   it("returns safe student DTOs ordered in-progress, not-started, completed", async () => {

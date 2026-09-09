@@ -1,4 +1,5 @@
 import { EXAM_STRUCTURE, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
   createEmptyShortAnswerSlots,
   shortAnswerSlotsToCanonicalValue,
@@ -7,13 +8,57 @@ import type {
   AttemptAnswerProgress,
   AttemptAnswers,
   AttemptPartTwoAnswer,
+  DynamicAttemptAnswer,
+  DynamicAttemptAnswerProgress,
+  DynamicAttemptAnswers,
 } from "@/types/exam-attempt";
+import type {
+  ExamStructureQuestion,
+  ExamStructureSnapshot,
+} from "@/types/exam-structure-template";
 
 function createEmptyPartTwoAnswer(): AttemptPartTwoAnswer {
   return { a: null, b: null, c: null, d: null };
 }
 
-export function createEmptyAttemptAnswers(): AttemptAnswers {
+function createEmptyDynamicAnswer(
+  question: ExamStructureQuestion,
+): DynamicAttemptAnswer {
+  if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE) {
+    return null;
+  }
+
+  if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE) {
+    return createEmptyPartTwoAnswer();
+  }
+
+  if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER) {
+    return createEmptyShortAnswerSlots();
+  }
+
+  throw new Error("ESSAY_IMAGE attempts are not supported yet.");
+}
+
+export function createEmptyAttemptAnswers(): AttemptAnswers;
+export function createEmptyAttemptAnswers(
+  structure: ExamStructureSnapshot,
+): DynamicAttemptAnswers;
+export function createEmptyAttemptAnswers(
+  structure?: ExamStructureSnapshot,
+): AttemptAnswers | DynamicAttemptAnswers {
+  if (structure) {
+    return {
+      answersByQuestionId: Object.fromEntries(
+        structure.sections.flatMap((section) =>
+          section.questions.map((question) => [
+            question.id,
+            createEmptyDynamicAnswer(question),
+          ]),
+        ),
+      ),
+    };
+  }
+
   return {
     partOne: Array.from(
       { length: EXAM_STRUCTURE.partOneQuestions },
@@ -57,5 +102,54 @@ export function getAttemptAnswerProgress(
     partOne,
     partTwo,
     partThree,
+  };
+}
+
+export function isDynamicQuestionAnswered(
+  question: ExamStructureQuestion,
+  answer: DynamicAttemptAnswer | undefined,
+): boolean {
+  if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE) {
+    return typeof answer === "string";
+  }
+
+  if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE) {
+    return (
+      answer !== null &&
+      answer !== undefined &&
+      typeof answer === "object" &&
+      !Array.isArray(answer) &&
+      countAnsweredPartTwoStatements(answer) ===
+        EXAM_STRUCTURE.partTwoStatementsPerQuestion
+    );
+  }
+
+  return Array.isArray(answer)
+    ? shortAnswerSlotsToCanonicalValue(answer) !== null
+    : false;
+}
+
+export function getDynamicAttemptAnswerProgress(
+  answers: DynamicAttemptAnswers,
+  structure: ExamStructureSnapshot,
+): DynamicAttemptAnswerProgress {
+  const entries = structure.sections.flatMap((section) =>
+    section.questions.map(
+      (question) =>
+        [
+          question.id,
+          isDynamicQuestionAnswered(
+            question,
+            answers.answersByQuestionId[question.id],
+          ),
+        ] as const,
+    ),
+  );
+  const byQuestionId = Object.fromEntries(entries);
+
+  return {
+    answeredQuestions: entries.filter(([, answered]) => answered).length,
+    totalQuestions: entries.length,
+    byQuestionId,
   };
 }

@@ -1,8 +1,12 @@
 import { EXAM_STRUCTURE, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
-import { scoreHundredthsToPoints } from "@/lib/exam/grading";
+import {
+  isDynamicAttemptGradingSnapshot,
+  scoreHundredthsToPoints,
+} from "@/lib/exam/grading";
 import type {
   AttemptGradingSnapshot,
+  ExamAttemptGradingSnapshot,
   ExamAttemptStatus,
 } from "@/types/exam-attempt";
 import type { ExamQuestionTopicIds } from "@/types/exam";
@@ -21,7 +25,7 @@ export interface ScoredAttempt {
   startedAt: Date;
   expiresAt: Date;
   submittedAt: Date;
-  grading: AttemptGradingSnapshot;
+  grading: ExamAttemptGradingSnapshot;
 }
 
 export interface ScoreAggregateHundredths {
@@ -112,6 +116,12 @@ export function calculatePerformanceStatistics(
 export function calculateQuestionStatistics(
   attempts: ScoredAttempt[],
 ): AdminExamQuestionStatistics {
+  if (
+    attempts.some((attempt) => isDynamicAttemptGradingSnapshot(attempt.grading))
+  ) {
+    return { partOne: [], partTwo: [], partThree: [] };
+  }
+
   const completedAttemptCount = attempts.length;
   const correctRatePercent = (correctCount: number): number | null =>
     completedAttemptCount === 0
@@ -135,6 +145,10 @@ export function calculateQuestionStatistics(
   ).fill(0);
 
   for (const attempt of attempts) {
+    if (isDynamicAttemptGradingSnapshot(attempt.grading)) {
+      continue;
+    }
+
     attempt.grading.partOne.forEach((question, questionIndex) => {
       if (question.isCorrect) {
         partOneCorrectCounts[questionIndex] += 1;
@@ -261,6 +275,10 @@ function accumulateTopicPerformance(
       attempt.status !== EXAM_ATTEMPT_STATUS.SUBMITTED &&
       attempt.status !== EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED
     ) {
+      continue;
+    }
+
+    if (isDynamicAttemptGradingSnapshot(attempt.grading)) {
       continue;
     }
 

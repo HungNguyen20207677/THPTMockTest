@@ -1,7 +1,7 @@
 import { apiRequest } from "@/lib/api/client";
 import type { ApiSuccessResponse } from "@/types/api";
 import type {
-  AttemptAnswers,
+  ExamAttemptAnswers,
   StudentExamAttemptContext,
   StudentExamAttemptResult,
   StudentExamList,
@@ -51,7 +51,7 @@ function getAttemptEndpoint(examId: string, attemptId: string): string {
 export function saveStudentExamAttemptAnswers(
   examId: string,
   attemptId: string,
-  answers: AttemptAnswers,
+  answers: ExamAttemptAnswers,
 ): Promise<ApiSuccessResponse<StudentExamAttemptMutationResult>> {
   return apiRequest(
     `${getAttemptEndpoint(examId, attemptId)}/answers`,
@@ -62,7 +62,7 @@ export function saveStudentExamAttemptAnswers(
 export function submitStudentExamAttempt(
   examId: string,
   attemptId: string,
-  answers: AttemptAnswers,
+  answers: ExamAttemptAnswers,
 ): Promise<ApiSuccessResponse<StudentExamAttemptMutationResult>> {
   return apiRequest(
     `${getAttemptEndpoint(examId, attemptId)}/submit`,

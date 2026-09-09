@@ -1,14 +1,56 @@
 import { describe, expect, it } from "vitest";
 
 import { EXAM_STRUCTURE } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
   createEmptyAttemptAnswers,
+  getDynamicAttemptAnswerProgress,
   getAttemptAnswerProgress,
 } from "@/lib/exam/attempt-answers";
 import {
   attemptAnswersRequestSchema,
   attemptAnswersSchema,
+  createAttemptAnswersSchemaForStructure,
 } from "@/lib/validations/attempt-answers";
+import { examStructureSnapshotSchema } from "@/lib/validations/exam-structure-template";
+
+const customStructure = examStructureSnapshotSchema.parse({
+  sections: [
+    {
+      id: "choice",
+      title: "Multiple choice",
+      questions: [
+        {
+          id: "choice-1",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          maxScoreHundredths: 200,
+        },
+      ],
+    },
+    {
+      id: "true-false",
+      title: "True or false",
+      questions: [
+        {
+          id: "true-false-1",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+          maxScoreHundredths: 400,
+        },
+      ],
+    },
+    {
+      id: "short-answer",
+      title: "Short answer",
+      questions: [
+        {
+          id: "short-answer-1",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+          maxScoreHundredths: 400,
+        },
+      ],
+    },
+  ],
+});
 
 describe("attempt answers", () => {
   it("creates an empty fixed 12 + 4 + 6 answer structure", () => {
@@ -166,5 +208,70 @@ describe("attempt answers", () => {
         studentId: "client-controlled-student",
       }).success,
     ).toBe(false);
+  });
+
+  it("creates and tracks answers for variable snapshot question counts", () => {
+    const answers = createEmptyAttemptAnswers(customStructure);
+
+    expect(answers).toEqual({
+      answersByQuestionId: {
+        "choice-1": null,
+        "true-false-1": { a: null, b: null, c: null, d: null },
+        "short-answer-1": [null, null, null, null],
+      },
+    });
+
+    answers.answersByQuestionId["choice-1"] = "A";
+    answers.answersByQuestionId["true-false-1"] = {
+      a: true,
+      b: false,
+      c: true,
+      d: false,
+    };
+    answers.answersByQuestionId["short-answer-1"] = ["2", null, null, null];
+
+    expect(getDynamicAttemptAnswerProgress(answers, customStructure)).toEqual({
+      answeredQuestions: 3,
+      totalQuestions: 3,
+      byQuestionId: {
+        "choice-1": true,
+        "true-false-1": true,
+        "short-answer-1": true,
+      },
+    });
+  });
+
+  it("validates answers against exact snapshot question IDs and types", () => {
+    const schema = createAttemptAnswersSchemaForStructure(customStructure);
+    const answers = createEmptyAttemptAnswers(customStructure);
+
+    expect(schema.safeParse(answers).success).toBe(true);
+    expect(
+      schema.safeParse({
+        answersByQuestionId: {
+          "choice-1": null,
+          "true-false-1": { a: null, b: null, c: null, d: null },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        answersByQuestionId: {
+          ...answers.answersByQuestionId,
+          "outside-snapshot": null,
+        },
+      }).success,
+    ).toBe(false);
+
+    for (const answersByQuestionId of [
+      {
+        ...answers.answersByQuestionId,
+        "choice-1": { a: null, b: null, c: null, d: null },
+      },
+      { ...answers.answersByQuestionId, "true-false-1": null },
+      { ...answers.answersByQuestionId, "short-answer-1": "A" },
+    ]) {
+      expect(schema.safeParse({ answersByQuestionId }).success).toBe(false);
+    }
   });
 });

@@ -8,6 +8,7 @@ import type {
   PartTwoAnswer,
   ShortAnswerSlots,
 } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 export type ExamAttemptStatus =
   (typeof EXAM_ATTEMPT_STATUS)[keyof typeof EXAM_ATTEMPT_STATUS];
@@ -27,12 +28,27 @@ export interface AttemptAnswers {
   partThree: ShortAnswerSlots[];
 }
 
+export type DynamicAttemptAnswer =
+  PartOneAnswer | null | AttemptPartTwoAnswer | ShortAnswerSlots;
+
+export interface DynamicAttemptAnswers {
+  answersByQuestionId: Record<string, DynamicAttemptAnswer>;
+}
+
+export type ExamAttemptAnswers = AttemptAnswers | DynamicAttemptAnswers;
+
 export interface AttemptAnswerProgress {
   answeredQuestions: number;
   totalQuestions: number;
   partOne: boolean[];
   partTwo: boolean[];
   partThree: boolean[];
+}
+
+export interface DynamicAttemptAnswerProgress {
+  answeredQuestions: number;
+  totalQuestions: number;
+  byQuestionId: Record<string, boolean>;
 }
 
 export interface AttemptGradingSnapshot {
@@ -56,6 +72,30 @@ export interface AttemptGradingSnapshot {
   }>;
 }
 
+export interface DynamicQuestionCorrectnessResult {
+  isCorrect: boolean;
+  scoreHundredths: number;
+}
+
+export interface DynamicTrueFalseQuestionResult {
+  correctStatementCount: number;
+  scoreHundredths: number;
+  statements: PartTwoAnswer;
+}
+
+export type DynamicQuestionGradingResult =
+  DynamicQuestionCorrectnessResult | DynamicTrueFalseQuestionResult;
+
+export interface DynamicAttemptGradingSnapshot {
+  answerKeyRevision: number;
+  totalScoreHundredths: number;
+  sectionScoresHundredths: Record<string, number>;
+  questionsById: Record<string, DynamicQuestionGradingResult>;
+}
+
+export type ExamAttemptGradingSnapshot =
+  AttemptGradingSnapshot | DynamicAttemptGradingSnapshot;
+
 export interface ExamAttempt {
   id: string;
   examId: string;
@@ -65,7 +105,7 @@ export interface ExamAttempt {
   expiresAt: string;
   submittedAt?: string;
   lastSavedAt?: string;
-  answers: AttemptAnswers;
+  answers: ExamAttemptAnswers;
 }
 
 export interface StudentExamSummary {
@@ -98,6 +138,8 @@ export interface StudentExamAttemptContext {
     };
     durationMinutes: number;
     part3InputMode: Part3InputMode;
+    shortAnswerInputMode?: Part3InputMode;
+    structureSnapshot?: ExamStructureSnapshot;
   };
   attempt: ExamAttempt;
   serverNow: string;
@@ -114,6 +156,7 @@ export interface StudentExamAttemptResult {
   exam: {
     id: string;
     title: string;
+    structureSnapshot?: ExamStructureSnapshot;
   };
   attempt: {
     id: string;
@@ -130,11 +173,12 @@ export interface StudentExamAttemptResult {
   };
   score?: {
     total: number;
-    sections: {
+    sections?: {
       partOne: number;
       partTwo: number;
       partThree: number;
     };
+    sectionsById?: Record<string, number>;
   };
   answerReview?: {
     partOne: Array<{
@@ -161,7 +205,44 @@ export interface StudentExamAttemptResult {
       isCorrect: boolean;
     }>;
   };
+  dynamicAnswerReview?: {
+    questionsById: Record<string, DynamicQuestionAnswerReview>;
+  };
 }
+
+export interface DynamicSingleChoiceAnswerReview {
+  type: "SINGLE_CHOICE";
+  studentAnswer: PartOneAnswer | null;
+  correctAnswer: PartOneAnswer;
+  isCorrect: boolean;
+}
+
+export interface DynamicTrueFalseAnswerReview {
+  type: "TRUE_FALSE";
+  studentAnswer: AttemptPartTwoAnswer;
+  correctAnswer: PartTwoAnswer;
+  correctStatementCount: number;
+  statements: {
+    a: StudentPartTwoStatementReview;
+    b: StudentPartTwoStatementReview;
+    c: StudentPartTwoStatementReview;
+    d: StudentPartTwoStatementReview;
+  };
+  score?: number;
+}
+
+export interface DynamicShortAnswerReview {
+  type: "SHORT_ANSWER";
+  studentAnswer: ShortAnswerSlots;
+  studentDisplayAnswer: string | null;
+  correctDisplayAnswer: string;
+  isCorrect: boolean;
+}
+
+export type DynamicQuestionAnswerReview =
+  | DynamicSingleChoiceAnswerReview
+  | DynamicTrueFalseAnswerReview
+  | DynamicShortAnswerReview;
 
 export interface StudentPartTwoStatementReview {
   studentAnswer: boolean | null;

@@ -9,13 +9,14 @@ import {
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { ExamAttemptModel } from "@/lib/db/models/exam-attempt.model";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
-import { attemptAnswersSchema } from "@/lib/validations/attempt-answers";
-import { attemptGradingSnapshotSchema } from "@/lib/validations/attempt-grading";
+import { examAttemptAnswersSchema } from "@/lib/validations/attempt-answers";
+import { examAttemptGradingSnapshotSchema } from "@/lib/validations/attempt-grading";
 import type {
-  AttemptAnswers,
-  AttemptGradingSnapshot,
   ExamAttemptStatus,
+  ExamAttemptAnswers,
+  ExamAttemptGradingSnapshot,
 } from "@/types/exam-attempt";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 export interface ExamAttemptPersistenceRecord {
   id: string;
@@ -27,9 +28,9 @@ export interface ExamAttemptPersistenceRecord {
   expiresAt: Date;
   submittedAt?: Date;
   lastSavedAt?: Date;
-  answers?: AttemptAnswers;
+  answers?: ExamAttemptAnswers;
   answerRevision: number;
-  grading?: AttemptGradingSnapshot;
+  grading?: ExamAttemptGradingSnapshot;
   gradedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -42,18 +43,19 @@ export interface CreateExamAttemptRecordInput {
   status: typeof EXAM_ATTEMPT_STATUS.IN_PROGRESS;
   startedAt: Date;
   expiresAt: Date;
+  answers?: ExamAttemptAnswers;
 }
 
 export interface MutateOwnedExamAttemptInput {
   attemptId: string;
   examId: string;
   studentId: string;
-  answers: AttemptAnswers;
+  answers: ExamAttemptAnswers;
   now: Date;
 }
 
 export interface FinalizeOwnedExamAttemptInput extends MutateOwnedExamAttemptInput {
-  grading: AttemptGradingSnapshot;
+  grading: ExamAttemptGradingSnapshot;
 }
 
 export interface ExamAttemptReportFilter {
@@ -70,12 +72,12 @@ export interface ExamAttemptStatusCounts {
 
 export interface ExamAttemptRegradeSource {
   id: string;
-  answers: AttemptAnswers;
+  answers: ExamAttemptAnswers;
 }
 
 export interface ExamAttemptGradingReplacement {
   attemptId: string;
-  grading: AttemptGradingSnapshot;
+  grading: ExamAttemptGradingSnapshot;
 }
 
 interface ExamAttemptDocumentData {
@@ -98,7 +100,7 @@ interface ExamAttemptDocumentData {
 
 let examAttemptIndexesPromise: Promise<void> | null = null;
 
-function getAutoSubmitUpdate(now: Date, grading: AttemptGradingSnapshot) {
+function getAutoSubmitUpdate(now: Date, grading: ExamAttemptGradingSnapshot) {
   return [
     {
       $set: {
@@ -133,11 +135,11 @@ function toExamAttemptRecord(
   const parsedAnswers =
     attempt.answers === undefined
       ? null
-      : attemptAnswersSchema.safeParse(attempt.answers);
+      : examAttemptAnswersSchema.safeParse(attempt.answers);
   const parsedGrading =
     attempt.grading === undefined
       ? null
-      : attemptGradingSnapshotSchema.safeParse(attempt.grading);
+      : examAttemptGradingSnapshotSchema.safeParse(attempt.grading);
 
   if (parsedGrading && !parsedGrading.success) {
     throw new Error("Stored ExamAttempt grading is malformed.");
@@ -338,7 +340,7 @@ export async function autoSubmitExpiredExamAttemptRecord(
   studentId: string,
   examId: string,
   expectedAnswerRevision: number,
-  grading: AttemptGradingSnapshot,
+  grading: ExamAttemptGradingSnapshot,
   now: Date,
   session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
@@ -373,7 +375,7 @@ export async function setOwnedTerminalExamAttemptGradingForRevision(
   attemptId: string,
   examId: string,
   studentId: string,
-  grading: AttemptGradingSnapshot,
+  grading: ExamAttemptGradingSnapshot,
   gradedAt: Date,
   session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
@@ -407,6 +409,7 @@ export async function setOwnedTerminalExamAttemptGradingForRevision(
 export async function listTerminalExamAttemptRegradeSources(
   examId: string,
   session: ClientSession,
+  structure?: ExamStructureSnapshot,
 ): Promise<ExamAttemptRegradeSource[]> {
   await prepareExamAttemptModel();
 
@@ -420,8 +423,11 @@ export async function listTerminalExamAttemptRegradeSources(
     .exec();
 
   return attempts.map((attempt) => {
-    const parsedAnswers = attemptAnswersSchema.safeParse(
-      attempt.answers ?? createEmptyAttemptAnswers(),
+    const parsedAnswers = examAttemptAnswersSchema.safeParse(
+      attempt.answers ??
+        (structure
+          ? createEmptyAttemptAnswers(structure)
+          : createEmptyAttemptAnswers()),
     );
 
     if (!parsedAnswers.success) {
@@ -449,7 +455,7 @@ export async function replaceTerminalExamAttemptGradings(
 
   const validatedReplacements = replacements.map((replacement) => ({
     ...replacement,
-    grading: attemptGradingSnapshotSchema.parse(replacement.grading),
+    grading: examAttemptGradingSnapshotSchema.parse(replacement.grading),
   }));
   const result = await ExamAttemptModel.bulkWrite(
     validatedReplacements.map((replacement) => ({

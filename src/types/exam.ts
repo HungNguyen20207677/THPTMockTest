@@ -35,6 +35,14 @@ export interface ExamAnswerKey {
   partThree: string[];
 }
 
+export type DynamicExamAnswerKeyAnswer = PartOneAnswer | PartTwoAnswer | string;
+
+export interface DynamicExamAnswerKey {
+  answersByQuestionId: Record<string, DynamicExamAnswerKeyAnswer>;
+}
+
+export type AnyExamAnswerKey = ExamAnswerKey | DynamicExamAnswerKey;
+
 export interface ExamQuestionTopicIds {
   partOne: string[][];
   partTwo: string[][];
@@ -92,8 +100,9 @@ export interface ExamDetail extends ExamSummary {
   description?: string;
   assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
+  shortAnswerInputMode?: Part3InputMode;
   pdf: ExamPdf;
-  answerKey: ExamAnswerKey;
+  answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
   structureTemplateId?: string;
   structureSnapshot?: ExamStructureSnapshot;

@@ -11,15 +11,18 @@ import {
   PART_TWO_STATEMENTS,
   SHORT_ANSWER_SLOT_OPTIONS,
 } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
   isValidCanonicalShortAnswer,
   shortAnswerSlotsToCanonicalValue,
 } from "@/lib/exam/short-answer";
 import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 import { examPdfUploadReferenceSchema } from "@/lib/validations/exam-pdf";
+import { examStructureTemplateIdSchema } from "@/lib/validations/exam-structure-template";
 import { topicIdSchema } from "@/lib/validations/topic";
 import { studentIdSchema } from "@/lib/validations/user";
 import type { PartOneAnswer, PartTwoAnswer } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 export const examStatusSchema = z.enum(EXAM_STATUSES);
 export const examVisibilityModeSchema = z.enum(EXAM_VISIBILITY_MODES);
@@ -59,6 +62,80 @@ export const examAnswerKeySchema = z.strictObject({
       `Phần III phải có đúng ${EXAM_STRUCTURE.partThreeQuestions} đáp án.`,
     ),
 });
+
+export const dynamicExamAnswerKeySchema = z.strictObject({
+  answersByQuestionId: z.record(
+    z.string(),
+    z.union([
+      partOneAnswerSchema,
+      partTwoAnswerSchema,
+      canonicalShortAnswerSchema,
+    ]),
+  ),
+});
+
+export const anyExamAnswerKeySchema = z.union([
+  examAnswerKeySchema,
+  dynamicExamAnswerKeySchema,
+]);
+
+export function createDynamicExamAnswerKeySchema(
+  structure: ExamStructureSnapshot,
+) {
+  return dynamicExamAnswerKeySchema.superRefine((answerKey, context) => {
+    const questions = structure.sections.flatMap(
+      (section) => section.questions,
+    );
+    const expectedQuestionIds = new Set(
+      questions.map((question) => question.id),
+    );
+
+    for (const questionId of Object.keys(answerKey.answersByQuestionId)) {
+      if (!expectedQuestionIds.has(questionId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Đáp án chứa mã câu hỏi không thuộc cấu trúc đề thi.",
+          path: ["answersByQuestionId", questionId],
+        });
+      }
+    }
+
+    for (const question of questions) {
+      if (!(question.id in answerKey.answersByQuestionId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Thiếu đáp án cho câu hỏi trong cấu trúc đề thi.",
+          path: ["answersByQuestionId", question.id],
+        });
+        continue;
+      }
+
+      const answer = answerKey.answersByQuestionId[question.id];
+      const schema =
+        question.type === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE
+          ? partOneAnswerSchema
+          : question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE
+            ? partTwoAnswerSchema
+            : question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER
+              ? canonicalShortAnswerSchema
+              : null;
+
+      if (!schema) {
+        context.addIssue({
+          code: "custom",
+          message: "Loại câu hỏi này chưa hỗ trợ đáp án tự động.",
+          path: ["answersByQuestionId", question.id],
+        });
+      } else if (!schema.safeParse(answer).success) {
+        context.addIssue({
+          code: "custom",
+          message: "Đáp án không đúng định dạng của loại câu hỏi.",
+          path: ["answersByQuestionId", question.id],
+        });
+      }
+    }
+  });
+}
 
 export const examSettingsSchema = z.strictObject({
   allowRetake: z.boolean(),
@@ -177,7 +254,7 @@ function normalizeExamAssignment<
     : exam;
 }
 
-export const examUpsertSchema = z
+const legacyExamUpsertSchema = z
   .strictObject({
     ...examBaseFields,
     visibilityMode: examVisibilityModeSchema.optional(),
@@ -190,6 +267,25 @@ export const examUpsertSchema = z
   .superRefine(validateExamAssignmentPair)
   .transform(normalizeLegacyExamAssignment);
 
+const dynamicExamUpsertSchema = z
+  .strictObject({
+    ...examBaseFields,
+    visibilityMode: examVisibilityModeSchema.optional(),
+    assignedStudentIds: assignedStudentIdListSchema.optional(),
+    structureTemplateId: examStructureTemplateIdSchema,
+    answerKey: dynamicExamAnswerKeySchema,
+    questionTopicIds: examQuestionTopicIdsSchema
+      .optional()
+      .default(createEmptyQuestionTopicIds),
+  })
+  .superRefine(validateExamAssignmentPair)
+  .transform(normalizeLegacyExamAssignment);
+
+export const examUpsertSchema = z.union([
+  dynamicExamUpsertSchema,
+  legacyExamUpsertSchema,
+]);
+
 export const createExamRequestSchema = z.strictObject({
   exam: examUpsertSchema,
   pdfUpload: examPdfUploadReferenceSchema,
@@ -200,7 +296,7 @@ export const updateExamSchema = z
     ...examBaseFields,
     visibilityMode: examVisibilityModeSchema.optional(),
     assignedStudentIds: assignedStudentIdListSchema.optional(),
-    answerKey: examAnswerKeySchema,
+    answerKey: anyExamAnswerKeySchema,
     questionTopicIds: examQuestionTopicIdsSchema.optional(),
     expectedUpdatedAt: z.string().datetime(),
   })
@@ -308,7 +404,7 @@ const editorPartThreeAnswerSchema = shortAnswerSlotsSchema.transform(
   },
 );
 
-export const examEditorSchema = z
+const legacyExamEditorSchema = z
   .strictObject({
     ...examFields,
     questionTopicIds: examQuestionTopicIdsSchema,
@@ -324,7 +420,41 @@ export const examEditorSchema = z
   })
   .transform(normalizeExamAssignment);
 
-export type UpsertExamInput = z.output<typeof examUpsertSchema>;
+const missingDynamicAnswerSchema = z.literal("").transform((_, context) => {
+  context.addIssue({
+    code: "custom",
+    message: "Vui lòng nhập đáp án.",
+  });
+  return z.NEVER;
+});
+
+const dynamicExamEditorSchema = z
+  .strictObject({
+    ...examFields,
+    structureTemplateId: examStructureTemplateIdSchema,
+    questionTopicIds: examQuestionTopicIdsSchema,
+    answerKey: z.strictObject({
+      answersByQuestionId: z.record(
+        z.string(),
+        z.union([
+          partOneAnswerSchema,
+          editorPartTwoQuestionSchema,
+          editorPartThreeAnswerSchema,
+          missingDynamicAnswerSchema,
+        ]),
+      ),
+    }),
+  })
+  .transform(normalizeExamAssignment);
+
+export const examEditorSchema = z.union([
+  dynamicExamEditorSchema,
+  legacyExamEditorSchema,
+]);
+
+export type UpsertExamInput = z.output<typeof legacyExamUpsertSchema>;
+export type DynamicExamUpsertInput = z.output<typeof dynamicExamUpsertSchema>;
+export type CreateExamInput = z.output<typeof examUpsertSchema>;
 export type UpdateExamInput = z.output<typeof updateExamSchema>;
 export type ExamEditorInput = z.input<typeof examEditorSchema>;
 export type ExamEditorOutput = z.output<typeof examEditorSchema>;

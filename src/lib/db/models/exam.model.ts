@@ -10,20 +10,17 @@ import {
   INITIAL_ANSWER_KEY_REVISION,
   PART3_INPUT_MODE,
   PART3_INPUT_MODES,
-  PART_ONE_CHOICES,
 } from "@/lib/constants/exam";
-import { isValidCanonicalShortAnswer } from "@/lib/exam/short-answer";
 import { examStructureSnapshotMongooseSchema } from "@/lib/db/schemas/exam-structure.schema";
+import { anyExamAnswerKeySchema } from "@/lib/validations/exam";
 import type {
-  ExamAnswerKey,
+  AnyExamAnswerKey,
   ExamPdf,
   ExamQuestionTopicIds,
   ExamSettings,
   ExamStatus,
   ExamVisibilityMode,
   Part3InputMode,
-  PartOneAnswer,
-  PartTwoAnswer,
 } from "@/types/exam";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
@@ -42,7 +39,7 @@ export interface ExamRecord {
   structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
   settings: ExamSettings;
-  answerKey: ExamAnswerKey;
+  answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicObjectIds;
   answerKeyRevision: number;
   attemptsStarted: boolean;
@@ -72,51 +69,6 @@ const settingsSchema = new Schema<ExamSettings>(
     allowRetake: { type: Boolean, required: true },
     showScoreAfterSubmission: { type: Boolean, required: true },
     showAnswersAfterSubmission: { type: Boolean, required: true },
-  },
-  { _id: false },
-);
-
-const partTwoAnswerSchema = new Schema<PartTwoAnswer>(
-  {
-    a: { type: Boolean, required: true },
-    b: { type: Boolean, required: true },
-    c: { type: Boolean, required: true },
-    d: { type: Boolean, required: true },
-  },
-  { _id: false },
-);
-
-const answerKeySchema = new Schema<ExamAnswerKey>(
-  {
-    partOne: {
-      type: [String],
-      enum: PART_ONE_CHOICES,
-      required: true,
-      validate: {
-        validator: (answers: PartOneAnswer[]) =>
-          answers.length === EXAM_STRUCTURE.partOneQuestions,
-        message: "Part I must contain exactly 12 answers.",
-      },
-    },
-    partTwo: {
-      type: [partTwoAnswerSchema],
-      required: true,
-      validate: {
-        validator: (answers: PartTwoAnswer[]) =>
-          answers.length === EXAM_STRUCTURE.partTwoQuestions,
-        message: "Part II must contain exactly 4 questions.",
-      },
-    },
-    partThree: {
-      type: [String],
-      required: true,
-      validate: {
-        validator: (answers: string[]) =>
-          answers.length === EXAM_STRUCTURE.partThreeQuestions &&
-          answers.every(isValidCanonicalShortAnswer),
-        message: "Part III must contain exactly 6 valid short answers.",
-      },
-    },
   },
   { _id: false },
 );
@@ -216,13 +168,23 @@ const examSchema = new Schema<ExamRecord>(
     structureTemplateId: {
       type: Schema.Types.ObjectId,
       ref: "ExamStructureTemplate",
+      immutable: true,
     },
     structureSnapshot: {
       type: examStructureSnapshotMongooseSchema,
+      immutable: true,
     },
     pdf: { type: pdfSchema, required: true },
     settings: { type: settingsSchema, required: true },
-    answerKey: { type: answerKeySchema, required: true },
+    answerKey: {
+      type: Schema.Types.Mixed,
+      required: true,
+      validate: {
+        validator: (answerKey: unknown) =>
+          anyExamAnswerKeySchema.safeParse(answerKey).success,
+        message: "Exam answer key is malformed.",
+      },
+    },
     questionTopicIds: {
       type: questionTopicIdsSchema,
       required: true,

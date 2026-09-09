@@ -55,28 +55,149 @@ function CorrectnessBadge({ isCorrect }: { isCorrect: boolean }) {
   );
 }
 
+function DynamicAnswerReview({ result }: { result: StudentExamAttemptResult }) {
+  const review = result.dynamicAnswerReview;
+  const structure = result.exam.structureSnapshot;
+
+  if (!review || !structure) {
+    return null;
+  }
+
+  return (
+    <section aria-labelledby="answer-review-heading" className="space-y-8">
+      <div>
+        <h2 id="answer-review-heading" className="text-2xl font-bold">
+          Đối chiếu đáp án
+        </h2>
+        <p className="text-muted-foreground mt-1 text-sm">
+          Câu hỏi được hiển thị trong tệp đề thi PDF.
+        </p>
+      </div>
+
+      {structure.sections.map((section) => (
+        <div key={section.id} className="space-y-3">
+          <h3 className="text-lg font-semibold">{section.title}</h3>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {section.questions.map((question, questionIndex) => {
+              const item = review.questionsById[question.id];
+
+              if (!item) {
+                return null;
+              }
+
+              if (item.type === "TRUE_FALSE") {
+                return (
+                  <div
+                    key={question.id}
+                    className="border-border rounded-lg border p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-semibold">Câu {questionIndex + 1}</p>
+                      <p className="text-muted-foreground text-sm">
+                        {item.correctStatementCount}/4 ý đúng
+                        {item.score !== undefined
+                          ? ` · ${scoreFormatter.format(item.score)} điểm`
+                          : ""}
+                      </p>
+                    </div>
+                    <div className="divide-border mt-3 divide-y">
+                      {PART_TWO_STATEMENTS.map((statement) => {
+                        const statementReview = item.statements[statement];
+                        const comparison = `${formatBooleanAnswer(statementReview.studentAnswer)} -> ${formatBooleanAnswer(statementReview.correctAnswer)}`;
+
+                        return (
+                          <div
+                            key={statement}
+                            className="grid grid-cols-[2rem_1fr_auto] items-center gap-2 py-2 text-sm"
+                          >
+                            <span className="font-semibold">{statement}</span>
+                            <span className="text-muted-foreground">
+                              {comparison}
+                            </span>
+                            <CorrectnessBadge
+                              isCorrect={statementReview.isCorrect}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={question.id}
+                  className="border-border rounded-lg border p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold">Câu {questionIndex + 1}</p>
+                    <CorrectnessBadge isCorrect={item.isCorrect} />
+                  </div>
+                  <div className="text-muted-foreground mt-2 space-y-1 text-sm">
+                    {item.type === "SINGLE_CHOICE" ? (
+                      <>
+                        <p>Bài làm: {item.studentAnswer ?? "Chưa trả lời"}</p>
+                        <p>Đáp án đúng: {item.correctAnswer}</p>
+                      </>
+                    ) : (
+                      <>
+                        <p>
+                          Bài làm: {item.studentDisplayAnswer ?? "Chưa trả lời"}
+                        </p>
+                        <p>Đáp án đúng: {item.correctDisplayAnswer}</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
   if (!result.score) {
     return null;
   }
 
-  const sections = [
-    {
-      label: "Phần I",
-      score: result.score.sections.partOne,
-      maximum: EXAM_SCORING.partOneMaximum,
-    },
-    {
-      label: "Phần II",
-      score: result.score.sections.partTwo,
-      maximum: EXAM_SCORING.partTwoMaximum,
-    },
-    {
-      label: "Phần III",
-      score: result.score.sections.partThree,
-      maximum: EXAM_SCORING.partThreeMaximum,
-    },
-  ];
+  const sections =
+    result.exam.structureSnapshot && result.score.sectionsById
+      ? result.exam.structureSnapshot.sections.map((section) => ({
+          id: section.id,
+          label: section.title,
+          score: result.score?.sectionsById?.[section.id] ?? 0,
+          maximum:
+            section.questions.reduce(
+              (total, question) => total + question.maxScoreHundredths,
+              0,
+            ) / 100,
+        }))
+      : result.score.sections
+        ? [
+            {
+              id: "part-one",
+              label: "Phần I",
+              score: result.score.sections.partOne,
+              maximum: EXAM_SCORING.partOneMaximum,
+            },
+            {
+              id: "part-two",
+              label: "Phần II",
+              score: result.score.sections.partTwo,
+              maximum: EXAM_SCORING.partTwoMaximum,
+            },
+            {
+              id: "part-three",
+              label: "Phần III",
+              score: result.score.sections.partThree,
+              maximum: EXAM_SCORING.partThreeMaximum,
+            },
+          ]
+        : [];
 
   return (
     <section aria-labelledby="score-heading" className="space-y-4">
@@ -92,7 +213,7 @@ export function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
       <div className="grid gap-3 sm:grid-cols-3">
         {sections.map((section) => (
           <div
-            key={section.label}
+            key={section.id}
             className="border-border bg-background rounded-lg border p-4"
           >
             <p className="text-muted-foreground text-sm">{section.label}</p>
@@ -107,6 +228,10 @@ export function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
 }
 
 export function AnswerReview({ result }: { result: StudentExamAttemptResult }) {
+  if (result.dynamicAnswerReview && result.exam.structureSnapshot) {
+    return <DynamicAnswerReview result={result} />;
+  }
+
   const review = result.answerReview;
 
   if (!review) {

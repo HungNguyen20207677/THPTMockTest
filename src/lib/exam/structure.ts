@@ -3,6 +3,7 @@ import {
   EXAM_STRUCTURE_QUESTION_TYPE,
 } from "@/lib/constants/exam-structure-template";
 import type {
+  ExamStructureQuestion,
   ExamStructureQuestionType,
   ExamStructureSection,
   ExamStructureSnapshot,
@@ -112,5 +113,20 @@ export function getExamStructureQuestionCount(
   return structure.sections.reduce(
     (total, section) => total + section.questions.length,
     0,
+  );
+}
+
+export function getExamStructureQuestions(
+  structure: Pick<ExamStructureSnapshot, "sections">,
+): ExamStructureQuestion[] {
+  return structure.sections.flatMap((section) => section.questions);
+}
+
+export function examStructureContainsQuestionType(
+  structure: Pick<ExamStructureSnapshot, "sections">,
+  type: ExamStructureQuestionType,
+): boolean {
+  return getExamStructureQuestions(structure).some(
+    (question) => question.type === type,
   );
 }

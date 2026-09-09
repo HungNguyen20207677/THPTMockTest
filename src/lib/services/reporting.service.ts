@@ -37,7 +37,10 @@ import {
   toScoreStatistics,
   type ScoredAttempt,
 } from "@/lib/exam/attempt-statistics";
-import { scoreHundredthsToPoints } from "@/lib/exam/grading";
+import {
+  isDynamicAttemptGradingSnapshot,
+  scoreHundredthsToPoints,
+} from "@/lib/exam/grading";
 import { getUniqueExamTopicIds } from "@/lib/exam/question-topics";
 import {
   ExamAttemptNotFoundError,
@@ -56,7 +59,7 @@ import type {
   AdminResultQuery,
   PaginationQuery,
 } from "@/lib/validations/reporting";
-import type { AttemptGradingSnapshot } from "@/types/exam-attempt";
+import type { ExamAttemptGradingSnapshot } from "@/types/exam-attempt";
 import type {
   AdminAttemptDetail,
   AdminDashboardSummary,
@@ -73,7 +76,7 @@ import type {
 import type { AppUser, StudentAccount } from "@/types/user";
 
 interface PreparedTerminalAttempt extends ExamAttemptPersistenceRecord {
-  grading: AttemptGradingSnapshot;
+  grading: ExamAttemptGradingSnapshot;
   submittedAt: Date;
 }
 
@@ -182,6 +185,17 @@ function toScoredAttempt(attempt: PreparedTerminalAttempt): ScoredAttempt {
 }
 
 function toAttemptScore(attempt: PreparedTerminalAttempt): AttemptScoreSummary {
+  if (isDynamicAttemptGradingSnapshot(attempt.grading)) {
+    return {
+      total: scoreHundredthsToPoints(attempt.grading.totalScoreHundredths),
+      sectionsById: Object.fromEntries(
+        Object.entries(attempt.grading.sectionScoresHundredths).map(
+          ([sectionId, score]) => [sectionId, scoreHundredthsToPoints(score)],
+        ),
+      ),
+    };
+  }
+
   return {
     total: scoreHundredthsToPoints(attempt.grading.totalScoreHundredths),
     sections: {
@@ -422,6 +436,8 @@ export async function getAdminAttemptDetail(
   detail.exam = toExamIdentity(graded.exam);
   detail.score = result.score;
   detail.answerReview = result.answerReview;
+  detail.structureSnapshot = result.exam.structureSnapshot;
+  detail.dynamicAnswerReview = result.dynamicAnswerReview;
   return detail;
 }
 
@@ -472,7 +488,7 @@ export async function getAdminStudentDetail(
     ([examId, attempts]) => {
       const exam = examMap.get(examId);
 
-      return exam
+      return exam && !exam.structureSnapshot
         ? [
             {
               questionTopicIds: exam.questionTopicIds,
@@ -593,14 +609,16 @@ export async function getAdminExamResults(
     statistics: toScoreStatistics(
       calculateScoreAggregate(terminalAttempts.map(toScoredAttempt)),
     ),
-    questionStatistics: calculateQuestionStatistics(
-      terminalAttempts.map(toScoredAttempt),
-    ),
-    topicStatistics: calculateTopicStatistics(
-      currentExam.questionTopicIds,
-      terminalAttempts.map(toScoredAttempt),
-      topics,
-    ),
+    questionStatistics: currentExam.structureSnapshot
+      ? { partOne: [], partTwo: [], partThree: [] }
+      : calculateQuestionStatistics(terminalAttempts.map(toScoredAttempt)),
+    topicStatistics: currentExam.structureSnapshot
+      ? []
+      : calculateTopicStatistics(
+          currentExam.questionTopicIds,
+          terminalAttempts.map(toScoredAttempt),
+          topics,
+        ),
     students,
   };
 }

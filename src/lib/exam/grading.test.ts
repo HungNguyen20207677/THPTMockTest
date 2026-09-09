@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { EXAM_STRUCTURE } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import {
   gradeAttemptAnswers,
+  gradeDynamicAttemptAnswers,
   scoreHundredthsToPoints,
 } from "@/lib/exam/grading";
 import {
@@ -11,6 +13,7 @@ import {
   normalizeCanonicalShortAnswer,
   parseShortAnswerText,
 } from "@/lib/exam/short-answer";
+import { examStructureSnapshotSchema } from "@/lib/validations/exam-structure-template";
 import type { AttemptAnswers } from "@/types/exam-attempt";
 import type { ExamAnswerKey } from "@/types/exam";
 
@@ -220,5 +223,91 @@ describe("THPT Math grading", () => {
     });
     expect(grading.totalScoreHundredths).toBe(260);
     expect(sectionTotal).toBe(grading.totalScoreHundredths);
+  });
+
+  it("grades all supported question types in a variable custom structure", () => {
+    const structure = examStructureSnapshotSchema.parse({
+      sections: [
+        {
+          id: "choice",
+          title: "Multiple choice",
+          questions: [
+            {
+              id: "choice-1",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              maxScoreHundredths: 100,
+            },
+            {
+              id: "choice-2",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              maxScoreHundredths: 100,
+            },
+          ],
+        },
+        {
+          id: "true-false",
+          title: "True or false",
+          questions: [
+            {
+              id: "true-false-1",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+              maxScoreHundredths: 400,
+            },
+          ],
+        },
+        {
+          id: "short-answer",
+          title: "Short answer",
+          questions: [
+            {
+              id: "short-answer-1",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+              maxScoreHundredths: 200,
+            },
+            {
+              id: "short-answer-2",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+              maxScoreHundredths: 200,
+            },
+          ],
+        },
+      ],
+    });
+
+    const grading = gradeDynamicAttemptAnswers(
+      {
+        answersByQuestionId: {
+          "choice-1": "A",
+          "choice-2": "B",
+          "true-false-1": { a: true, b: true, c: true, d: false },
+          "short-answer-1": ["1", null, null, null],
+          "short-answer-2": ["3", null, null, null],
+        },
+      },
+      {
+        answersByQuestionId: {
+          "choice-1": "A",
+          "choice-2": "D",
+          "true-false-1": { a: true, b: true, c: true, d: true },
+          "short-answer-1": "1",
+          "short-answer-2": "4",
+        },
+      },
+      structure,
+    );
+
+    expect(grading.questionsById).toMatchObject({
+      "choice-1": { isCorrect: true, scoreHundredths: 100 },
+      "choice-2": { isCorrect: false, scoreHundredths: 0 },
+      "true-false-1": { correctStatementCount: 3, scoreHundredths: 200 },
+      "short-answer-1": { isCorrect: true, scoreHundredths: 200 },
+      "short-answer-2": { isCorrect: false, scoreHundredths: 0 },
+    });
+    expect(grading.sectionScoresHundredths).toEqual({
+      choice: 100,
+      "true-false": 200,
+      "short-answer": 200,
+    });
+    expect(grading.totalScoreHundredths).toBe(500);
   });
 });

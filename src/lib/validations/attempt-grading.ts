@@ -5,7 +5,11 @@ import {
   EXAM_STRUCTURE,
   INITIAL_ANSWER_KEY_REVISION,
 } from "@/lib/constants/exam";
-import type { AttemptGradingSnapshot } from "@/types/exam-attempt";
+import type {
+  AttemptGradingSnapshot,
+  DynamicAttemptGradingSnapshot,
+  ExamAttemptGradingSnapshot,
+} from "@/types/exam-attempt";
 
 const scoreHundredthsSchema = z
   .number()
@@ -118,3 +122,52 @@ export const attemptGradingSnapshotSchema: z.ZodType<AttemptGradingSnapshot> = z
       });
     }
   });
+
+const dynamicCorrectnessSchema = z.strictObject({
+  isCorrect: z.boolean(),
+  scoreHundredths: scoreHundredthsSchema,
+});
+const dynamicTrueFalseSchema = z.strictObject({
+  correctStatementCount: z
+    .number()
+    .int()
+    .min(0)
+    .max(EXAM_STRUCTURE.partTwoStatementsPerQuestion),
+  scoreHundredths: scoreHundredthsSchema,
+  statements: statementCorrectnessSchema,
+});
+
+export const dynamicAttemptGradingSnapshotSchema: z.ZodType<DynamicAttemptGradingSnapshot> =
+  z
+    .strictObject({
+      answerKeyRevision: z.number().int().min(INITIAL_ANSWER_KEY_REVISION),
+      totalScoreHundredths: scoreHundredthsSchema,
+      sectionScoresHundredths: z.record(z.string(), scoreHundredthsSchema),
+      questionsById: z.record(
+        z.string(),
+        z.union([dynamicCorrectnessSchema, dynamicTrueFalseSchema]),
+      ),
+    })
+    .superRefine((grading, context) => {
+      const sectionTotal = Object.values(
+        grading.sectionScoresHundredths,
+      ).reduce((total, score) => total + score, 0);
+      const questionTotal = Object.values(grading.questionsById).reduce(
+        (total, result) => total + result.scoreHundredths,
+        0,
+      );
+
+      if (
+        sectionTotal !== grading.totalScoreHundredths ||
+        questionTotal !== grading.totalScoreHundredths
+      ) {
+        context.addIssue({
+          code: "custom",
+          message:
+            "Tổng điểm động không khớp với kết quả từng câu và từng phần.",
+        });
+      }
+    });
+
+export const examAttemptGradingSnapshotSchema: z.ZodType<ExamAttemptGradingSnapshot> =
+  z.union([attemptGradingSnapshotSchema, dynamicAttemptGradingSnapshotSchema]);

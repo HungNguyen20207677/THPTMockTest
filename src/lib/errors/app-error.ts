@@ -87,6 +87,16 @@ export class ExamStructureTemplateConflictError extends AppError {
   }
 }
 
+export class EssayImageExamCreationUnsupportedError extends AppError {
+  constructor() {
+    super(
+      "Câu hỏi ESSAY_IMAGE sẽ được hỗ trợ ở giai đoạn tiếp theo. Hiện chưa thể tạo đề thi từ mẫu này.",
+      "ESSAY_IMAGE_NOT_SUPPORTED",
+      422,
+    );
+  }
+}
+
 export class BuiltInExamStructureTemplateReadOnlyError extends AppError {
   constructor() {
     super(

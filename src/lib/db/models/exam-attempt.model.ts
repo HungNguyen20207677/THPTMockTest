@@ -7,12 +7,12 @@ import {
   EXAM_ATTEMPT_STATUS,
 } from "@/lib/constants/exam-attempt";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
-import { attemptAnswersSchema } from "@/lib/validations/attempt-answers";
-import { attemptGradingSnapshotSchema } from "@/lib/validations/attempt-grading";
+import { examAttemptAnswersSchema } from "@/lib/validations/attempt-answers";
+import { examAttemptGradingSnapshotSchema } from "@/lib/validations/attempt-grading";
 import type {
-  AttemptAnswers,
-  AttemptGradingSnapshot,
   ExamAttemptStatus,
+  ExamAttemptAnswers,
+  ExamAttemptGradingSnapshot,
 } from "@/types/exam-attempt";
 
 export interface ExamAttemptRecord {
@@ -24,9 +24,9 @@ export interface ExamAttemptRecord {
   expiresAt: Date;
   submittedAt?: Date;
   lastSavedAt?: Date;
-  answers: AttemptAnswers;
+  answers: ExamAttemptAnswers;
   answerRevision: number;
-  grading?: AttemptGradingSnapshot;
+  grading?: ExamAttemptGradingSnapshot;
   gradedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -58,11 +58,11 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
     answers: {
       type: Schema.Types.Mixed,
       required: true,
-      default: createEmptyAttemptAnswers,
+      default: () => createEmptyAttemptAnswers(),
       validate: {
         validator: (answers: unknown) =>
-          attemptAnswersSchema.safeParse(answers).success,
-        message: "Attempt answers must match the fixed THPT Math structure.",
+          examAttemptAnswersSchema.safeParse(answers).success,
+        message: "Attempt answers are malformed.",
       },
     },
     answerRevision: { type: Number, required: true, default: 0, min: 0 },
@@ -70,8 +70,8 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
       type: Schema.Types.Mixed,
       validate: {
         validator: (grading: unknown) =>
-          attemptGradingSnapshotSchema.safeParse(grading).success,
-        message: "Attempt grading must match the fixed THPT Math structure.",
+          examAttemptGradingSnapshotSchema.safeParse(grading).success,
+        message: "Attempt grading is malformed.",
       },
     },
     gradedAt: { type: Date },

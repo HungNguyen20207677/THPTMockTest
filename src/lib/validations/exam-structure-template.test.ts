@@ -74,7 +74,7 @@ describe("Exam structure template validation", () => {
             {
               id: "question-2",
               type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
-              maxScore: "0.14",
+              maxScore: "0.20",
             },
             {
               id: "question-3",
@@ -84,7 +84,7 @@ describe("Exam structure template validation", () => {
             {
               id: "question-4",
               type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
-              maxScore: "9.50",
+              maxScore: "9.44",
             },
           ],
         },
@@ -95,7 +95,26 @@ describe("Exam structure template validation", () => {
       result.sections[0].questions.map(
         (question) => question.maxScoreHundredths,
       ),
-    ).toEqual([7, 14, 29, 950]);
+    ).toEqual([7, 20, 29, 944]);
+  });
+
+  it("rejects a TRUE_FALSE maximum score that cannot use exact partial scoring", () => {
+    const input = createValidTemplateInput();
+    input.sections[0].questions[1].maxScoreHundredths = 190;
+    input.sections[0].questions[3].maxScoreHundredths = 410;
+
+    const result = upsertExamStructureTemplateSchema.safeParse(input);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["sections", 0, "questions", 1, "maxScoreHundredths"],
+          }),
+        ]),
+      );
+    }
   });
 
   it("rejects an unsupported question type", () => {

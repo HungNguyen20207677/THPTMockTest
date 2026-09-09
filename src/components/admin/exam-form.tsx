@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiClientError } from "@/lib/api/client";
+import { fetchExamStructureTemplates } from "@/lib/api/exam-structure-templates";
 import { createExamRecord, fetchExam, updateExamRecord } from "@/lib/api/exams";
 import { fetchStudents } from "@/lib/api/students";
 import { createTopicRecord, fetchTopics } from "@/lib/api/topics";
@@ -37,24 +38,35 @@ import {
   PART_ONE_CHOICES,
   PART_TWO_STATEMENTS,
 } from "@/lib/constants/exam";
-import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
+import {
+  areExamAnswerKeysEqual,
+  isDynamicExamAnswerKey,
+} from "@/lib/exam/answer-key";
 import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
 import {
   canonicalShortAnswerToSlots,
   createEmptyShortAnswerSlots,
 } from "@/lib/exam/short-answer";
 import {
+  createDynamicExamAnswerKeySchema,
   examEditorSchema,
   type ExamEditorInput,
   type ExamEditorOutput,
 } from "@/lib/validations/exam";
 import { getExamPdfValidationError } from "@/lib/validations/exam-pdf";
 import type {
-  ExamAnswerKey,
+  AnyExamAnswerKey,
   ExamDetail,
   ExamPdf,
   Part3InputMode,
+  PartOneAnswer,
+  ShortAnswerSlots,
 } from "@/types/exam";
+import type {
+  ExamStructureSnapshot,
+  ExamStructureTemplate,
+} from "@/types/exam-structure-template";
 import type { StudentAccount } from "@/types/user";
 import type { Topic } from "@/types/topic";
 
@@ -75,8 +87,38 @@ const part3InputModeLabels = {
 type ExamFormProps =
   { mode: "create"; examId?: never } | { mode: "edit"; examId: string };
 
-function createEmptyEditorValues(): ExamEditorInput {
+type DynamicEditorAnswer =
+  | ""
+  | PartOneAnswer
+  | ShortAnswerSlots
+  | {
+      a: boolean | null;
+      b: boolean | null;
+      c: boolean | null;
+      d: boolean | null;
+    };
+
+function createEmptyDynamicAnswerKey(structure: ExamStructureSnapshot): {
+  answersByQuestionId: Record<string, DynamicEditorAnswer>;
+} {
   return {
+    answersByQuestionId: Object.fromEntries(
+      structure.sections.flatMap((section) =>
+        section.questions.map((question) => [
+          question.id,
+          question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE
+            ? { a: null, b: null, c: null, d: null }
+            : question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER
+              ? createEmptyShortAnswerSlots()
+              : "",
+        ]),
+      ),
+    ),
+  };
+}
+
+function createEmptyEditorValues(mode: ExamFormProps["mode"]): ExamEditorInput {
+  const commonValues = {
     title: "",
     description: "",
     status: EXAM_STATUS.DRAFT,
@@ -89,6 +131,18 @@ function createEmptyEditorValues(): ExamEditorInput {
       showAnswersAfterSubmission: false,
     },
     questionTopicIds: createEmptyQuestionTopicIds(),
+  };
+
+  if (mode === "create") {
+    return {
+      ...commonValues,
+      structureTemplateId: "",
+      answerKey: { answersByQuestionId: {} },
+    };
+  }
+
+  return {
+    ...commonValues,
     answerKey: {
       partOne: Array.from(
         { length: EXAM_STRUCTURE.partOneQuestions },
@@ -109,7 +163,7 @@ function createEmptyEditorValues(): ExamEditorInput {
 }
 
 function toEditorValues(exam: ExamDetail): ExamEditorInput {
-  return {
+  const commonValues = {
     title: exam.title,
     description: exam.description ?? "",
     status: exam.status,
@@ -124,6 +178,44 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
         ...topicIds,
       ]),
     },
+  };
+
+  if (exam.structureSnapshot && isDynamicExamAnswerKey(exam.answerKey)) {
+    const answersByQuestionId: Record<string, DynamicEditorAnswer> = {};
+
+    for (const section of exam.structureSnapshot.sections) {
+      for (const question of section.questions) {
+        const answer = exam.answerKey.answersByQuestionId[question.id];
+
+        answersByQuestionId[question.id] =
+          question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE &&
+          typeof answer === "object"
+            ? { ...answer }
+            : question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER &&
+                typeof answer === "string"
+              ? (canonicalShortAnswerToSlots(answer) ??
+                createEmptyShortAnswerSlots())
+              : question.type === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE &&
+                  typeof answer === "string" &&
+                  PART_ONE_CHOICES.some((choice) => choice === answer)
+                ? (answer as PartOneAnswer)
+                : "";
+      }
+    }
+
+    return {
+      ...commonValues,
+      structureTemplateId: exam.structureTemplateId ?? "",
+      answerKey: { answersByQuestionId },
+    };
+  }
+
+  if (isDynamicExamAnswerKey(exam.answerKey)) {
+    throw new Error("Dynamic exam structure is missing.");
+  }
+
+  return {
+    ...commonValues,
     answerKey: {
       partOne: [...exam.answerKey.partOne],
       partTwo: exam.answerKey.partTwo.map((answer) => ({ ...answer })),
@@ -158,10 +250,20 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [currentPdf, setCurrentPdf] = useState<ExamPdf | null>(null);
   const [currentUpdatedAt, setCurrentUpdatedAt] = useState<string | null>(null);
   const [initialAnswerKey, setInitialAnswerKey] =
-    useState<ExamAnswerKey | null>(null);
+    useState<AnyExamAnswerKey | null>(null);
   const [initialPart3InputMode, setInitialPart3InputMode] =
     useState<Part3InputMode | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
+  const [templates, setTemplates] = useState<ExamStructureTemplate[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(
+    mode === "create",
+  );
+  const [templateLoadError, setTemplateLoadError] = useState<string | null>(
+    null,
+  );
+  const [templateLoadVersion, setTemplateLoadVersion] = useState(0);
+  const [savedStructure, setSavedStructure] =
+    useState<ExamStructureSnapshot | null>(null);
   const [students, setStudents] = useState<StudentAccount[]>([]);
   const [hasLoadedStudents, setHasLoadedStudents] = useState(false);
   const [isLoadingStudents, setIsLoadingStudents] = useState(true);
@@ -183,6 +285,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [partThreeTextValidity, setPartThreeTextValidity] = useState(() =>
     Array.from({ length: EXAM_STRUCTURE.partThreeQuestions }, () => true),
   );
+  const [dynamicShortAnswerTextValidity, setDynamicShortAnswerTextValidity] =
+    useState<Record<string, boolean>>({});
   const {
     control,
     register,
@@ -192,7 +296,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     formState: { errors, isSubmitting },
   } = useForm<ExamEditorInput, unknown, ExamEditorOutput>({
     resolver: zodResolver(examEditorSchema),
-    defaultValues: createEmptyEditorValues(),
+    defaultValues: createEmptyEditorValues(mode),
   });
   const part3InputMode =
     useWatch({ control, name: "part3InputMode" }) ?? PART3_INPUT_MODE.BUBBLE;
@@ -201,6 +305,15 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     EXAM_VISIBILITY_MODE.ALL_STUDENTS;
   const assignedStudentIds =
     useWatch({ control, name: "assignedStudentIds" }) ?? [];
+  const structureTemplateId = useWatch({
+    control,
+    name: "structureTemplateId",
+  });
+  const selectedTemplate = templates.find(
+    (template) => template.id === structureTemplateId,
+  );
+  const activeStructure =
+    mode === "create" ? (selectedTemplate ?? null) : savedStructure;
   const deferredStudentSearch = useDeferredValue(
     studentSearch.trim().toLocaleLowerCase("vi"),
   );
@@ -213,8 +326,62 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     : students;
   const hasInvalidPartThreeText =
     part3InputMode === PART3_INPUT_MODE.TEXT &&
-    partThreeTextValidity.some((isValid) => !isValid);
-  const isBusy = isSubmitting || isSaving || pendingTopicCreations > 0;
+    (activeStructure
+      ? Object.values(dynamicShortAnswerTextValidity).some(
+          (isValid) => !isValid,
+        )
+      : partThreeTextValidity.some((isValid) => !isValid));
+  const structureContainsEssay = Boolean(
+    activeStructure?.sections.some((section) =>
+      section.questions.some(
+        (question) =>
+          question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+      ),
+    ),
+  );
+  const structureTemplateError =
+    "structureTemplateId" in errors ? errors.structureTemplateId : undefined;
+  const legacyAnswerKeyErrors =
+    errors.answerKey && "partOne" in errors.answerKey
+      ? errors.answerKey
+      : undefined;
+  const isBusy =
+    isSubmitting || isSaving || pendingTopicCreations > 0 || isLoadingTemplates;
+
+  useEffect(() => {
+    if (mode !== "create") {
+      return;
+    }
+
+    let isCurrent = true;
+
+    void fetchExamStructureTemplates()
+      .then((response) => {
+        if (isCurrent) {
+          setTemplates(response.data.templates);
+          setTemplateLoadError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) {
+          setTemplateLoadError(
+            getRequestError(
+              error,
+              "Không thể tải danh sách mẫu cấu trúc. Vui lòng thử lại.",
+            ),
+          );
+        }
+      })
+      .finally(() => {
+        if (isCurrent) {
+          setIsLoadingTemplates(false);
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [mode, templateLoadVersion]);
 
   useEffect(() => {
     if (mode === "create") {
@@ -234,6 +401,22 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           setInitialAnswerKey(exam.answerKey);
           setInitialPart3InputMode(exam.part3InputMode);
           setIsContentLocked(exam.hasAttempts);
+          setSavedStructure(exam.structureSnapshot ?? null);
+          if (exam.structureSnapshot) {
+            setDynamicShortAnswerTextValidity(
+              Object.fromEntries(
+                exam.structureSnapshot.sections.flatMap((section) =>
+                  section.questions
+                    .filter(
+                      (question) =>
+                        question.type ===
+                        EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+                    )
+                    .map((question) => [question.id, true]),
+                ),
+              ),
+            );
+          }
           setLoadError(null);
         }
       })
@@ -326,6 +509,43 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     setTopicLoadVersion((version) => version + 1);
   }
 
+  function retryTemplateLoad() {
+    setIsLoadingTemplates(true);
+    setTemplateLoadError(null);
+    setTemplateLoadVersion((version) => version + 1);
+  }
+
+  function selectStructureTemplate(templateId: string) {
+    const template = templates.find((candidate) => candidate.id === templateId);
+
+    setValue("structureTemplateId", templateId, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue(
+      "answerKey",
+      template
+        ? createEmptyDynamicAnswerKey(template)
+        : { answersByQuestionId: {} },
+      { shouldDirty: true, shouldValidate: false },
+    );
+    setDynamicShortAnswerTextValidity(
+      template
+        ? Object.fromEntries(
+            template.sections.flatMap((section) =>
+              section.questions
+                .filter(
+                  (question) =>
+                    question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+                )
+                .map((question) => [question.id, true]),
+            ),
+          )
+        : {},
+    );
+    setSubmissionError(null);
+  }
+
   async function handleCreateTopic(name: string): Promise<Topic> {
     setPendingTopicCreations((count) => count + 1);
 
@@ -381,6 +601,16 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     });
   }
 
+  function setDynamicShortAnswerValidity(questionId: string, isValid: boolean) {
+    setDynamicShortAnswerTextValidity((currentValidity) => {
+      if (currentValidity[questionId] === isValid) {
+        return currentValidity;
+      }
+
+      return { ...currentValidity, [questionId]: isValid };
+    });
+  }
+
   async function saveExam(
     input: ExamEditorOutput,
     confirmAnswerKeyCorrection: boolean,
@@ -391,9 +621,16 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
       if (mode === "create" && pdfFile) {
         await createExamRecord(input, pdfFile);
       } else if (mode === "edit" && examId && currentUpdatedAt) {
+        const updateInput =
+          "structureTemplateId" in input
+            ? (({ structureTemplateId, ...editableFields }) => {
+                void structureTemplateId;
+                return editableFields;
+              })(input)
+            : input;
         await updateExamRecord(
           examId,
-          { ...input, expectedUpdatedAt: currentUpdatedAt },
+          { ...updateInput, expectedUpdatedAt: currentUpdatedAt },
           pdfFile ?? undefined,
           confirmAnswerKeyCorrection,
         );
@@ -440,33 +677,63 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     }
   }
 
-  const onSubmit = handleSubmit(async (input) => {
-    setSubmissionError(null);
+  const onSubmit = handleSubmit(
+    async (input) => {
+      setSubmissionError(null);
 
-    if (hasInvalidPartThreeText) {
+      if (structureContainsEssay) {
+        setSubmissionError(
+          "Mẫu cấu trúc có câu tự luận bằng hình ảnh, hiện chưa thể dùng để tạo đề thi.",
+        );
+        return;
+      }
+
+      if (
+        activeStructure &&
+        (!isDynamicExamAnswerKey(input.answerKey) ||
+          !createDynamicExamAnswerKeySchema(activeStructure).safeParse(
+            input.answerKey,
+          ).success)
+      ) {
+        setSubmissionError(
+          "Đáp án không khớp với cấu trúc đã chọn. Vui lòng kiểm tra lại.",
+        );
+        return;
+      }
+
+      if (hasInvalidPartThreeText) {
+        setSubmissionError(
+          "Có đáp án trả lời ngắn chưa hợp lệ. Hãy hoàn thành hoặc xóa nội dung đang nhập.",
+        );
+        return;
+      }
+
+      if (mode === "create" && !pdfFile) {
+        setFileError("Vui lòng chọn tệp PDF của đề thi.");
+        return;
+      }
+
+      if (
+        mode === "edit" &&
+        isContentLocked &&
+        initialAnswerKey &&
+        !areExamAnswerKeysEqual(input.answerKey, initialAnswerKey)
+      ) {
+        setPendingAnswerKeyCorrection(input);
+        return;
+      }
+
+      await saveExam(input, false);
+    },
+    () => {
       setSubmissionError(
-        "Có đáp án Phần III chưa hợp lệ. Hãy hoàn thành hoặc xóa nội dung đang nhập.",
+        "Vui lòng kiểm tra và nhập đầy đủ các trường bắt buộc.",
       );
-      return;
-    }
-
-    if (mode === "create" && !pdfFile) {
-      setFileError("Vui lòng chọn tệp PDF của đề thi.");
-      return;
-    }
-
-    if (
-      mode === "edit" &&
-      isContentLocked &&
-      initialAnswerKey &&
-      !areExamAnswerKeysEqual(input.answerKey, initialAnswerKey)
-    ) {
-      setPendingAnswerKeyCorrection(input);
-      return;
-    }
-
-    await saveExam(input, false);
-  });
+      requestAnimationFrame(() =>
+        document.getElementById("exam-submission-error")?.focus(),
+      );
+    },
+  );
 
   if (isLoading) {
     return <ExamFormSkeleton />;
@@ -534,12 +801,237 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
       </AlertDialog>
 
       <fieldset disabled={isBusy} className="contents">
+        {activeStructure ? (
+          <Controller
+            control={control}
+            name="answerKey"
+            render={({ field, fieldState }) => {
+              const answersByQuestionId =
+                "answersByQuestionId" in field.value
+                  ? field.value.answersByQuestionId
+                  : {};
+              const updateAnswer = (
+                questionId: string,
+                answer: DynamicEditorAnswer,
+              ) => {
+                field.onChange({
+                  answersByQuestionId: {
+                    ...answersByQuestionId,
+                    [questionId]: answer,
+                  },
+                });
+              };
+
+              return (
+                <div className="space-y-6">
+                  {activeStructure.sections.map((section) => (
+                    <section
+                      key={section.id}
+                      className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm"
+                    >
+                      <div>
+                        <h2 className="text-xl font-semibold">
+                          {section.title}
+                        </h2>
+                        <p className="text-muted-foreground mt-1 text-sm">
+                          Nhập đáp án theo đúng thứ tự câu hỏi trong tệp PDF.
+                        </p>
+                      </div>
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        {section.questions.map((question, questionIndex) => {
+                          const answer = answersByQuestionId[question.id];
+                          const questionLabel = `Câu ${questionIndex + 1}`;
+                          const scoreLabel = `${(
+                            question.maxScoreHundredths / 100
+                          ).toLocaleString("vi-VN", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })} điểm`;
+
+                          if (
+                            question.type ===
+                            EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE
+                          ) {
+                            return (
+                              <div
+                                key={question.id}
+                                className="border-border space-y-2 rounded-lg border p-4"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <Label htmlFor={`dynamic-${question.id}`}>
+                                    {questionLabel}
+                                  </Label>
+                                  <span className="text-muted-foreground text-xs">
+                                    {scoreLabel}
+                                  </span>
+                                </div>
+                                <select
+                                  id={`dynamic-${question.id}`}
+                                  className={selectClassName}
+                                  value={
+                                    typeof answer === "string" ? answer : ""
+                                  }
+                                  onBlur={field.onBlur}
+                                  onChange={(event) =>
+                                    updateAnswer(
+                                      question.id,
+                                      event.target.value as PartOneAnswer | "",
+                                    )
+                                  }
+                                >
+                                  <option value="">Chọn đáp án</option>
+                                  {PART_ONE_CHOICES.map((choice) => (
+                                    <option key={choice} value={choice}>
+                                      {choice}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          }
+
+                          if (
+                            question.type ===
+                            EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE
+                          ) {
+                            const statementAnswers =
+                              answer &&
+                              typeof answer === "object" &&
+                              !Array.isArray(answer)
+                                ? answer
+                                : { a: null, b: null, c: null, d: null };
+
+                            return (
+                              <fieldset
+                                key={question.id}
+                                className="border-border space-y-3 rounded-lg border p-4"
+                              >
+                                <legend className="px-1 font-medium">
+                                  {questionLabel} · {scoreLabel}
+                                </legend>
+                                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                  {PART_TWO_STATEMENTS.map((statement) => (
+                                    <div key={statement} className="space-y-2">
+                                      <Label
+                                        htmlFor={`dynamic-${question.id}-${statement}`}
+                                      >
+                                        Ý {statement}
+                                      </Label>
+                                      <select
+                                        id={`dynamic-${question.id}-${statement}`}
+                                        className={selectClassName}
+                                        value={
+                                          statementAnswers[statement] === null
+                                            ? ""
+                                            : statementAnswers[statement]
+                                              ? "true"
+                                              : "false"
+                                        }
+                                        onBlur={field.onBlur}
+                                        onChange={(event) =>
+                                          updateAnswer(question.id, {
+                                            ...statementAnswers,
+                                            [statement]:
+                                              event.target.value === ""
+                                                ? null
+                                                : event.target.value === "true",
+                                          })
+                                        }
+                                      >
+                                        <option value="">Chọn</option>
+                                        <option value="true">Đúng</option>
+                                        <option value="false">Sai</option>
+                                      </select>
+                                    </div>
+                                  ))}
+                                </div>
+                              </fieldset>
+                            );
+                          }
+
+                          if (
+                            question.type ===
+                            EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER
+                          ) {
+                            const shortAnswer = Array.isArray(answer)
+                              ? answer
+                              : createEmptyShortAnswerSlots();
+
+                            return (
+                              <div
+                                key={question.id}
+                                className="border-border rounded-lg border p-4"
+                              >
+                                {part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
+                                  <ShortAnswerBubbleInput
+                                    value={shortAnswer}
+                                    onChange={(value) =>
+                                      updateAnswer(question.id, value)
+                                    }
+                                    label={`${questionLabel} · ${scoreLabel}`}
+                                    disabled={isBusy}
+                                    onBlur={field.onBlur}
+                                  />
+                                ) : (
+                                  <ShortAnswerTextInput
+                                    value={shortAnswer}
+                                    onChange={(value) =>
+                                      updateAnswer(question.id, value)
+                                    }
+                                    label={`${questionLabel} · ${scoreLabel}`}
+                                    disabled={isBusy}
+                                    onBlur={field.onBlur}
+                                    onValidityChange={(isValid) =>
+                                      setDynamicShortAnswerValidity(
+                                        question.id,
+                                        isValid,
+                                      )
+                                    }
+                                  />
+                                )}
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div
+                              key={question.id}
+                              className="border-destructive/30 bg-destructive/5 text-destructive rounded-lg border p-4 text-sm"
+                            >
+                              {questionLabel}: câu tự luận bằng hình ảnh chưa
+                              được hỗ trợ.
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                  {fieldState.invalid && (
+                    <p role="alert" className="text-destructive text-sm">
+                      Vui lòng nhập đầy đủ đáp án hợp lệ cho mọi câu hỏi.
+                    </p>
+                  )}
+                </div>
+              );
+            }}
+          />
+        ) : mode === "create" ? (
+          <section className="border-border bg-muted/20 rounded-xl border border-dashed p-8 text-center">
+            <p className="font-medium">Chưa chọn mẫu cấu trúc</p>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Chọn mẫu ở phần thông tin đề thi để nhập đáp án.
+            </p>
+          </section>
+        ) : null}
         <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
           <div>
             <h2 className="text-xl font-semibold">Thông tin đề thi</h2>
             <p className="text-muted-foreground mt-1 text-sm">
-              Cấu trúc cố định: {EXAM_STRUCTURE.totalQuestions} câu, thời gian{" "}
-              {EXAM_STRUCTURE.durationMinutes} phút.
+              {activeStructure
+                ? `${activeStructure.sections.reduce((total, section) => total + section.questions.length, 0)} câu theo mẫu cấu trúc, thời gian ${EXAM_STRUCTURE.durationMinutes} phút.`
+                : mode === "create"
+                  ? "Chọn mẫu cấu trúc trước khi nhập đáp án."
+                  : `Cấu trúc cố định: ${EXAM_STRUCTURE.totalQuestions} câu, thời gian ${EXAM_STRUCTURE.durationMinutes} phút.`}
             </p>
             {isContentLocked && (
               <p className="mt-2 text-sm font-medium text-amber-700">
@@ -568,6 +1060,113 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 </p>
               )}
             </div>
+
+            {mode === "create" ? (
+              <div className="space-y-3 md:col-span-2">
+                <div className="space-y-2">
+                  <Label htmlFor="exam-structure-template">Mẫu cấu trúc</Label>
+                  <select
+                    id="exam-structure-template"
+                    className={selectClassName}
+                    value={
+                      typeof structureTemplateId === "string"
+                        ? structureTemplateId
+                        : ""
+                    }
+                    required
+                    aria-invalid={Boolean(structureTemplateError)}
+                    aria-describedby={
+                      structureTemplateError
+                        ? "exam-structure-template-error"
+                        : "exam-structure-template-help"
+                    }
+                    onChange={(event) =>
+                      selectStructureTemplate(event.target.value)
+                    }
+                  >
+                    <option value="">Chọn mẫu cấu trúc</option>
+                    {templates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                        {template.isBuiltIn ? " (mặc định)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p
+                    id="exam-structure-template-help"
+                    className="text-muted-foreground text-xs"
+                  >
+                    Cấu trúc sẽ được sao chép vào đề thi và không thay đổi khi
+                    mẫu được chỉnh sửa sau này.
+                  </p>
+                  {structureTemplateError && (
+                    <p
+                      id="exam-structure-template-error"
+                      role="alert"
+                      className="text-destructive text-sm"
+                    >
+                      {structureTemplateError.message}
+                    </p>
+                  )}
+                </div>
+                {templateLoadError && (
+                  <div className="space-y-2">
+                    <p role="alert" className="text-destructive text-sm">
+                      {templateLoadError}
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={retryTemplateLoad}
+                    >
+                      Thử tải lại
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : savedStructure ? (
+              <div className="border-border bg-muted/30 space-y-1 rounded-lg border p-3 text-sm md:col-span-2">
+                <p className="font-medium">Cấu trúc đã lưu cùng đề thi</p>
+                <p className="text-muted-foreground">
+                  Không thể đổi mẫu hoặc cấu trúc sau khi tạo đề thi.
+                </p>
+              </div>
+            ) : null}
+
+            {activeStructure && (
+              <div className="border-border grid gap-2 rounded-lg border p-3 text-sm sm:grid-cols-2 md:col-span-2 lg:grid-cols-3">
+                {activeStructure.sections.map((section) => (
+                  <div key={section.id}>
+                    <p className="font-medium">{section.title}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {section.questions.length} câu ·{" "}
+                      {(
+                        section.questions.reduce(
+                          (total, question) =>
+                            total + question.maxScoreHundredths,
+                          0,
+                        ) / 100
+                      ).toLocaleString("vi-VN", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}{" "}
+                      điểm
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {structureContainsEssay && (
+              <p
+                role="alert"
+                className="border-destructive/30 bg-destructive/5 text-destructive rounded-lg border p-3 text-sm md:col-span-2"
+              >
+                Mẫu này có câu tự luận bằng hình ảnh. Tính năng tạo và làm loại
+                câu hỏi này hiện chưa được hỗ trợ.
+              </p>
+            )}
 
             <div className="space-y-2 md:col-span-2">
               <Label htmlFor="exam-description">Mô tả (không bắt buộc)</Label>
@@ -775,7 +1374,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           </fieldset>
           <div className="max-w-md space-y-2">
             <Label htmlFor="part-three-input-mode">
-              Cách nhập đáp án Phần III
+              {activeStructure
+                ? "Cách nhập câu trả lời ngắn"
+                : "Cách nhập đáp án Phần III"}
             </Label>
             <Controller
               control={control}
@@ -796,6 +1397,14 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                       Array.from(
                         { length: EXAM_STRUCTURE.partThreeQuestions },
                         () => true,
+                      ),
+                    );
+                    setDynamicShortAnswerTextValidity((currentValidity) =>
+                      Object.fromEntries(
+                        Object.keys(currentValidity).map((questionId) => [
+                          questionId,
+                          true,
+                        ]),
                       ),
                     );
                   }}
@@ -845,255 +1454,261 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           </div>
         </section>
 
-        <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
-          <div>
-            <h2 className="text-xl font-semibold">Phần I - Trắc nghiệm</h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              Chọn một đáp án A, B, C hoặc D cho mỗi câu.
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {Array.from(
-              { length: EXAM_STRUCTURE.partOneQuestions },
-              (_, questionIndex) => {
-                const answerError =
-                  errors.answerKey?.partOne?.[questionIndex]?.message;
-                const errorId = `part-one-${questionIndex}-error`;
+        {!activeStructure && mode === "edit" && (
+          <>
+            <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
+              <div>
+                <h2 className="text-xl font-semibold">Phần I - Trắc nghiệm</h2>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  Chọn một đáp án A, B, C hoặc D cho mỗi câu.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {Array.from(
+                  { length: EXAM_STRUCTURE.partOneQuestions },
+                  (_, questionIndex) => {
+                    const answerError =
+                      legacyAnswerKeyErrors?.partOne?.[questionIndex]?.message;
+                    const errorId = `part-one-${questionIndex}-error`;
 
-                return (
-                  <div key={questionIndex} className="space-y-2">
-                    <Label htmlFor={`part-one-${questionIndex}`}>
-                      Câu {questionIndex + 1}
-                    </Label>
-                    <select
-                      id={`part-one-${questionIndex}`}
-                      className={selectClassName}
-                      aria-invalid={Boolean(answerError)}
-                      aria-describedby={answerError ? errorId : undefined}
-                      {...register(
-                        `answerKey.partOne.${questionIndex}` as const,
-                      )}
+                    return (
+                      <div key={questionIndex} className="space-y-2">
+                        <Label htmlFor={`part-one-${questionIndex}`}>
+                          Câu {questionIndex + 1}
+                        </Label>
+                        <select
+                          id={`part-one-${questionIndex}`}
+                          className={selectClassName}
+                          aria-invalid={Boolean(answerError)}
+                          aria-describedby={answerError ? errorId : undefined}
+                          {...register(
+                            `answerKey.partOne.${questionIndex}` as const,
+                          )}
+                        >
+                          <option value="">Chọn</option>
+                          {PART_ONE_CHOICES.map((choice) => (
+                            <option key={choice} value={choice}>
+                              {choice}
+                            </option>
+                          ))}
+                        </select>
+                        {answerError && (
+                          <p
+                            id={errorId}
+                            role="alert"
+                            className="text-destructive text-sm"
+                          >
+                            {answerError}
+                          </p>
+                        )}
+                        <Controller
+                          control={control}
+                          name={
+                            `questionTopicIds.partOne.${questionIndex}` as const
+                          }
+                          render={({ field }) => (
+                            <QuestionTopicSelector
+                              label="Chủ đề kiến thức"
+                              topics={topics}
+                              value={field.value ?? []}
+                              disabled={isBusy}
+                              isLoading={isLoadingTopics}
+                              loadError={topicLoadError}
+                              onChange={field.onChange}
+                              onCreateTopic={handleCreateTopic}
+                              onRetry={retryTopicLoad}
+                            />
+                          )}
+                        />
+                      </div>
+                    );
+                  },
+                )}
+              </div>
+            </section>
+
+            <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
+              <div>
+                <h2 className="text-xl font-semibold">Phần II - Đúng/Sai</h2>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  Chọn Đúng hoặc Sai cho từng ý a, b, c, d.
+                </p>
+              </div>
+              <div className="space-y-4">
+                {Array.from(
+                  { length: EXAM_STRUCTURE.partTwoQuestions },
+                  (_, questionIndex) => (
+                    <fieldset
+                      key={questionIndex}
+                      className="border-border rounded-lg border p-4"
                     >
-                      <option value="">Chọn</option>
-                      {PART_ONE_CHOICES.map((choice) => (
-                        <option key={choice} value={choice}>
-                          {choice}
-                        </option>
-                      ))}
-                    </select>
-                    {answerError && (
-                      <p
-                        id={errorId}
-                        role="alert"
-                        className="text-destructive text-sm"
-                      >
-                        {answerError}
-                      </p>
-                    )}
-                    <Controller
-                      control={control}
-                      name={
-                        `questionTopicIds.partOne.${questionIndex}` as const
-                      }
-                      render={({ field }) => (
-                        <QuestionTopicSelector
-                          label="Chủ đề kiến thức"
-                          topics={topics}
-                          value={field.value ?? []}
-                          disabled={isBusy}
-                          isLoading={isLoadingTopics}
-                          loadError={topicLoadError}
-                          onChange={field.onChange}
-                          onCreateTopic={handleCreateTopic}
-                          onRetry={retryTopicLoad}
+                      <legend className="px-1 font-medium">
+                        Câu {questionIndex + 1}
+                      </legend>
+                      <div className="mb-4 mt-2 max-w-sm">
+                        <Controller
+                          control={control}
+                          name={
+                            `questionTopicIds.partTwo.${questionIndex}` as const
+                          }
+                          render={({ field }) => (
+                            <QuestionTopicSelector
+                              label="Chủ đề của toàn bộ câu a/b/c/d"
+                              topics={topics}
+                              value={field.value ?? []}
+                              disabled={isBusy}
+                              isLoading={isLoadingTopics}
+                              loadError={topicLoadError}
+                              onChange={field.onChange}
+                              onCreateTopic={handleCreateTopic}
+                              onRetry={retryTopicLoad}
+                            />
+                          )}
                         />
-                      )}
-                    />
-                  </div>
-                );
-              },
-            )}
-          </div>
-        </section>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        {PART_TWO_STATEMENTS.map((statement) => (
+                          <Controller
+                            key={statement}
+                            control={control}
+                            name={
+                              `answerKey.partTwo.${questionIndex}.${statement}` as const
+                            }
+                            render={({ field, fieldState }) => {
+                              const errorId = `part-two-${questionIndex}-${statement}-error`;
 
-        <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
-          <div>
-            <h2 className="text-xl font-semibold">Phần II - Đúng/Sai</h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              Chọn Đúng hoặc Sai cho từng ý a, b, c, d.
-            </p>
-          </div>
-          <div className="space-y-4">
-            {Array.from(
-              { length: EXAM_STRUCTURE.partTwoQuestions },
-              (_, questionIndex) => (
-                <fieldset
-                  key={questionIndex}
-                  className="border-border rounded-lg border p-4"
-                >
-                  <legend className="px-1 font-medium">
-                    Câu {questionIndex + 1}
-                  </legend>
-                  <div className="mb-4 mt-2 max-w-sm">
-                    <Controller
-                      control={control}
-                      name={
-                        `questionTopicIds.partTwo.${questionIndex}` as const
-                      }
-                      render={({ field }) => (
-                        <QuestionTopicSelector
-                          label="Chủ đề của toàn bộ câu a/b/c/d"
-                          topics={topics}
-                          value={field.value ?? []}
-                          disabled={isBusy}
-                          isLoading={isLoadingTopics}
-                          loadError={topicLoadError}
-                          onChange={field.onChange}
-                          onCreateTopic={handleCreateTopic}
-                          onRetry={retryTopicLoad}
-                        />
-                      )}
-                    />
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {PART_TWO_STATEMENTS.map((statement) => (
+                              return (
+                                <div className="space-y-2">
+                                  <Label
+                                    htmlFor={`part-two-${questionIndex}-${statement}`}
+                                  >
+                                    Ý {statement}
+                                  </Label>
+                                  <select
+                                    id={`part-two-${questionIndex}-${statement}`}
+                                    ref={field.ref}
+                                    name={field.name}
+                                    className={selectClassName}
+                                    value={
+                                      field.value === null
+                                        ? ""
+                                        : field.value
+                                          ? "true"
+                                          : "false"
+                                    }
+                                    aria-invalid={Boolean(fieldState.error)}
+                                    aria-describedby={
+                                      fieldState.error ? errorId : undefined
+                                    }
+                                    onBlur={field.onBlur}
+                                    onChange={(event) =>
+                                      field.onChange(
+                                        event.target.value === ""
+                                          ? null
+                                          : event.target.value === "true",
+                                      )
+                                    }
+                                  >
+                                    <option value="">Chọn</option>
+                                    <option value="true">Đúng</option>
+                                    <option value="false">Sai</option>
+                                  </select>
+                                  {fieldState.error && (
+                                    <p
+                                      id={errorId}
+                                      role="alert"
+                                      className="text-destructive text-sm"
+                                    >
+                                      {fieldState.error.message}
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </fieldset>
+                  ),
+                )}
+              </div>
+            </section>
+
+            <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
+              <div>
+                <h2 className="text-xl font-semibold">
+                  Phần III - Trả lời ngắn
+                </h2>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  {part3InputMode === PART3_INPUT_MODE.BUBBLE
+                    ? "Tô tối đa 4 ô ký tự. Dấu phẩy hiển thị theo mẫu Việt Nam và được lưu nội bộ bằng dấu chấm."
+                    : "Nhập tối đa 4 ký tự bằng chữ số, dấu âm và dấu phẩy thập phân."}
+                </p>
+              </div>
+              <div className="grid gap-4 xl:grid-cols-2">
+                {Array.from(
+                  { length: EXAM_STRUCTURE.partThreeQuestions },
+                  (_, questionIndex) => (
+                    <div key={questionIndex} className="space-y-2">
                       <Controller
-                        key={statement}
+                        control={control}
+                        name={`answerKey.partThree.${questionIndex}` as const}
+                        render={({ field, fieldState }) =>
+                          part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
+                            <ShortAnswerBubbleInput
+                              value={field.value}
+                              onChange={field.onChange}
+                              label={`Câu ${questionIndex + 1}`}
+                              error={fieldState.error?.message}
+                              disabled={isBusy}
+                              inputRef={field.ref}
+                              onBlur={field.onBlur}
+                            />
+                          ) : (
+                            <ShortAnswerTextInput
+                              value={field.value}
+                              onChange={field.onChange}
+                              label={`Câu ${questionIndex + 1}`}
+                              error={fieldState.error?.message}
+                              disabled={isBusy}
+                              inputRef={field.ref}
+                              onBlur={field.onBlur}
+                              onValidityChange={(isValid) =>
+                                setPartThreeTextAnswerValidity(
+                                  questionIndex,
+                                  isValid,
+                                )
+                              }
+                            />
+                          )
+                        }
+                      />
+                      <Controller
                         control={control}
                         name={
-                          `answerKey.partTwo.${questionIndex}.${statement}` as const
+                          `questionTopicIds.partThree.${questionIndex}` as const
                         }
-                        render={({ field, fieldState }) => {
-                          const errorId = `part-two-${questionIndex}-${statement}-error`;
-
-                          return (
-                            <div className="space-y-2">
-                              <Label
-                                htmlFor={`part-two-${questionIndex}-${statement}`}
-                              >
-                                Ý {statement}
-                              </Label>
-                              <select
-                                id={`part-two-${questionIndex}-${statement}`}
-                                ref={field.ref}
-                                name={field.name}
-                                className={selectClassName}
-                                value={
-                                  field.value === null
-                                    ? ""
-                                    : field.value
-                                      ? "true"
-                                      : "false"
-                                }
-                                aria-invalid={Boolean(fieldState.error)}
-                                aria-describedby={
-                                  fieldState.error ? errorId : undefined
-                                }
-                                onBlur={field.onBlur}
-                                onChange={(event) =>
-                                  field.onChange(
-                                    event.target.value === ""
-                                      ? null
-                                      : event.target.value === "true",
-                                  )
-                                }
-                              >
-                                <option value="">Chọn</option>
-                                <option value="true">Đúng</option>
-                                <option value="false">Sai</option>
-                              </select>
-                              {fieldState.error && (
-                                <p
-                                  id={errorId}
-                                  role="alert"
-                                  className="text-destructive text-sm"
-                                >
-                                  {fieldState.error.message}
-                                </p>
-                              )}
-                            </div>
-                          );
-                        }}
+                        render={({ field }) => (
+                          <QuestionTopicSelector
+                            label="Chủ đề kiến thức"
+                            topics={topics}
+                            value={field.value ?? []}
+                            disabled={isBusy}
+                            isLoading={isLoadingTopics}
+                            loadError={topicLoadError}
+                            onChange={field.onChange}
+                            onCreateTopic={handleCreateTopic}
+                            onRetry={retryTopicLoad}
+                          />
+                        )}
                       />
-                    ))}
-                  </div>
-                </fieldset>
-              ),
-            )}
-          </div>
-        </section>
-
-        <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
-          <div>
-            <h2 className="text-xl font-semibold">Phần III - Trả lời ngắn</h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              {part3InputMode === PART3_INPUT_MODE.BUBBLE
-                ? "Tô tối đa 4 ô ký tự. Dấu phẩy hiển thị theo mẫu Việt Nam và được lưu nội bộ bằng dấu chấm."
-                : "Nhập tối đa 4 ký tự bằng chữ số, dấu âm và dấu phẩy thập phân."}
-            </p>
-          </div>
-          <div className="grid gap-4 xl:grid-cols-2">
-            {Array.from(
-              { length: EXAM_STRUCTURE.partThreeQuestions },
-              (_, questionIndex) => (
-                <div key={questionIndex} className="space-y-2">
-                  <Controller
-                    control={control}
-                    name={`answerKey.partThree.${questionIndex}` as const}
-                    render={({ field, fieldState }) =>
-                      part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
-                        <ShortAnswerBubbleInput
-                          value={field.value}
-                          onChange={field.onChange}
-                          label={`Câu ${questionIndex + 1}`}
-                          error={fieldState.error?.message}
-                          disabled={isBusy}
-                          inputRef={field.ref}
-                          onBlur={field.onBlur}
-                        />
-                      ) : (
-                        <ShortAnswerTextInput
-                          value={field.value}
-                          onChange={field.onChange}
-                          label={`Câu ${questionIndex + 1}`}
-                          error={fieldState.error?.message}
-                          disabled={isBusy}
-                          inputRef={field.ref}
-                          onBlur={field.onBlur}
-                          onValidityChange={(isValid) =>
-                            setPartThreeTextAnswerValidity(
-                              questionIndex,
-                              isValid,
-                            )
-                          }
-                        />
-                      )
-                    }
-                  />
-                  <Controller
-                    control={control}
-                    name={
-                      `questionTopicIds.partThree.${questionIndex}` as const
-                    }
-                    render={({ field }) => (
-                      <QuestionTopicSelector
-                        label="Chủ đề kiến thức"
-                        topics={topics}
-                        value={field.value ?? []}
-                        disabled={isBusy}
-                        isLoading={isLoadingTopics}
-                        loadError={topicLoadError}
-                        onChange={field.onChange}
-                        onCreateTopic={handleCreateTopic}
-                        onRetry={retryTopicLoad}
-                      />
-                    )}
-                  />
-                </div>
-              ),
-            )}
-          </div>
-        </section>
+                    </div>
+                  ),
+                )}
+              </div>
+            </section>
+          </>
+        )}
       </fieldset>
 
       {submissionError && !pendingAnswerKeyCorrection && (
@@ -1117,7 +1732,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             <Link href="/admin/exams">Hủy</Link>
           </Button>
         )}
-        <Button type="submit" disabled={isBusy}>
+        <Button type="submit" disabled={isBusy || structureContainsEssay}>
           {isBusy
             ? "Đang lưu đề thi..."
             : mode === "create"

@@ -7,6 +7,7 @@ import {
   EXAM_STRUCTURE_MAX_QUESTIONS_PER_SECTION,
   EXAM_STRUCTURE_MAX_SECTIONS,
   EXAM_STRUCTURE_MAX_TOTAL_QUESTIONS,
+  EXAM_STRUCTURE_QUESTION_TYPE,
   EXAM_STRUCTURE_QUESTION_TYPES,
   EXAM_STRUCTURE_SECTION_TITLE_MAX_LENGTH,
   EXAM_STRUCTURE_TOTAL_SCORE_HUNDREDTHS,
@@ -109,6 +110,18 @@ export function createExamStructureSectionsPathDefinition() {
         validator: hasUniqueStructureIds,
         message:
           "Section and question IDs must be unique within the structure.",
+      },
+      {
+        validator: (sections: ExamStructureSection[]) =>
+          sections.every((section) =>
+            section.questions.every(
+              (question) =>
+                question.type !== EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE ||
+                question.maxScoreHundredths % 20 === 0,
+            ),
+          ),
+        message:
+          "True/false question maximum scores must be divisible by 20 hundredths.",
       },
       {
         validator: (sections: ExamStructureSection[]) =>

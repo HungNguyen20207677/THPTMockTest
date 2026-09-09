@@ -11,7 +11,9 @@ import {
   verifyExamPdfAsset,
 } from "@/lib/cloudinary/exam-pdf";
 import { EXAM_STATUS, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { USER_ROLE } from "@/lib/constants/roles";
+import { findExamStructureTemplateRecordById } from "@/lib/db/dao/exam-structure-template.dao";
 import {
   deleteExamAttemptRecordsByExamId,
   findExamIdsWithAttemptRecords,
@@ -39,9 +41,14 @@ import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { reserveStudentsForExamAssignment } from "@/lib/db/dao/user.dao";
 import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
-import { gradeAttemptAnswers } from "@/lib/exam/grading";
+import { gradeExamAttemptAnswers } from "@/lib/exam/grading";
 import { getUniqueExamTopicIds } from "@/lib/exam/question-topics";
 import {
+  createExamStructureSnapshot,
+  examStructureContainsQuestionType,
+} from "@/lib/exam/structure";
+import {
+  EssayImageExamCreationUnsupportedError,
   ExamAnswerKeyConfirmationRequiredError,
   ExamConflictError,
   ExamContentLockedError,
@@ -49,16 +56,21 @@ import {
   ExamPdfAlreadyAttachedError,
   ExamPdfOperationConflictError,
   ExamPublicationError,
+  ExamStructureTemplateNotFoundError,
   ForbiddenError,
   RequestValidationError,
 } from "@/lib/errors/app-error";
 import {
-  examUpsertSchema,
-  publishableExamSchema,
+  createDynamicExamAnswerKeySchema,
+  examAnswerKeySchema,
+  examPdfSchema,
+  part3InputModeSchema,
+  type CreateExamInput,
   type UpdateExamInput,
   type UpsertExamInput,
 } from "@/lib/validations/exam";
 import type {
+  AnyExamAnswerKey,
   ExamDetail,
   ExamPdf,
   ExamPdfUploadReference,
@@ -67,8 +79,10 @@ import type {
   ExamStatus,
   ExamSummary,
 } from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { AppUser } from "@/types/user";
 import type { ExamPdfUploadIntent } from "@/lib/validations/exam-pdf";
+import { examStructureSnapshotSchema } from "@/lib/validations/exam-structure-template";
 
 function assertAdmin(actor: AppUser): void {
   if (actor.role !== USER_ROLE.ADMIN) {
@@ -102,6 +116,9 @@ function toExamDetail(
     description: exam.description,
     assignedStudentIds: exam.assignedStudentIds,
     part3InputMode: exam.part3InputMode,
+    ...(exam.structureSnapshot
+      ? { shortAnswerInputMode: exam.part3InputMode }
+      : {}),
     ...(exam.structureTemplateId
       ? { structureTemplateId: exam.structureTemplateId }
       : {}),
@@ -166,9 +183,26 @@ async function assertExamTopicsExist(
   }
 }
 
-function assertPublishableContent(input: UpsertExamInput): void {
-  if (!examUpsertSchema.safeParse(input).success) {
-    throw new ExamPublicationError();
+function getAnswerKeyValidationError(
+  answerKey: AnyExamAnswerKey,
+  structure?: ExamStructureSnapshot,
+): string | null {
+  const parsed = structure
+    ? createDynamicExamAnswerKeySchema(structure).safeParse(answerKey)
+    : examAnswerKeySchema.safeParse(answerKey);
+  return parsed.success
+    ? null
+    : (parsed.error.issues[0]?.message ?? "Đáp án đề thi không hợp lệ.");
+}
+
+function assertAnswerKeyMatchesStructure(
+  answerKey: AnyExamAnswerKey,
+  structure?: ExamStructureSnapshot,
+): void {
+  const validationError = getAnswerKeyValidationError(answerKey, structure);
+
+  if (validationError) {
+    throw new RequestValidationError(validationError);
   }
 }
 
@@ -177,15 +211,27 @@ export function assertExamCanBePublished(input: {
   part3InputMode: ExamPersistenceRecord["part3InputMode"];
   pdf: ExamPdf;
   answerKey: ExamPersistenceRecord["answerKey"];
+  structureSnapshot?: ExamStructureSnapshot;
 }): void {
-  const publicationData = {
-    title: input.title,
-    part3InputMode: input.part3InputMode,
-    pdf: input.pdf,
-    answerKey: input.answerKey,
-  };
+  const baseIsValid =
+    typeof input.title === "string" &&
+    input.title.trim().length >= 3 &&
+    input.title.trim().length <= 150 &&
+    part3InputModeSchema.safeParse(input.part3InputMode).success &&
+    examPdfSchema.safeParse(input.pdf).success;
+  const answerKeyIsValid =
+    getAnswerKeyValidationError(input.answerKey, input.structureSnapshot) ===
+    null;
 
-  if (!publishableExamSchema.safeParse(publicationData).success) {
+  if (
+    !baseIsValid ||
+    !answerKeyIsValid ||
+    (input.structureSnapshot &&
+      examStructureContainsQuestionType(
+        input.structureSnapshot,
+        EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+      ))
+  ) {
     throw new ExamPublicationError();
   }
 }
@@ -343,19 +389,46 @@ export function issueExamPdfUploadTicket(
 
 export async function createExam(
   actor: AppUser,
-  input: UpsertExamInput,
+  input: CreateExamInput,
   pdfUpload: ExamPdfUploadReference,
 ): Promise<ExamDetail> {
   assertAdmin(actor);
-  const examInput = {
-    ...input,
-    ...normalizeExamAssignment(input),
-  };
   const leases = await acquirePdfUploadLeases(pdfUpload);
 
   try {
     assertValidExamPdfUploadReference(pdfUpload);
     await assertPdfUploadIsUnclaimed(pdfUpload);
+    let structureSnapshot: ExamStructureSnapshot | undefined;
+
+    if ("structureTemplateId" in input) {
+      const template = await findExamStructureTemplateRecordById(
+        input.structureTemplateId,
+      );
+
+      if (!template) {
+        throw new ExamStructureTemplateNotFoundError();
+      }
+
+      structureSnapshot = examStructureSnapshotSchema.parse(
+        createExamStructureSnapshot(template),
+      );
+
+      if (
+        examStructureContainsQuestionType(
+          structureSnapshot,
+          EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        )
+      ) {
+        throw new EssayImageExamCreationUnsupportedError();
+      }
+    }
+
+    assertAnswerKeyMatchesStructure(input.answerKey, structureSnapshot);
+    const examInput = {
+      ...input,
+      ...normalizeExamAssignment(input),
+      ...(structureSnapshot ? { structureSnapshot } : {}),
+    };
     const pdf = await verifyExamPdfAsset(pdfUpload);
 
     if (examInput.status === EXAM_STATUS.PUBLISHED) {
@@ -364,6 +437,7 @@ export async function createExam(
         part3InputMode: examInput.part3InputMode,
         pdf,
         answerKey: examInput.answerKey,
+        structureSnapshot,
       });
     }
 
@@ -407,6 +481,19 @@ export async function editExam(
     throw new ExamConflictError();
   }
 
+  const answerKeyValidationError = getAnswerKeyValidationError(
+    input.answerKey,
+    currentExam.structureSnapshot,
+  );
+
+  if (answerKeyValidationError) {
+    if (replacementPdfUpload) {
+      await discardPdfUploadBestEffort(replacementPdfUpload);
+    }
+
+    throw new RequestValidationError(answerKeyValidationError);
+  }
+
   const hasAttempts =
     currentExam.attemptsStarted || (await hasExamAttemptRecords(examId));
   const answerKeyChanged = !areExamAnswerKeysEqual(
@@ -442,7 +529,7 @@ export async function editExam(
   const questionTopicIds =
     input.questionTopicIds ?? currentExam.questionTopicIds;
 
-  const examInput: UpsertExamInput = {
+  const examInput = {
     title: input.title,
     description: input.description,
     status: input.status,
@@ -459,10 +546,6 @@ export async function editExam(
     : [];
 
   try {
-    if (examInput.status === EXAM_STATUS.PUBLISHED) {
-      assertPublishableContent(examInput);
-    }
-
     if (replacementPdfUpload) {
       assertValidExamPdfUploadReference(replacementPdfUpload);
       await assertPdfUploadIsUnclaimed(replacementPdfUpload);
@@ -478,6 +561,7 @@ export async function editExam(
         part3InputMode: examInput.part3InputMode,
         pdf: newPdf,
         answerKey: examInput.answerKey,
+        structureSnapshot: currentExam.structureSnapshot,
       });
     }
 
@@ -511,17 +595,21 @@ export async function editExam(
           throw new ExamConflictError();
         }
 
-        const regradeSources = await listTerminalExamAttemptRegradeSources(
-          examId,
-          session,
-        );
+        const regradeSources = currentExam.structureSnapshot
+          ? await listTerminalExamAttemptRegradeSources(
+              examId,
+              session,
+              currentExam.structureSnapshot,
+            )
+          : await listTerminalExamAttemptRegradeSources(examId, session);
         const gradedAt = new Date();
         const replacements = regradeSources.map((attempt) => ({
           attemptId: attempt.id,
-          grading: gradeAttemptAnswers(
+          grading: gradeExamAttemptAnswers(
             attempt.answers,
             correctedExam.answerKey,
             correctedExam.answerKeyRevision,
+            correctedExam.structureSnapshot,
           ),
         }));
         const matchedCount = await replaceTerminalExamAttemptGradings(

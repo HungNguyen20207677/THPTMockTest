@@ -82,6 +82,7 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
           exam: {
             id: detail.exam?.id ?? "",
             title: detail.exam?.title ?? "Đề thi không còn tồn tại",
+            structureSnapshot: detail.structureSnapshot,
           },
           attempt: {
             id: detail.attempt.id,
@@ -95,6 +96,7 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
           visibility: { score: true, answers: Boolean(detail.answerReview) },
           score: detail.score,
           answerReview: detail.answerReview,
+          dynamicAnswerReview: detail.dynamicAnswerReview,
         }
       : null;
 

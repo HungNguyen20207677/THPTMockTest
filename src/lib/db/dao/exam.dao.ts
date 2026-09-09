@@ -17,9 +17,10 @@ import {
   ExamPdfOperationLeaseModel,
 } from "@/lib/db/models/exam.model";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
+import { cloneExamAnswerKey } from "@/lib/exam/answer-key";
 import { cloneExamStructureSnapshot } from "@/lib/exam/structure";
 import type {
-  ExamAnswerKey,
+  AnyExamAnswerKey,
   ExamPdf,
   ExamQuestionTopicIds,
   ExamSettings,
@@ -41,7 +42,7 @@ export interface ExamPersistenceRecord {
   structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
   settings: ExamSettings;
-  answerKey: ExamAnswerKey;
+  answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
   answerKeyRevision: number;
   attemptsStarted: boolean;
@@ -61,7 +62,7 @@ export interface SaveExamRecordInput {
   structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
   settings: ExamSettings;
-  answerKey: ExamAnswerKey;
+  answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
 }
 
@@ -76,8 +77,13 @@ export interface UpdateExamMetadataRecordInput {
 }
 
 export interface UpdateExamAnswerKeyRecordInput extends UpdateExamMetadataRecordInput {
-  answerKey: ExamAnswerKey;
+  answerKey: AnyExamAnswerKey;
 }
+
+export type UpdateExamRecordInput = Omit<
+  SaveExamRecordInput,
+  "structureTemplateId" | "structureSnapshot"
+>;
 
 export interface StudentExamPersistenceRecord {
   id: string;
@@ -92,6 +98,7 @@ export interface StudentExamPersistenceRecord {
 
 export interface StudentExamWorkspacePersistenceRecord extends StudentExamPersistenceRecord {
   part3InputMode: Part3InputMode;
+  structureSnapshot?: ExamStructureSnapshot;
   pdf: Pick<ExamPdf, "secureUrl" | "originalFilename">;
 }
 
@@ -103,8 +110,9 @@ export interface ExamGradingPersistenceRecord {
   id: string;
   title: string;
   status: ExamStatus;
-  answerKey: ExamAnswerKey;
+  answerKey: AnyExamAnswerKey;
   answerKeyRevision: number;
+  structureSnapshot?: ExamStructureSnapshot;
   settings: Pick<
     ExamSettings,
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
@@ -134,7 +142,7 @@ interface ExamDocumentData {
   structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
   settings: ExamSettings;
-  answerKey: ExamAnswerKey;
+  answerKey: AnyExamAnswerKey;
   questionTopicIds?: ExamQuestionTopicDocumentData;
   answerKeyRevision?: number;
   attemptsStarted?: boolean;
@@ -156,6 +164,7 @@ interface StudentExamDocumentData {
 
 interface StudentExamWorkspaceDocumentData extends StudentExamDocumentData {
   part3InputMode?: Part3InputMode;
+  structureSnapshot?: ExamStructureSnapshot;
   pdf: Pick<ExamPdf, "secureUrl" | "originalFilename">;
 }
 
@@ -168,8 +177,9 @@ interface ExamGradingDocumentData {
   _id: Types.ObjectId;
   title: string;
   status: ExamStatus;
-  answerKey: ExamAnswerKey;
+  answerKey: AnyExamAnswerKey;
   answerKeyRevision?: number;
+  structureSnapshot?: ExamStructureSnapshot;
   settings: Pick<
     ExamSettings,
     "showScoreAfterSubmission" | "showAnswersAfterSubmission"
@@ -312,7 +322,7 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
       : {}),
     pdf: exam.pdf,
     settings: exam.settings,
-    answerKey: exam.answerKey,
+    answerKey: cloneExamAnswerKey(exam.answerKey),
     questionTopicIds: toQuestionTopicIds(exam.questionTopicIds),
     answerKeyRevision: exam.answerKeyRevision ?? INITIAL_ANSWER_KEY_REVISION,
     attemptsStarted: exam.attemptsStarted === true,
@@ -375,6 +385,11 @@ function toStudentExamWorkspaceRecord(
   return {
     ...toStudentExamRecord(exam),
     part3InputMode: exam.part3InputMode ?? PART3_INPUT_MODE.BUBBLE,
+    ...(exam.structureSnapshot
+      ? {
+          structureSnapshot: cloneExamStructureSnapshot(exam.structureSnapshot),
+        }
+      : {}),
     pdf: {
       secureUrl: exam.pdf.secureUrl,
       originalFilename: exam.pdf.originalFilename,
@@ -389,8 +404,13 @@ function toExamGradingRecord(
     id: exam._id.toString(),
     title: exam.title,
     status: exam.status,
-    answerKey: exam.answerKey,
+    answerKey: cloneExamAnswerKey(exam.answerKey),
     answerKeyRevision: exam.answerKeyRevision ?? INITIAL_ANSWER_KEY_REVISION,
+    ...(exam.structureSnapshot
+      ? {
+          structureSnapshot: cloneExamStructureSnapshot(exam.structureSnapshot),
+        }
+      : {}),
     settings: exam.settings,
     ...(exam.questionTopicIds
       ? { questionTopicIds: toQuestionTopicIds(exam.questionTopicIds) }
@@ -523,6 +543,7 @@ export async function findStudentExamRecordById(
       status: 1,
       "settings.allowRetake": 1,
       part3InputMode: 1,
+      structureSnapshot: 1,
       attemptsStarted: 1,
       "pdf.secureUrl": 1,
       "pdf.originalFilename": 1,
@@ -601,6 +622,7 @@ export async function reserveExamForAttemptGrading(
       status: 1,
       answerKey: 1,
       answerKeyRevision: 1,
+      structureSnapshot: 1,
       "settings.showScoreAfterSubmission": 1,
       "settings.showAnswersAfterSubmission": 1,
       questionTopicIds: 1,
@@ -622,6 +644,7 @@ export async function findExamGradingRecordById(
       status: 1,
       answerKey: 1,
       answerKeyRevision: 1,
+      structureSnapshot: 1,
       "settings.showScoreAfterSubmission": 1,
       "settings.showAnswersAfterSubmission": 1,
     })
@@ -642,6 +665,7 @@ export async function findExamReportingRecordById(
       status: 1,
       answerKey: 1,
       answerKeyRevision: 1,
+      structureSnapshot: 1,
       settings: 1,
       questionTopicIds: 1,
     })
@@ -666,6 +690,7 @@ export async function findExamReportingRecordsByIds(
       status: 1,
       answerKey: 1,
       answerKeyRevision: 1,
+      structureSnapshot: 1,
       settings: 1,
       questionTopicIds: 1,
     })
@@ -713,7 +738,7 @@ export async function createExamRecord(
 
 export async function updateExamRecord(
   examId: string,
-  input: SaveExamRecordInput,
+  input: UpdateExamRecordInput,
   expectedUpdatedAt: Date,
   answerKeyRevision: number,
   session: ClientSession,

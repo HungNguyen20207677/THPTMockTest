@@ -2,9 +2,9 @@ import { ApiClientError, apiRequest } from "@/lib/api/client";
 import { EXAM_PDF_MAX_BYTES } from "@/lib/constants/exam";
 import type {
   DeleteExamInput,
+  CreateExamInput,
   UpdateExamStatusInput,
   UpdateExamInput,
-  UpsertExamInput,
 } from "@/lib/validations/exam";
 import { getExamPdfValidationError } from "@/lib/validations/exam-pdf";
 import type { ApiSuccessResponse } from "@/types/api";
@@ -120,7 +120,7 @@ export function fetchExam(
 }
 
 export async function createExamRecord(
-  input: UpsertExamInput,
+  input: CreateExamInput,
   pdf: File,
 ): Promise<ApiSuccessResponse<{ exam: ExamDetail }>> {
   const pdfUpload = await uploadExamPdfDirectly(pdf);

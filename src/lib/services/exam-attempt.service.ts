@@ -40,9 +40,15 @@ import {
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import {
-  gradeAttemptAnswers,
+  gradeExamAttemptAnswers,
+  isDynamicAttemptGradingSnapshot,
   scoreHundredthsToPoints,
 } from "@/lib/exam/grading";
+import {
+  createAttemptAnswersSchemaForStructure,
+  examAttemptAnswersSchema,
+  isDynamicAttemptAnswers,
+} from "@/lib/validations/attempt-answers";
 import {
   normalizeCanonicalShortAnswer,
   shortAnswerSlotsToDisplayValue,
@@ -59,8 +65,12 @@ import {
   ForbiddenError,
 } from "@/lib/errors/app-error";
 import type {
-  AttemptAnswers,
+  AttemptPartTwoAnswer,
+  DynamicAttemptAnswers,
+  DynamicAttemptGradingSnapshot,
+  DynamicQuestionAnswerReview,
   ExamAttempt,
+  ExamAttemptAnswers,
   StudentExamAttemptContext,
   StudentExamAttemptResult,
   StudentExamList,
@@ -68,6 +78,15 @@ import type {
   StudentExamState,
   StudentExamSummary,
 } from "@/types/exam-attempt";
+import { isDynamicExamAnswerKey } from "@/lib/exam/answer-key";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
+import type {
+  DynamicExamAnswerKey,
+  PartOneAnswer,
+  PartTwoAnswer,
+  ShortAnswerSlots,
+} from "@/types/exam";
+import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { AppUser } from "@/types/user";
 
 const ATTEMPT_DURATION_MS = EXAM_STRUCTURE.durationMinutes * 60 * 1000;
@@ -86,7 +105,28 @@ function assertStudent(actor: AppUser): void {
   }
 }
 
-function toExamAttempt(attempt: ExamAttemptPersistenceRecord): ExamAttempt {
+function getAttemptAnswers(
+  attempt: ExamAttemptPersistenceRecord,
+  structure?: ExamStructureSnapshot,
+): ExamAttemptAnswers {
+  const answers =
+    attempt.answers ??
+    (structure
+      ? createEmptyAttemptAnswers(structure)
+      : createEmptyAttemptAnswers());
+  if (!structure && isDynamicAttemptAnswers(answers)) {
+    return examAttemptAnswersSchema.parse(answers);
+  }
+
+  return createAttemptAnswersSchemaForStructure(structure).parse(
+    answers,
+  ) as ExamAttemptAnswers;
+}
+
+function toExamAttempt(
+  attempt: ExamAttemptPersistenceRecord,
+  structure?: ExamStructureSnapshot,
+): ExamAttempt {
   return {
     id: attempt.id,
     examId: attempt.examId,
@@ -96,7 +136,7 @@ function toExamAttempt(attempt: ExamAttemptPersistenceRecord): ExamAttempt {
     expiresAt: attempt.expiresAt.toISOString(),
     submittedAt: attempt.submittedAt?.toISOString(),
     lastSavedAt: attempt.lastSavedAt?.toISOString(),
-    answers: attempt.answers ?? createEmptyAttemptAnswers(),
+    answers: getAttemptAnswers(attempt, structure),
   };
 }
 
@@ -116,8 +156,14 @@ function toAttemptContext(
       },
       durationMinutes: EXAM_STRUCTURE.durationMinutes,
       part3InputMode: exam.part3InputMode,
+      ...(exam.structureSnapshot
+        ? {
+            shortAnswerInputMode: exam.part3InputMode,
+            structureSnapshot: exam.structureSnapshot,
+          }
+        : {}),
     },
-    attempt: toExamAttempt(attempt),
+    attempt: toExamAttempt(attempt, exam.structureSnapshot),
     serverNow: serverNow.toISOString(),
     canEditAnswers: isValidActiveAttempt(attempt, serverNow),
   };
@@ -126,9 +172,10 @@ function toAttemptContext(
 function toAttemptMutationResult(
   attempt: ExamAttemptPersistenceRecord,
   serverNow: Date,
+  structure?: ExamStructureSnapshot,
 ): StudentExamAttemptMutationResult {
   return {
-    attempt: toExamAttempt(attempt),
+    attempt: toExamAttempt(attempt, structure),
     serverNow: serverNow.toISOString(),
     canEditAnswers: isValidActiveAttempt(attempt, serverNow),
   };
@@ -156,10 +203,11 @@ export async function resolveAttemptExpiration(
         throw new ExamNotFoundError();
       }
 
-      const grading = gradeAttemptAnswers(
-        attempt.answers ?? createEmptyAttemptAnswers(),
+      const grading = gradeExamAttemptAnswers(
+        getAttemptAnswers(attempt, exam.structureSnapshot),
         exam.answerKey,
         exam.answerKeyRevision,
+        exam.structureSnapshot,
       );
       const finalizedAttempt = await autoSubmitExpiredExamAttemptRecord(
         attempt.id,
@@ -349,6 +397,11 @@ export async function startOrResumeExamAttempt(
             status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
             startedAt,
             expiresAt,
+            ...(exam.structureSnapshot
+              ? {
+                  answers: createEmptyAttemptAnswers(exam.structureSnapshot),
+                }
+              : {}),
           },
           session,
         );
@@ -532,7 +585,7 @@ export async function saveExamAttemptAnswers(
   actor: AppUser,
   examId: string,
   attemptId: string,
-  answers: AttemptAnswers,
+  answers: ExamAttemptAnswers,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
   const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
@@ -543,16 +596,30 @@ export async function saveExamAttemptAnswers(
     throw new ExamAttemptLockedError();
   }
 
+  const exam = await findStudentExamRecordById(examId);
+
+  if (!exam) {
+    throw new ExamNotFoundError();
+  }
+
+  const validatedAnswers = createAttemptAnswersSchemaForStructure(
+    exam.structureSnapshot,
+  ).parse(answers) as ExamAttemptAnswers;
+
   const savedAttempt = await saveOwnedActiveExamAttemptAnswers({
     attemptId,
     examId,
     studentId: actor.id,
-    answers,
+    answers: validatedAnswers,
     now: serverNow,
   });
 
   if (savedAttempt) {
-    return toAttemptMutationResult(savedAttempt, serverNow);
+    return toAttemptMutationResult(
+      savedAttempt,
+      serverNow,
+      exam.structureSnapshot,
+    );
   }
 
   const currentAttempt = await resolveMutationRace(actor, examId, attemptId);
@@ -568,7 +635,7 @@ export async function submitExamAttempt(
   actor: AppUser,
   examId: string,
   attemptId: string,
-  answers: AttemptAnswers,
+  answers: ExamAttemptAnswers,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
   const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
@@ -589,17 +656,21 @@ export async function submitExamAttempt(
         throw new ExamNotFoundError();
       }
 
-      const grading = gradeAttemptAnswers(
-        answers,
+      const validatedAnswers = createAttemptAnswersSchemaForStructure(
+        exam.structureSnapshot,
+      ).parse(answers) as ExamAttemptAnswers;
+      const grading = gradeExamAttemptAnswers(
+        validatedAnswers,
         exam.answerKey,
         exam.answerKeyRevision,
+        exam.structureSnapshot,
       );
       const finalizedAttempt = await submitOwnedActiveExamAttempt(
         {
           attemptId,
           examId,
           studentId: actor.id,
-          answers,
+          answers: validatedAnswers,
           grading,
           now: serverNow,
         },
@@ -666,10 +737,11 @@ export async function ensureTerminalAttemptGrading(
       throw new ExamNotFoundError();
     }
 
-    const grading = gradeAttemptAnswers(
-      attempt.answers ?? createEmptyAttemptAnswers(),
+    const grading = gradeExamAttemptAnswers(
+      getAttemptAnswers(attempt, currentExam.structureSnapshot),
       currentExam.answerKey,
       currentExam.answerKeyRevision,
+      currentExam.structureSnapshot,
     );
     const gradedAttempt = await setOwnedTerminalExamAttemptGradingForRevision(
       attempt.id,
@@ -712,6 +784,101 @@ function getCorrectPartThreeDisplayAnswer(answer: string): string {
   return normalizedAnswer.replace(".", ",");
 }
 
+function buildDynamicAnswerReview(
+  answers: DynamicAttemptAnswers,
+  answerKey: DynamicExamAnswerKey,
+  grading: DynamicAttemptGradingSnapshot,
+  structure: ExamStructureSnapshot,
+  showScores: boolean,
+): NonNullable<StudentExamAttemptResult["dynamicAnswerReview"]> {
+  const entries = structure.sections.flatMap((section) =>
+    section.questions.map((question) => {
+      const studentAnswer = answers.answersByQuestionId[question.id];
+      const correctAnswer = answerKey.answersByQuestionId[question.id];
+      const questionGrading = grading.questionsById[question.id];
+      let review: DynamicQuestionAnswerReview;
+
+      if (!questionGrading) {
+        throw new ExamAttemptStateConflictError();
+      }
+
+      if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE) {
+        if (!("isCorrect" in questionGrading)) {
+          throw new ExamAttemptStateConflictError();
+        }
+
+        review = {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          studentAnswer: studentAnswer as PartOneAnswer | null,
+          correctAnswer: correctAnswer as PartOneAnswer,
+          isCorrect: questionGrading.isCorrect,
+        };
+      } else if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE) {
+        if (!("correctStatementCount" in questionGrading)) {
+          throw new ExamAttemptStateConflictError();
+        }
+
+        const studentStatements = studentAnswer as AttemptPartTwoAnswer;
+        const correctStatements = correctAnswer as PartTwoAnswer;
+        review = {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+          studentAnswer: studentStatements,
+          correctAnswer: correctStatements,
+          correctStatementCount: questionGrading.correctStatementCount,
+          statements: {
+            a: {
+              studentAnswer: studentStatements.a,
+              correctAnswer: correctStatements.a,
+              isCorrect: questionGrading.statements.a,
+            },
+            b: {
+              studentAnswer: studentStatements.b,
+              correctAnswer: correctStatements.b,
+              isCorrect: questionGrading.statements.b,
+            },
+            c: {
+              studentAnswer: studentStatements.c,
+              correctAnswer: correctStatements.c,
+              isCorrect: questionGrading.statements.c,
+            },
+            d: {
+              studentAnswer: studentStatements.d,
+              correctAnswer: correctStatements.d,
+              isCorrect: questionGrading.statements.d,
+            },
+          },
+          ...(showScores
+            ? {
+                score: scoreHundredthsToPoints(questionGrading.scoreHundredths),
+              }
+            : {}),
+        };
+      } else if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER) {
+        if (!("isCorrect" in questionGrading)) {
+          throw new ExamAttemptStateConflictError();
+        }
+
+        const studentSlots = studentAnswer as ShortAnswerSlots;
+        review = {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+          studentAnswer: studentSlots,
+          studentDisplayAnswer: shortAnswerSlotsToDisplayValue(studentSlots),
+          correctDisplayAnswer: getCorrectPartThreeDisplayAnswer(
+            correctAnswer as string,
+          ),
+          isCorrect: questionGrading.isCorrect,
+        };
+      } else {
+        throw new ExamAttemptStateConflictError();
+      }
+
+      return [question.id, review] as const;
+    }),
+  );
+
+  return { questionsById: Object.fromEntries(entries) };
+}
+
 export function buildExamAttemptResult(
   attempt: ExamAttemptPersistenceRecord,
   exam: ExamGradingPersistenceRecord,
@@ -732,6 +899,9 @@ export function buildExamAttemptResult(
     exam: {
       id: exam.id,
       title: exam.title,
+      ...(exam.structureSnapshot
+        ? { structureSnapshot: exam.structureSnapshot }
+        : {}),
     },
     attempt: {
       id: attempt.id,
@@ -755,6 +925,50 @@ export function buildExamAttemptResult(
     visibility,
   };
 
+  const answers = getAttemptAnswers(attempt, exam.structureSnapshot);
+  const answerKey = exam.answerKey;
+
+  if (exam.structureSnapshot) {
+    if (
+      !isDynamicAttemptGradingSnapshot(grading) ||
+      !isDynamicAttemptAnswers(answers) ||
+      !isDynamicExamAnswerKey(answerKey)
+    ) {
+      throw new ExamAttemptStateConflictError();
+    }
+
+    if (visibility.score) {
+      result.score = {
+        total: scoreHundredthsToPoints(grading.totalScoreHundredths),
+        sectionsById: Object.fromEntries(
+          Object.entries(grading.sectionScoresHundredths).map(
+            ([sectionId, score]) => [sectionId, scoreHundredthsToPoints(score)],
+          ),
+        ),
+      };
+    }
+
+    if (visibility.answers) {
+      result.dynamicAnswerReview = buildDynamicAnswerReview(
+        answers,
+        answerKey,
+        grading,
+        exam.structureSnapshot,
+        visibility.score,
+      );
+    }
+
+    return result;
+  }
+
+  if (
+    isDynamicAttemptGradingSnapshot(grading) ||
+    isDynamicAttemptAnswers(answers) ||
+    isDynamicExamAnswerKey(answerKey)
+  ) {
+    throw new ExamAttemptStateConflictError();
+  }
+
   if (visibility.score) {
     result.score = {
       total: scoreHundredthsToPoints(grading.totalScoreHundredths),
@@ -773,17 +987,15 @@ export function buildExamAttemptResult(
   }
 
   if (visibility.answers) {
-    const answers = attempt.answers ?? createEmptyAttemptAnswers();
-
     result.answerReview = {
       partOne: grading.partOne.map((item, index) => ({
         studentAnswer: answers.partOne[index],
-        correctAnswer: exam.answerKey.partOne[index],
+        correctAnswer: answerKey.partOne[index],
         isCorrect: item.isCorrect,
       })),
       partTwo: grading.partTwo.map((item, questionIndex) => {
         const studentAnswer = answers.partTwo[questionIndex];
-        const correctAnswer = exam.answerKey.partTwo[questionIndex];
+        const correctAnswer = answerKey.partTwo[questionIndex];
         const questionReview: NonNullable<
           StudentExamAttemptResult["answerReview"]
         >["partTwo"][number] = {
@@ -826,7 +1038,7 @@ export function buildExamAttemptResult(
           answers.partThree[index],
         ),
         correctDisplayAnswer: getCorrectPartThreeDisplayAnswer(
-          exam.answerKey.partThree[index],
+          answerKey.partThree[index],
         ),
         isCorrect: item.isCorrect,
       })),
