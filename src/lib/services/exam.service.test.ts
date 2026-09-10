@@ -526,7 +526,7 @@ describe("exam service", () => {
     expect(result.questionTopics).toEqual(expectedQuestionTopics);
   });
 
-  it("rejects Exam creation from an ESSAY_IMAGE template", async () => {
+  it("creates an ESSAY_IMAGE Exam without an automatic answer key", async () => {
     const template = createStructureTemplate({
       sections: [
         {
@@ -544,20 +544,31 @@ describe("exam service", () => {
     });
     const input = {
       ...createDynamicInput(template),
+      status: EXAM_STATUS.PUBLISHED,
       answerKey: {
-        answersByQuestionId: { "essay-image-question": "A" },
+        answersByQuestionId: {},
       },
     } satisfies DynamicExamUpsertInput;
     mocks.findExamStructureTemplateRecordById.mockResolvedValue(template);
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.createExamRecord.mockImplementation(
+      async (examInput: SaveExamRecordInput, createdBy: string) =>
+        createStoredExam({ ...examInput, createdBy }),
+    );
 
-    await expect(
-      createExam(admin, input, replacementPdfUpload),
-    ).rejects.toMatchObject({
-      code: "ESSAY_IMAGE_NOT_SUPPORTED",
-      statusCode: 422,
-    });
-    expect(mocks.verifyExamPdfAsset).not.toHaveBeenCalled();
-    expect(mocks.createExamRecord).not.toHaveBeenCalled();
+    const result = await createExam(admin, input, replacementPdfUpload);
+
+    expect(result.structureSnapshot).toEqual({ sections: template.sections });
+    expect(result.answerKey).toEqual({ answersByQuestionId: {} });
+    expect(mocks.verifyExamPdfAsset).toHaveBeenCalledWith(replacementPdfUpload);
+    expect(mocks.createExamRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        structureSnapshot: { sections: template.sections },
+        answerKey: { answersByQuestionId: {} },
+      }),
+      admin.id,
+      mocks.transactionSession,
+    );
   });
 
   it("allows only an ADMIN to issue a signed PDF upload ticket", () => {

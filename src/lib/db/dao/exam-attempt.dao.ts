@@ -68,7 +68,7 @@ export interface MutateOwnedEssayImageInput {
 }
 
 export interface FinalizeOwnedExamAttemptInput extends MutateOwnedExamAttemptInput {
-  grading: ExamAttemptGradingSnapshot;
+  grading?: ExamAttemptGradingSnapshot;
 }
 
 export interface ExamAttemptReportFilter {
@@ -113,14 +113,13 @@ interface ExamAttemptDocumentData {
 
 let examAttemptIndexesPromise: Promise<void> | null = null;
 
-function getAutoSubmitUpdate(now: Date, grading: ExamAttemptGradingSnapshot) {
+function getAutoSubmitUpdate(now: Date, grading?: ExamAttemptGradingSnapshot) {
   return [
     {
       $set: {
         status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
         submittedAt: "$expiresAt",
-        grading,
-        gradedAt: now,
+        ...(grading ? { grading, gradedAt: now } : {}),
         updatedAt: now,
       },
     },
@@ -419,6 +418,56 @@ export async function submitOwnedActiveExamAttempt(
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
 
+  const essayQuestionIds = new Set(input.essayQuestionIds ?? []);
+  const dynamicAnswers = isDynamicAttemptAnswers(input.answers)
+    ? input.answers
+    : null;
+  const shouldMergeObjectiveAnswers =
+    essayQuestionIds.size > 0 && dynamicAnswers !== null;
+  const objectiveAnswersByQuestionId = Object.fromEntries(
+    Object.entries(dynamicAnswers?.answersByQuestionId ?? {}).filter(
+      ([questionId]) => !essayQuestionIds.has(questionId),
+    ),
+  );
+  const update = shouldMergeObjectiveAnswers
+    ? [
+        {
+          $set: {
+            answers: {
+              $mergeObjects: [
+                { $ifNull: ["$answers", {}] },
+                {
+                  answersByQuestionId: {
+                    $mergeObjects: [
+                      { $ifNull: ["$answers.answersByQuestionId", {}] },
+                      { $literal: objectiveAnswersByQuestionId },
+                    ],
+                  },
+                },
+              ],
+            },
+            status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+            submittedAt: input.now,
+            lastSavedAt: input.now,
+            ...(input.grading
+              ? { grading: { $literal: input.grading }, gradedAt: input.now }
+              : {}),
+            updatedAt: input.now,
+          },
+        },
+      ]
+    : {
+        $set: {
+          answers: input.answers,
+          status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+          submittedAt: input.now,
+          lastSavedAt: input.now,
+          ...(input.grading
+            ? { grading: input.grading, gradedAt: input.now }
+            : {}),
+        },
+      };
+
   const attempt = await ExamAttemptModel.findOneAndUpdate(
     {
       _id: input.attemptId,
@@ -427,17 +476,12 @@ export async function submitOwnedActiveExamAttempt(
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
       expiresAt: { $gt: input.now },
     },
+    update,
     {
-      $set: {
-        answers: input.answers,
-        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
-        submittedAt: input.now,
-        lastSavedAt: input.now,
-        grading: input.grading,
-        gradedAt: input.now,
-      },
+      returnDocument: "after",
+      ...(shouldMergeObjectiveAnswers ? {} : { runValidators: true }),
+      session,
     },
-    { returnDocument: "after", runValidators: true, session },
   )
     .lean<ExamAttemptDocumentData>()
     .exec();
@@ -450,7 +494,7 @@ export async function autoSubmitExpiredExamAttemptRecord(
   studentId: string,
   examId: string,
   expectedAnswerRevision: number,
-  grading: ExamAttemptGradingSnapshot,
+  grading: ExamAttemptGradingSnapshot | undefined,
   now: Date,
   session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {

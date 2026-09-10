@@ -110,14 +110,21 @@ function createEmptyDynamicAnswerKey(structure: ExamStructureSnapshot): {
   return {
     answersByQuestionId: Object.fromEntries(
       structure.sections.flatMap((section) =>
-        section.questions.map((question) => [
-          question.id,
-          question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE
-            ? { a: null, b: null, c: null, d: null }
-            : question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER
-              ? createEmptyShortAnswerSlots()
-              : "",
-        ]),
+        section.questions.flatMap((question) =>
+          question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE
+            ? []
+            : [
+                [
+                  question.id,
+                  question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE
+                    ? { a: null, b: null, c: null, d: null }
+                    : question.type ===
+                        EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER
+                      ? createEmptyShortAnswerSlots()
+                      : "",
+                ] as const,
+              ],
+        ),
       ),
     ),
   };
@@ -185,6 +192,10 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
 
     for (const section of exam.structureSnapshot.sections) {
       for (const question of section.questions) {
+        if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
+          continue;
+        }
+
         const answer = exam.answerKey.answersByQuestionId[question.id];
 
         answersByQuestionId[question.id] =
@@ -721,13 +732,6 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     async (input) => {
       setSubmissionError(null);
 
-      if (structureContainsEssay) {
-        setSubmissionError(
-          "Mẫu cấu trúc có câu tự luận bằng hình ảnh, hiện chưa thể dùng để tạo đề thi.",
-        );
-        return;
-      }
-
       if (
         activeStructure &&
         (!isDynamicExamAnswerKey(input.answerKey) ||
@@ -1079,10 +1083,19 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                           return (
                             <div
                               key={question.id}
-                              className="border-destructive/30 bg-destructive/5 text-destructive rounded-lg border p-4 text-sm"
+                              className="border-border bg-muted/30 space-y-3 rounded-lg border p-4 text-sm"
                             >
-                              {questionLabel}: câu tự luận bằng hình ảnh chưa
-                              được hỗ trợ.
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="font-medium">{questionLabel}</p>
+                                <span className="text-muted-foreground text-xs">
+                                  {scoreLabel}
+                                </span>
+                              </div>
+                              <p className="text-muted-foreground">
+                                Câu tự luận bằng hình ảnh không có đáp án chấm
+                                tự động.
+                              </p>
+                              {topicSelector}
                             </div>
                           );
                         })}
@@ -1242,12 +1255,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             )}
 
             {structureContainsEssay && (
-              <p
-                role="alert"
-                className="border-destructive/30 bg-destructive/5 text-destructive rounded-lg border p-3 text-sm md:col-span-2"
-              >
-                Mẫu này có câu tự luận bằng hình ảnh. Tính năng tạo và làm loại
-                câu hỏi này hiện chưa được hỗ trợ.
+              <p className="border-border bg-muted/30 text-muted-foreground rounded-lg border p-3 text-sm md:col-span-2">
+                Câu tự luận bằng hình ảnh không cần đáp án tự động. Điểm tự luận
+                sẽ chưa xuất hiện cho đến khi có chức năng chấm thủ công.
               </p>
             )}
 
@@ -1815,7 +1825,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             <Link href="/admin/exams">Hủy</Link>
           </Button>
         )}
-        <Button type="submit" disabled={isBusy || structureContainsEssay}>
+        <Button type="submit" disabled={isBusy}>
           {isBusy
             ? "Đang lưu đề thi..."
             : mode === "create"

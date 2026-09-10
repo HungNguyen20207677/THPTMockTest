@@ -7,6 +7,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { CountdownTimer } from "@/components/exam/countdown-timer";
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
 import { ShortAnswerTextInput } from "@/components/exam/short-answer-text-input";
+import { EssayImageAnswerInput } from "@/components/student/essay-image-answer-input";
 import { ExamWorkspaceSkeleton } from "@/components/shared/loading-skeletons";
 import {
   AlertDialog,
@@ -23,8 +24,10 @@ import { ApiClientError } from "@/lib/api/client";
 import {
   fetchStudentExamAttempt,
   finalizeStudentExamAttempt,
+  removeStudentEssayImage,
   saveStudentExamAttemptAnswers,
   submitStudentExamAttempt,
+  uploadStudentEssayImage,
 } from "@/lib/api/student-exams";
 import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
@@ -38,6 +41,7 @@ import {
   countAnsweredPartTwoStatements,
   getDynamicAttemptAnswerProgress,
   getAttemptAnswerProgress,
+  mergePersistedEssayImageAnswer,
 } from "@/lib/exam/attempt-answers";
 import {
   advanceExamFullscreenTracking,
@@ -67,6 +71,7 @@ import type {
   DynamicAttemptAnswerProgress,
   DynamicAttemptAnswers,
   ExamAttemptAnswers,
+  EssayImageAnswer,
   StudentExamAttemptContext,
 } from "@/types/exam-attempt";
 import type {
@@ -85,7 +90,8 @@ const submittedAtFormatter = new Intl.DateTimeFormat("vi-VN", {
 const FINAL_AUTOSAVE_WAIT_MS = 2000;
 const PDF_LOAD_TIMEOUT_MS = 15_000;
 
-type ExamEnvironmentWarning = "FULLSCREEN_SUBMIT" | "PAGE_HIDDEN";
+type ExamEnvironmentWarning =
+  "FULLSCREEN_SUBMIT" | "PAGE_HIDDEN" | "FILE_PICKER_FULLSCREEN";
 
 interface AttemptWorkspaceProps {
   examId: string;
@@ -535,6 +541,10 @@ interface DynamicAnswerSheetProps {
     questionId: string,
     isValid: boolean,
   ) => void;
+  onEssayImageUpload: (questionId: string, file: File) => Promise<void>;
+  onEssayImageRemove: (questionId: string, publicId: string) => Promise<void>;
+  onFilePickerOpen: () => void;
+  onFilePickerReturn: () => void;
 }
 
 const dynamicQuestionTypeLabels = {
@@ -544,7 +554,7 @@ const dynamicQuestionTypeLabels = {
   ESSAY_IMAGE: "Tự luận bằng hình ảnh",
 } as const;
 
-function DynamicAnswerSheet({
+export function DynamicAnswerSheet({
   structure,
   answers,
   updateAnswer,
@@ -552,6 +562,10 @@ function DynamicAnswerSheet({
   progress,
   shortAnswerInputMode,
   onShortAnswerTextValidityChange,
+  onEssayImageUpload,
+  onEssayImageRemove,
+  onFilePickerOpen,
+  onFilePickerReturn,
 }: DynamicAnswerSheetProps) {
   return (
     <div className="space-y-8 p-4 sm:p-5">
@@ -582,6 +596,12 @@ function DynamicAnswerSheet({
               );
               const label = `Câu ${questionIndex + 1}`;
               const answered = progress.byQuestionId[question.id] ?? false;
+              const scoreLabel = `${(
+                question.maxScoreHundredths / 100
+              ).toLocaleString("vi-VN", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })} điểm`;
 
               if (
                 question.type === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE
@@ -731,7 +751,41 @@ function DynamicAnswerSheet({
                 );
               }
 
-              return null;
+              const essayAnswer = answer as EssayImageAnswer;
+              return (
+                <div
+                  key={question.id}
+                  id={targetId}
+                  className={cn(
+                    "scroll-mt-40 space-y-3 rounded-lg border p-3",
+                    answered
+                      ? "border-emerald-600/40"
+                      : "border-border border-dashed",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">{label}</h3>
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        {dynamicQuestionTypeLabels[question.type]}
+                      </p>
+                    </div>
+                    <span className="text-muted-foreground shrink-0 text-xs">
+                      {scoreLabel}
+                    </span>
+                  </div>
+                  <EssayImageAnswerInput
+                    answer={essayAnswer}
+                    disabled={disabled}
+                    onFilePickerOpen={onFilePickerOpen}
+                    onFilePickerReturn={onFilePickerReturn}
+                    onUpload={(file) => onEssayImageUpload(question.id, file)}
+                    onRemove={(publicId) =>
+                      onEssayImageRemove(question.id, publicId)
+                    }
+                  />
+                </div>
+              );
             })}
           </div>
         </section>
@@ -885,6 +939,7 @@ function ActiveAttemptWorkspace({
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isAutoFinalizing, setIsAutoFinalizing] = useState(false);
   const [isExpirationPending, setIsExpirationPending] = useState(false);
+  const [activeEssayImageMutations, setActiveEssayImageMutations] = useState(0);
   const [autoFinalizationError, setAutoFinalizationError] = useState<
     string | null
   >(null);
@@ -936,6 +991,10 @@ function ActiveAttemptWorkspace({
   const fullscreenTrackingRef = useRef(createExamFullscreenTrackingState());
   const fullscreenExitAnswersRef = useRef<ExamAttemptAnswers | null>(null);
   const leftExamScreenRef = useRef(false);
+  const intentionalFilePickerRef = useRef({
+    active: false,
+    wasFullscreen: false,
+  });
   const autoSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -951,7 +1010,10 @@ function ActiveAttemptWorkspace({
     (exam.shortAnswerInputMode ?? exam.part3InputMode) ===
       PART3_INPUT_MODE.TEXT &&
     Object.values(shortAnswerTextValidity).some((isValid) => !isValid);
-  const canSubmitAnswers = answerPayloadIsValid && !hasInvalidPartThreeText;
+  const canSubmitAnswers =
+    answerPayloadIsValid &&
+    !hasInvalidPartThreeText &&
+    activeEssayImageMutations === 0;
   const autosave = useAttemptAutosave({
     answers,
     initialAnswers: initialAttempt.answers,
@@ -969,6 +1031,7 @@ function ActiveAttemptWorkspace({
           exam.id,
           initialAttempt.id,
           latestAnswers,
+          exam.structureSnapshot,
         );
         return { lastSavedAt: response.data.attempt.lastSavedAt };
       } catch (error) {
@@ -1027,12 +1090,117 @@ function ActiveAttemptWorkspace({
     );
   }
 
+  function applyEssayImageMutation(
+    questionId: string,
+    result: Awaited<ReturnType<typeof uploadStudentEssayImage>>["data"],
+  ) {
+    setAnswers((currentAnswers) =>
+      mergePersistedEssayImageAnswer(
+        currentAnswers,
+        result.attempt.answers,
+        questionId,
+      ),
+    );
+    setContext((currentContext) => ({
+      ...currentContext,
+      serverNow: result.serverNow,
+      canEditAnswers: result.canEditAnswers,
+      attempt: {
+        ...currentContext.attempt,
+        status: result.attempt.status,
+        submittedAt: result.attempt.submittedAt,
+        lastSavedAt: result.attempt.lastSavedAt,
+      },
+    }));
+  }
+
+  async function handleEssayImageUpload(questionId: string, file: File) {
+    setActiveEssayImageMutations((count) => count + 1);
+
+    try {
+      const response = await uploadStudentEssayImage(
+        exam.id,
+        initialAttempt.id,
+        questionId,
+        file,
+      );
+
+      if (isMountedRef.current) {
+        applyEssayImageMutation(questionId, response.data);
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setActiveEssayImageMutations((count) => Math.max(0, count - 1));
+      }
+    }
+  }
+
+  async function handleEssayImageRemove(questionId: string, publicId: string) {
+    setActiveEssayImageMutations((count) => count + 1);
+
+    try {
+      const response = await removeStudentEssayImage(
+        exam.id,
+        initialAttempt.id,
+        questionId,
+        publicId,
+      );
+
+      if (isMountedRef.current) {
+        applyEssayImageMutation(questionId, response.data);
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setActiveEssayImageMutations((count) => Math.max(0, count - 1));
+      }
+    }
+  }
+
+  function beginIntentionalFilePickerInteraction() {
+    intentionalFilePickerRef.current = {
+      active: true,
+      wasFullscreen: isDocumentElementFullscreen(),
+    };
+  }
+
+  function finishIntentionalFilePickerInteraction() {
+    const interaction = intentionalFilePickerRef.current;
+
+    if (!interaction.active) {
+      return;
+    }
+
+    const fullscreenWasLost =
+      interaction.wasFullscreen && !isDocumentElementFullscreen();
+
+    if (fullscreenWasLost) {
+      const transition = advanceExamFullscreenTracking(
+        fullscreenTrackingRef.current,
+        false,
+        true,
+      );
+      fullscreenTrackingRef.current = transition.state;
+      setIsFullscreen(false);
+      setEnvironmentWarning((currentWarning) =>
+        currentWarning === "FULLSCREEN_SUBMIT"
+          ? currentWarning
+          : "FILE_PICKER_FULLSCREEN",
+      );
+    }
+
+    intentionalFilePickerRef.current = {
+      active: false,
+      wasFullscreen: false,
+    };
+  }
+
   async function handleFullscreenToggle() {
     if (
       expirationStartedRef.current ||
       isExpirationPending ||
       hasCountdownExpired ||
-      isSubmitting
+      isSubmitting ||
+      activeEssayImageMutations > 0
     ) {
       return;
     }
@@ -1461,6 +1629,9 @@ function ActiveAttemptWorkspace({
       const transition = advanceExamFullscreenTracking(
         fullscreenTrackingRef.current,
         nextIsFullscreen,
+        intentionalFilePickerRef.current.active &&
+          intentionalFilePickerRef.current.wasFullscreen &&
+          !nextIsFullscreen,
       );
       fullscreenTrackingRef.current = transition.state;
       setIsFullscreen(nextIsFullscreen);
@@ -1475,6 +1646,11 @@ function ActiveAttemptWorkspace({
     }
 
     function handleVisibilityChange() {
+      if (intentionalFilePickerRef.current.active) {
+        leftExamScreenRef.current = false;
+        return;
+      }
+
       if (document.hidden) {
         leftExamScreenRef.current = true;
         return;
@@ -1592,7 +1768,16 @@ function ActiveAttemptWorkspace({
           !isFullscreenExitDialogOpen
         }
         onOpenChange={(open) => {
-          if (!open && environmentWarning === "PAGE_HIDDEN") {
+          if (
+            !open &&
+            environmentWarning === "FILE_PICKER_FULLSCREEN" &&
+            fullscreenSupported &&
+            !fullscreenError
+          ) {
+            return;
+          }
+
+          if (!open && environmentWarning !== "FULLSCREEN_SUBMIT") {
             setEnvironmentWarning(null);
             setFullscreenError(null);
           }
@@ -1612,7 +1797,9 @@ function ActiveAttemptWorkspace({
             <AlertDialogTitle>
               {environmentWarning === "FULLSCREEN_SUBMIT"
                 ? "Đang nộp bài do thoát toàn màn hình"
-                : "Bạn đã rời màn hình làm bài"}
+                : environmentWarning === "FILE_PICKER_FULLSCREEN"
+                  ? "Vui lòng quay lại toàn màn hình"
+                  : "Bạn đã rời màn hình làm bài"}
             </AlertDialogTitle>
             <AlertDialogDescription
               ref={environmentDialogDescriptionRef}
@@ -1620,10 +1807,12 @@ function ActiveAttemptWorkspace({
             >
               {environmentWarning === "FULLSCREEN_SUBMIT"
                 ? "Bạn đã thoát chế độ toàn màn hình. Phiếu trả lời hiện tại đã được khóa và đang được gửi để nộp bài."
-                : "Trang thi đã bị ẩn khi bạn chuyển tab, cửa sổ hoặc ứng dụng. Lượt làm bài và đồng hồ vẫn tiếp tục bình thường; hệ thống không tự động nộp bài hoặc thay đổi điểm."}
+                : environmentWarning === "FILE_PICKER_FULLSCREEN"
+                  ? "Trình chọn tệp đã làm gián đoạn chế độ toàn màn hình. Ảnh đã chọn vẫn được xử lý; hãy mở lại toàn màn hình để tiếp tục làm bài."
+                  : "Trang thi đã bị ẩn khi bạn chuyển tab, cửa sổ hoặc ứng dụng. Lượt làm bài và đồng hồ vẫn tiếp tục bình thường; hệ thống không tự động nộp bài hoặc thay đổi điểm."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {environmentWarning === "PAGE_HIDDEN" && fullscreenError && (
+          {environmentWarning !== "FULLSCREEN_SUBMIT" && fullscreenError && (
             <p role="alert" className="text-destructive text-sm">
               {fullscreenError}
             </p>
@@ -1643,7 +1832,11 @@ function ActiveAttemptWorkspace({
             )
           ) : (
             <AlertDialogFooter>
-              <AlertDialogCancel>Tiếp tục làm bài</AlertDialogCancel>
+              {(environmentWarning !== "FILE_PICKER_FULLSCREEN" ||
+                !fullscreenSupported ||
+                fullscreenError) && (
+                <AlertDialogCancel>Tiếp tục làm bài</AlertDialogCancel>
+              )}
               <Button
                 type="button"
                 disabled={!fullscreenSupported}
@@ -1747,7 +1940,8 @@ function ActiveAttemptWorkspace({
                   isChangingFullscreenForExit ||
                   isSubmitting ||
                   isExpirationPending ||
-                  hasCountdownExpired
+                  hasCountdownExpired ||
+                  activeEssayImageMutations > 0
                 }
                 aria-label={
                   isFullscreen
@@ -1777,7 +1971,9 @@ function ActiveAttemptWorkspace({
                 title={
                   canSubmitAnswers
                     ? undefined
-                    : "Hãy hoàn thành hoặc xóa đáp án trả lời ngắn chưa hợp lệ."
+                    : activeEssayImageMutations > 0
+                      ? "Hãy chờ thao tác ảnh hoàn tất."
+                      : "Hãy hoàn thành hoặc xóa đáp án trả lời ngắn chưa hợp lệ."
                 }
                 onClick={() => setIsSubmitDialogOpen(true)}
               >
@@ -1982,6 +2178,10 @@ function ActiveAttemptWorkspace({
                 onShortAnswerTextValidityChange={
                   setDynamicShortAnswerTextValidity
                 }
+                onEssayImageUpload={handleEssayImageUpload}
+                onEssayImageRemove={handleEssayImageRemove}
+                onFilePickerOpen={beginIntentionalFilePickerInteraction}
+                onFilePickerReturn={finishIntentionalFilePickerInteraction}
               />
             ) : legacyAnswers && legacyProgress ? (
               <AnswerSheet

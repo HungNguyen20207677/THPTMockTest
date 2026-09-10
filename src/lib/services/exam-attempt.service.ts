@@ -73,7 +73,6 @@ import {
   ExamRetakeNotAllowedError,
   ForbiddenError,
   EssayImageAlreadyAttachedError,
-  EssayImageExamExecutionUnsupportedError,
   EssayImageLimitError,
   EssayImageNotFoundError,
   EssayImageQuestionNotFoundError,
@@ -125,16 +124,60 @@ function assertStudent(actor: AppUser): void {
   }
 }
 
-function assertExamExecutionSupported(structure?: ExamStructureSnapshot): void {
-  if (
+function structureContainsEssayImage(
+  structure?: ExamStructureSnapshot,
+): boolean {
+  return Boolean(
     structure &&
     examStructureContainsQuestionType(
       structure,
       EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
-    )
+    ),
+  );
+}
+
+function getEssayImageQuestionIds(structure?: ExamStructureSnapshot): string[] {
+  return (
+    structure?.sections.flatMap((section) =>
+      section.questions
+        .filter(
+          (question) =>
+            question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        )
+        .map((question) => question.id),
+    ) ?? []
+  );
+}
+
+function validateAnswersPreservingEssayImages(
+  incomingAnswers: ExamAttemptAnswers,
+  persistedAnswers: ExamAttemptAnswers,
+  structure?: ExamStructureSnapshot,
+): ExamAttemptAnswers {
+  const essayQuestionIds = getEssayImageQuestionIds(structure);
+
+  if (
+    essayQuestionIds.length === 0 ||
+    !isDynamicAttemptAnswers(incomingAnswers) ||
+    !isDynamicAttemptAnswers(persistedAnswers)
   ) {
-    throw new EssayImageExamExecutionUnsupportedError();
+    return createAttemptAnswersSchemaForStructure(structure).parse(
+      incomingAnswers,
+    ) as ExamAttemptAnswers;
   }
+
+  const answersByQuestionId = {
+    ...incomingAnswers.answersByQuestionId,
+  };
+
+  for (const questionId of essayQuestionIds) {
+    answersByQuestionId[questionId] =
+      persistedAnswers.answersByQuestionId[questionId];
+  }
+
+  return createAttemptAnswersSchemaForStructure(structure).parse({
+    answersByQuestionId,
+  }) as ExamAttemptAnswers;
 }
 
 function getAttemptAnswers(
@@ -235,12 +278,14 @@ export async function resolveAttemptExpiration(
         throw new ExamNotFoundError();
       }
 
-      const grading = gradeExamAttemptAnswers(
-        getAttemptAnswers(attempt, exam.structureSnapshot),
-        exam.answerKey,
-        exam.answerKeyRevision,
-        exam.structureSnapshot,
-      );
+      const grading = structureContainsEssayImage(exam.structureSnapshot)
+        ? undefined
+        : gradeExamAttemptAnswers(
+            getAttemptAnswers(attempt, exam.structureSnapshot),
+            exam.answerKey,
+            exam.answerKeyRevision,
+            exam.structureSnapshot,
+          );
       const finalizedAttempt = await autoSubmitExpiredExamAttemptRecord(
         attempt.id,
         attempt.studentId,
@@ -336,8 +381,6 @@ export async function startOrResumeExamAttempt(
       throw new ExamNotFoundError();
     }
 
-    assertExamExecutionSupported(exam.structureSnapshot);
-
     if (!(await markStudentAttemptsStarted(actor.id))) {
       throw new ForbiddenError("Tài khoản học sinh không còn hoạt động.");
     }
@@ -363,8 +406,6 @@ export async function startOrResumeExamAttempt(
     if (!currentExam) {
       throw new ExamNotFoundError();
     }
-
-    assertExamExecutionSupported(currentExam.structureSnapshot);
 
     if (currentExam.status !== EXAM_STATUS.PUBLISHED) {
       throw new ExamNotPublishedError();
@@ -591,8 +632,6 @@ export async function getOwnedExamAttemptContext(
     throw new ExamNotFoundError();
   }
 
-  assertExamExecutionSupported(exam.structureSnapshot);
-
   return toFreshAttemptContext(exam, resolvedAttempt);
 }
 
@@ -640,18 +679,16 @@ export async function saveExamAttemptAnswers(
     throw new ExamNotFoundError();
   }
 
-  const validatedAnswers = createAttemptAnswersSchemaForStructure(
+  const persistedAnswers = getAttemptAnswers(
+    resolvedAttempt,
     exam.structureSnapshot,
-  ).parse(answers) as ExamAttemptAnswers;
-  const essayQuestionIds =
-    exam.structureSnapshot?.sections.flatMap((section) =>
-      section.questions
-        .filter(
-          (question) =>
-            question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
-        )
-        .map((question) => question.id),
-    ) ?? [];
+  );
+  const validatedAnswers = validateAnswersPreservingEssayImages(
+    answers,
+    persistedAnswers,
+    exam.structureSnapshot,
+  );
+  const essayQuestionIds = getEssayImageQuestionIds(exam.structureSnapshot);
 
   const savedAttempt = await saveOwnedActiveExamAttemptAnswers({
     attemptId,
@@ -1009,22 +1046,28 @@ export async function submitExamAttempt(
         throw new ExamNotFoundError();
       }
 
-      const validatedAnswers = createAttemptAnswersSchemaForStructure(
-        exam.structureSnapshot,
-      ).parse(answers) as ExamAttemptAnswers;
-      const grading = gradeExamAttemptAnswers(
-        validatedAnswers,
-        exam.answerKey,
-        exam.answerKeyRevision,
+      const validatedAnswers = validateAnswersPreservingEssayImages(
+        answers,
+        getAttemptAnswers(resolvedAttempt, exam.structureSnapshot),
         exam.structureSnapshot,
       );
+      const essayQuestionIds = getEssayImageQuestionIds(exam.structureSnapshot);
+      const grading = structureContainsEssayImage(exam.structureSnapshot)
+        ? undefined
+        : gradeExamAttemptAnswers(
+            validatedAnswers,
+            exam.answerKey,
+            exam.answerKeyRevision,
+            exam.structureSnapshot,
+          );
       const finalizedAttempt = await submitOwnedActiveExamAttempt(
         {
           attemptId,
           examId,
           studentId: actor.id,
           answers: validatedAnswers,
-          grading,
+          ...(grading ? { grading } : {}),
+          ...(essayQuestionIds.length > 0 ? { essayQuestionIds } : {}),
           now: serverNow,
         },
         session,
@@ -1076,6 +1119,10 @@ export async function ensureTerminalAttemptGrading(
   attempt: ExamAttemptPersistenceRecord;
   exam: ExamGradingPersistenceRecord;
 }> {
+  if (structureContainsEssayImage(exam.structureSnapshot)) {
+    return { attempt, exam };
+  }
+
   if (attempt.grading?.answerKeyRevision === exam.answerKeyRevision) {
     return { attempt, exam };
   }
@@ -1240,13 +1287,16 @@ export function buildExamAttemptResult(
   const grading = attempt.grading;
   const submittedAt = attempt.submittedAt;
 
-  if (
-    !grading ||
-    !submittedAt ||
-    grading.answerKeyRevision !== exam.answerKeyRevision
-  ) {
+  if (!submittedAt) {
     throw new ExamAttemptStateConflictError();
   }
+
+  const containsEssayImage = structureContainsEssayImage(
+    exam.structureSnapshot,
+  );
+  const effectiveVisibility = containsEssayImage
+    ? { score: false, answers: false }
+    : visibility;
 
   const result: StudentExamAttemptResult = {
     exam: {
@@ -1275,8 +1325,16 @@ export function buildExamAttemptResult(
         ),
       ),
     },
-    visibility,
+    visibility: effectiveVisibility,
   };
+
+  if (containsEssayImage) {
+    return result;
+  }
+
+  if (!grading || grading.answerKeyRevision !== exam.answerKeyRevision) {
+    throw new ExamAttemptStateConflictError();
+  }
 
   const answers = getAttemptAnswers(attempt, exam.structureSnapshot);
   const answerKey = exam.answerKey;
@@ -1290,7 +1348,7 @@ export function buildExamAttemptResult(
       throw new ExamAttemptStateConflictError();
     }
 
-    if (visibility.score) {
+    if (effectiveVisibility.score) {
       result.score = {
         total: scoreHundredthsToPoints(grading.totalScoreHundredths),
         sectionsById: Object.fromEntries(
@@ -1301,13 +1359,13 @@ export function buildExamAttemptResult(
       };
     }
 
-    if (visibility.answers) {
+    if (effectiveVisibility.answers) {
       result.dynamicAnswerReview = buildDynamicAnswerReview(
         answers,
         answerKey,
         grading,
         exam.structureSnapshot,
-        visibility.score,
+        effectiveVisibility.score,
       );
     }
 
@@ -1322,7 +1380,7 @@ export function buildExamAttemptResult(
     throw new ExamAttemptStateConflictError();
   }
 
-  if (visibility.score) {
+  if (effectiveVisibility.score) {
     result.score = {
       total: scoreHundredthsToPoints(grading.totalScoreHundredths),
       sections: {
@@ -1339,7 +1397,7 @@ export function buildExamAttemptResult(
     };
   }
 
-  if (visibility.answers) {
+  if (effectiveVisibility.answers) {
     result.answerReview = {
       partOne: grading.partOne.map((item, index) => ({
         studentAnswer: answers.partOne[index],
@@ -1379,7 +1437,7 @@ export function buildExamAttemptResult(
           },
         };
 
-        if (visibility.score) {
+        if (effectiveVisibility.score) {
           questionReview.score = scoreHundredthsToPoints(item.scoreHundredths);
         }
 

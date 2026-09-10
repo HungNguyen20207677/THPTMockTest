@@ -23,6 +23,7 @@ vi.mock("@/lib/db/models/exam-attempt.model", () => ({
 
 import {
   attachEssayImageToOwnedActiveExamAttempt,
+  autoSubmitExpiredExamAttemptRecord,
   deleteExamAttemptRecordsByExamId,
   deleteExamAttemptRecordsByStudentId,
   removeEssayImageFromOwnedActiveExamAttempt,
@@ -234,6 +235,86 @@ describe("ExamAttempt cascade DAO", () => {
         $inc: { answerRevision: 1 },
       });
     }
+  });
+
+  it("submits essay attempts without grading while atomically preserving image answers", async () => {
+    const now = new Date("2026-08-11T03:00:00.000Z");
+    const expiresAt = new Date("2026-08-11T02:59:00.000Z");
+    const session = { id: "essay-submission-session" };
+    const answers = {
+      answersByQuestionId: {
+        essay: { type: "ESSAY_IMAGE" as const, images: [] },
+        choice: "B" as const,
+      },
+    };
+
+    await submitOwnedActiveExamAttempt(
+      {
+        attemptId: "attempt-id",
+        examId: "exam-id",
+        studentId: "student-id",
+        answers,
+        essayQuestionIds: ["essay"],
+        now,
+      },
+      session as never,
+    );
+    await autoSubmitExpiredExamAttemptRecord(
+      "expired-attempt-id",
+      "student-id",
+      "exam-id",
+      2,
+      undefined,
+      now,
+      session as never,
+    );
+
+    const submissionUpdate = mocks.findOneAndUpdate.mock.calls[0][1];
+    expect(submissionUpdate).toEqual([
+      {
+        $set: {
+          answers: {
+            $mergeObjects: [
+              { $ifNull: ["$answers", {}] },
+              {
+                answersByQuestionId: {
+                  $mergeObjects: [
+                    { $ifNull: ["$answers.answersByQuestionId", {}] },
+                    { $literal: { choice: "B" } },
+                  ],
+                },
+              },
+            ],
+          },
+          status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+          submittedAt: now,
+          lastSavedAt: now,
+          updatedAt: now,
+        },
+      },
+    ]);
+    expect(JSON.stringify(submissionUpdate)).not.toContain('"grading"');
+    expect(mocks.findOneAndUpdate.mock.calls[0][2]).toEqual({
+      returnDocument: "after",
+      session,
+    });
+
+    const autoSubmissionUpdate = mocks.findOneAndUpdate.mock.calls[1][1];
+    expect(autoSubmissionUpdate).toEqual([
+      {
+        $set: {
+          status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+          submittedAt: "$expiresAt",
+          updatedAt: now,
+        },
+      },
+    ]);
+    expect(mocks.findOneAndUpdate.mock.calls[1][0]).toMatchObject({
+      _id: "expired-attempt-id",
+      answerRevision: 2,
+      expiresAt: { $lte: now },
+    });
+    expect(expiresAt.getTime()).toBeLessThan(now.getTime());
   });
 
   it("replaces only grading fields for terminal attempts", async () => {

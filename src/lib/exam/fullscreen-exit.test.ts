@@ -32,4 +32,18 @@ describe("exam fullscreen exit tracking", () => {
     expect(exit.shouldHandleExit).toBe(true);
     expect(duplicateExit.shouldHandleExit).toBe(false);
   });
+
+  it("suppresses only the fullscreen exit associated with an explicit file picker", () => {
+    let state = createExamFullscreenTrackingState(true);
+    const filePickerExit = advanceExamFullscreenTracking(state, false, true);
+
+    expect(filePickerExit.shouldHandleExit).toBe(false);
+    expect(filePickerExit.state.exitHandled).toBe(false);
+
+    state = advanceExamFullscreenTracking(filePickerExit.state, true).state;
+    const unrelatedExit = advanceExamFullscreenTracking(state, false);
+
+    expect(unrelatedExit.shouldHandleExit).toBe(true);
+    expect(unrelatedExit.state.exitHandled).toBe(true);
+  });
 });

@@ -11,6 +11,8 @@ import type {
   DynamicAttemptAnswer,
   DynamicAttemptAnswerProgress,
   DynamicAttemptAnswers,
+  ExamAttemptAnswers,
+  EssayImageAnswer,
 } from "@/types/exam-attempt";
 import type {
   ExamStructureQuestion,
@@ -36,7 +38,10 @@ function createEmptyDynamicAnswer(
     return createEmptyShortAnswerSlots();
   }
 
-  throw new Error("ESSAY_IMAGE attempts are not supported yet.");
+  return {
+    type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+    images: [],
+  };
 }
 
 export function createEmptyAttemptAnswers(): AttemptAnswers;
@@ -166,5 +171,37 @@ export function getDynamicAttemptAnswerProgress(
     answeredQuestions: entries.filter(([, answered]) => answered).length,
     totalQuestions: entries.length,
     byQuestionId,
+  };
+}
+
+export function mergePersistedEssayImageAnswer(
+  currentAnswers: ExamAttemptAnswers,
+  persistedAnswers: ExamAttemptAnswers,
+  questionId: string,
+): ExamAttemptAnswers {
+  if (
+    !("answersByQuestionId" in currentAnswers) ||
+    !("answersByQuestionId" in persistedAnswers)
+  ) {
+    return currentAnswers;
+  }
+
+  const persistedAnswer = persistedAnswers.answersByQuestionId[questionId];
+
+  if (
+    !persistedAnswer ||
+    typeof persistedAnswer !== "object" ||
+    Array.isArray(persistedAnswer) ||
+    !("type" in persistedAnswer) ||
+    persistedAnswer.type !== EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE
+  ) {
+    return currentAnswers;
+  }
+
+  return {
+    answersByQuestionId: {
+      ...currentAnswers.answersByQuestionId,
+      [questionId]: persistedAnswer as EssayImageAnswer,
+    },
   };
 }

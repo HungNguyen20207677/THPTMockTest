@@ -330,6 +330,15 @@ function createDynamicGrading() {
   );
 }
 
+function createEssayGradingExam(): ExamGradingPersistenceRecord {
+  return createGradingExam({
+    structureSnapshot: essayStructure,
+    answerKey: {
+      answersByQuestionId: { "essay-choice": "A" },
+    },
+  });
+}
+
 function createAttempt(
   overrides: Partial<ExamAttemptPersistenceRecord> = {},
 ): ExamAttemptPersistenceRecord {
@@ -377,6 +386,7 @@ function mockAttemptCreation(): void {
           status: input.status,
           startedAt: input.startedAt,
           expiresAt: input.expiresAt,
+          answers: input.answers,
           createdAt: input.startedAt,
           updatedAt: input.startedAt,
         }),
@@ -587,27 +597,29 @@ describe("ExamAttempt service", () => {
     expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
   });
 
-  it("keeps ESSAY_IMAGE Exam execution disabled", async () => {
+  it("starts and resumes an ESSAY_IMAGE Exam with persisted images", async () => {
     const essayExam = createStudentExam({ structureSnapshot: essayStructure });
     mocks.findStudentExamRecordById.mockResolvedValue(essayExam);
 
-    await expect(
-      startOrResumeExamAttempt(student, "exam-id"),
-    ).rejects.toMatchObject({
-      code: "ESSAY_IMAGE_EXECUTION_NOT_SUPPORTED",
-      statusCode: 422,
-    });
-    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+    const started = await startOrResumeExamAttempt(student, "exam-id");
 
-    const activeAttempt = createEssayAttempt();
+    expect(started.attempt.answers).toEqual({
+      answersByQuestionId: {
+        "essay-question": { type: "ESSAY_IMAGE", images: [] },
+        "essay-choice": null,
+      },
+    });
+
+    const activeAttempt = createEssayAttempt([verifiedEssayImage]);
     mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
 
-    await expect(
-      getOwnedExamAttemptContext(student, "exam-id", activeAttempt.id),
-    ).rejects.toMatchObject({
-      code: "ESSAY_IMAGE_EXECUTION_NOT_SUPPORTED",
-      statusCode: 422,
-    });
+    const resumed = await getOwnedExamAttemptContext(
+      student,
+      "exam-id",
+      activeAttempt.id,
+    );
+
+    expect(resumed.attempt.answers).toEqual(activeAttempt.answers);
   });
 
   it("recovers a duplicate-key start race to the concurrent active attempt", async () => {
@@ -1282,11 +1294,121 @@ describe("ExamAttempt service", () => {
       attemptId: activeAttempt.id,
       examId: "exam-id",
       studentId: student.id,
-      answers: staleAnswers,
+      answers: savedAnswers,
       now: serverNow,
       essayQuestionIds: ["essay-question"],
     });
     expect(result.attempt.answers).toEqual(savedAnswers);
+  });
+
+  it("submits an ESSAY_IMAGE attempt without grading and preserves persisted images", async () => {
+    const activeAttempt = createEssayAttempt([verifiedEssayImage]);
+    const incomingAnswers = {
+      answersByQuestionId: {
+        "essay-question": { type: "ESSAY_IMAGE" as const, images: [] },
+        "essay-choice": "B" as const,
+      },
+    };
+    const submittedAnswers = {
+      answersByQuestionId: {
+        "essay-question": {
+          type: "ESSAY_IMAGE" as const,
+          images: [verifiedEssayImage],
+        },
+        "essay-choice": "B" as const,
+      },
+    };
+    const submittedAttempt = createAttempt({
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      submittedAt: serverNow,
+      lastSavedAt: serverNow,
+      answers: submittedAnswers,
+    });
+    const gradingExam = createEssayGradingExam();
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.reserveExamForAttemptGrading.mockResolvedValue(gradingExam);
+    mocks.submitOwnedActiveExamAttempt.mockResolvedValue(submittedAttempt);
+
+    const result = await submitExamAttempt(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      incomingAnswers,
+    );
+
+    expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledWith(
+      {
+        attemptId: activeAttempt.id,
+        examId: "exam-id",
+        studentId: student.id,
+        answers: submittedAnswers,
+        essayQuestionIds: ["essay-question"],
+        now: serverNow,
+      },
+      mocks.transactionSession,
+    );
+    expect(result.attempt.status).toBe(EXAM_ATTEMPT_STATUS.SUBMITTED);
+    expect(result.attempt.answers).toEqual(submittedAnswers);
+    expect(submittedAttempt.grading).toBeUndefined();
+  });
+
+  it("auto-submits an expired ESSAY_IMAGE attempt without grading", async () => {
+    const expiresAt = new Date("2026-08-11T02:59:00.000Z");
+    const expiredAttempt = createEssayAttempt([verifiedEssayImage], {
+      expiresAt,
+    });
+    const autoSubmittedAttempt = createEssayAttempt([verifiedEssayImage], {
+      status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+      expiresAt,
+      submittedAt: expiresAt,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(expiredAttempt);
+    mocks.reserveExamForAttemptGrading.mockResolvedValue(
+      createEssayGradingExam(),
+    );
+    mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(
+      autoSubmittedAttempt,
+    );
+
+    const result = await finalizeExpiredExamAttempt(
+      student,
+      "exam-id",
+      expiredAttempt.id,
+    );
+
+    expect(mocks.autoSubmitExpiredExamAttemptRecord).toHaveBeenCalledWith(
+      expiredAttempt.id,
+      student.id,
+      expiredAttempt.examId,
+      expiredAttempt.answerRevision,
+      undefined,
+      serverNow,
+      mocks.transactionSession,
+    );
+    expect(result.attempt.status).toBe(EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED);
+    expect(result.attempt.answers).toEqual(expiredAttempt.answers);
+  });
+
+  it("returns a receipt-only result for an ungraded ESSAY_IMAGE attempt", async () => {
+    const terminalAttempt = createEssayAttempt([verifiedEssayImage], {
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      submittedAt: serverNow,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
+    mocks.findExamGradingRecordById.mockResolvedValue(createEssayGradingExam());
+
+    const result = await getStudentExamAttemptResult(
+      student,
+      "exam-id",
+      terminalAttempt.id,
+    );
+
+    expect(result.visibility).toEqual({ score: false, answers: false });
+    expect(result).not.toHaveProperty("score");
+    expect(result).not.toHaveProperty("dynamicAnswerReview");
+    expect(
+      mocks.setOwnedTerminalExamAttemptGradingForRevision,
+    ).not.toHaveBeenCalled();
   });
 
   it("persists essay image removal before Cloudinary cleanup", async () => {

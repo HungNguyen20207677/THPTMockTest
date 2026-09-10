@@ -52,7 +52,6 @@ import {
   examStructureContainsQuestionType,
 } from "@/lib/exam/structure";
 import {
-  EssayImageExamCreationUnsupportedError,
   ExamAnswerKeyConfirmationRequiredError,
   ExamConflictError,
   ExamContentLockedError,
@@ -251,15 +250,7 @@ export function assertExamCanBePublished(input: {
     getAnswerKeyValidationError(input.answerKey, input.structureSnapshot) ===
     null;
 
-  if (
-    !baseIsValid ||
-    !answerKeyIsValid ||
-    (input.structureSnapshot &&
-      examStructureContainsQuestionType(
-        input.structureSnapshot,
-        EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
-      ))
-  ) {
+  if (!baseIsValid || !answerKeyIsValid) {
     throw new ExamPublicationError();
   }
 }
@@ -440,15 +431,6 @@ export async function createExam(
       structureSnapshot = examStructureSnapshotSchema.parse(
         createExamStructureSnapshot(template),
       );
-
-      if (
-        examStructureContainsQuestionType(
-          structureSnapshot,
-          EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
-        )
-      ) {
-        throw new EssayImageExamCreationUnsupportedError();
-      }
     }
 
     assertAnswerKeyMatchesStructure(input.answerKey, structureSnapshot);
@@ -670,6 +652,16 @@ export async function editExam(
 
         if (!correctedExam) {
           throw new ExamConflictError();
+        }
+
+        if (
+          correctedExam.structureSnapshot &&
+          examStructureContainsQuestionType(
+            correctedExam.structureSnapshot,
+            EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          )
+        ) {
+          return correctedExam;
         }
 
         const regradeSources = currentExam.structureSnapshot

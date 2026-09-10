@@ -93,7 +93,12 @@ export function createDynamicExamAnswerKeySchema(
       (section) => section.questions,
     );
     const expectedQuestionIds = new Set(
-      questions.map((question) => question.id),
+      questions
+        .filter(
+          (question) =>
+            question.type !== EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        )
+        .map((question) => question.id),
     );
 
     for (const questionId of Object.keys(answerKey.answersByQuestionId)) {
@@ -107,6 +112,10 @@ export function createDynamicExamAnswerKeySchema(
     }
 
     for (const question of questions) {
+      if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
+        continue;
+      }
+
       if (!(question.id in answerKey.answersByQuestionId)) {
         context.addIssue({
           code: "custom",
@@ -126,13 +135,7 @@ export function createDynamicExamAnswerKeySchema(
               ? canonicalShortAnswerSchema
               : null;
 
-      if (!schema) {
-        context.addIssue({
-          code: "custom",
-          message: "Loại câu hỏi này chưa hỗ trợ đáp án tự động.",
-          path: ["answersByQuestionId", question.id],
-        });
-      } else if (!schema.safeParse(answer).success) {
+      if (!schema?.safeParse(answer).success) {
         context.addIssue({
           code: "custom",
           message: "Đáp án không đúng định dạng của loại câu hỏi.",

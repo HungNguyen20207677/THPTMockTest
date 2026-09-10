@@ -8,6 +8,7 @@ import {
 } from "@/lib/constants/exam";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
+  createDynamicExamAnswerKeySchema,
   createDynamicExamQuestionTopicsSchema,
   examUpsertSchema,
   updateExamRequestSchema,
@@ -77,6 +78,56 @@ function createValidExamInput() {
 }
 
 describe("exam answer-key validation", () => {
+  it("requires keys only for auto-graded dynamic questions", () => {
+    const structure: ExamStructureSnapshot = {
+      sections: [
+        {
+          id: "mixed",
+          title: "Mixed",
+          questions: [
+            {
+              id: "choice",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              maxScoreHundredths: 500,
+            },
+            {
+              id: "essay",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+              maxScoreHundredths: 500,
+            },
+          ],
+        },
+      ],
+    };
+    const schema = createDynamicExamAnswerKeySchema(structure);
+
+    expect(
+      schema.safeParse({ answersByQuestionId: { choice: "A" } }).success,
+    ).toBe(true);
+    expect(
+      schema.safeParse({ answersByQuestionId: { choice: "A", essay: "B" } })
+        .success,
+    ).toBe(false);
+    expect(schema.safeParse({ answersByQuestionId: {} }).success).toBe(false);
+    expect(
+      createDynamicExamAnswerKeySchema({
+        sections: [
+          {
+            id: "essay",
+            title: "Essay",
+            questions: [
+              {
+                id: "essay-only",
+                type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+                maxScoreHundredths: 1000,
+              },
+            ],
+          },
+        ],
+      }).safeParse({ answersByQuestionId: {} }).success,
+    ).toBe(true);
+  });
+
   it("defaults legacy input without a Part III mode to BUBBLE", () => {
     const parsed = examUpsertSchema.parse(createValidExamInput());
 

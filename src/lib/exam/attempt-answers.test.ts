@@ -6,6 +6,7 @@ import {
   createEmptyAttemptAnswers,
   getDynamicAttemptAnswerProgress,
   getAttemptAnswerProgress,
+  mergePersistedEssayImageAnswer,
 } from "@/lib/exam/attempt-answers";
 import {
   attemptAnswersRequestSchema,
@@ -319,6 +320,20 @@ describe("attempt answers", () => {
     };
 
     expect(schema.parse(answers)).toEqual(answers);
+    const emptyAnswers = createEmptyAttemptAnswers(essayStructure);
+    expect(emptyAnswers).toEqual({
+      answersByQuestionId: {
+        "essay-1": { type: "ESSAY_IMAGE", images: [] },
+      },
+    });
+    expect(
+      getDynamicAttemptAnswerProgress(emptyAnswers, essayStructure)
+        .answeredQuestions,
+    ).toBe(0);
+    expect(
+      getDynamicAttemptAnswerProgress(answers, essayStructure)
+        .answeredQuestions,
+    ).toBe(1);
   });
 
   it("rejects ESSAY_IMAGE answers for wrong, missing, or objective questions", () => {
@@ -386,5 +401,58 @@ describe("attempt answers", () => {
         createEmptyAttemptAnswers(customStructure),
       ).success,
     ).toBe(true);
+  });
+
+  it("merges successful essay mutations without replacing current objective state", () => {
+    const firstImage = createEssayImage(1);
+    const secondImage = createEssayImage(2);
+    const current = {
+      answersByQuestionId: {
+        choice: "B" as const,
+        essay: { type: "ESSAY_IMAGE" as const, images: [firstImage] },
+      },
+    };
+    const attached = mergePersistedEssayImageAnswer(
+      current,
+      {
+        answersByQuestionId: {
+          choice: "A",
+          essay: {
+            type: "ESSAY_IMAGE",
+            images: [firstImage, secondImage],
+          },
+        },
+      },
+      "essay",
+    );
+    const removed = mergePersistedEssayImageAnswer(
+      attached,
+      {
+        answersByQuestionId: {
+          choice: "A",
+          essay: { type: "ESSAY_IMAGE", images: [secondImage] },
+        },
+      },
+      "essay",
+    );
+
+    expect(attached).toEqual({
+      answersByQuestionId: {
+        choice: "B",
+        essay: {
+          type: "ESSAY_IMAGE",
+          images: [firstImage, secondImage],
+        },
+      },
+    });
+    expect(removed).toEqual({
+      answersByQuestionId: {
+        choice: "B",
+        essay: { type: "ESSAY_IMAGE", images: [secondImage] },
+      },
+    });
+    expect(
+      mergePersistedEssayImageAnswer(current, current, "missing-question"),
+    ).toBe(current);
   });
 });

@@ -17,15 +17,17 @@ export function createExamFullscreenTrackingState(
 export function advanceExamFullscreenTracking(
   current: ExamFullscreenTrackingState,
   isFullscreen: boolean,
+  suppressExit = false,
 ): {
   state: ExamFullscreenTrackingState;
   shouldHandleExit: boolean;
 } {
-  const shouldHandleExit =
+  const exitedFullscreen =
     current.wasFullscreen &&
     current.hasEnteredFullscreen &&
     !current.exitHandled &&
     !isFullscreen;
+  const shouldHandleExit = exitedFullscreen && !suppressExit;
 
   return {
     state: {
