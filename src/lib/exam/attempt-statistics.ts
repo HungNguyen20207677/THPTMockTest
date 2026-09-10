@@ -1,8 +1,12 @@
 import { EXAM_STRUCTURE, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
   isDynamicAttemptGradingSnapshot,
+  hasFinalTotalScore,
   scoreHundredthsToPoints,
 } from "@/lib/exam/grading";
 import {
@@ -10,7 +14,9 @@ import {
   type ExamQuestionTopicsSource,
 } from "@/lib/exam/question-topics";
 import type {
+  CompletedExamAttemptGradingSnapshot,
   DynamicAttemptGradingSnapshot,
+  ExamAttemptGradingStatus,
   ExamAttemptGradingSnapshot,
   ExamAttemptStatus,
 } from "@/types/exam-attempt";
@@ -18,6 +24,7 @@ import type { ExamQuestionTopicIds } from "@/types/exam";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type {
   AdminExamDynamicQuestionStatistics,
+  AdminExamDynamicQuestionStatisticsItem,
   AdminExamQuestionStatistics,
   AdminExamTopicStatistics,
   AdminStudentTopicStatistics,
@@ -33,6 +40,21 @@ export interface ScoredAttempt {
   expiresAt: Date;
   submittedAt: Date;
   grading: ExamAttemptGradingSnapshot;
+  gradingStatus?: ExamAttemptGradingStatus;
+}
+
+interface FinalScoredAttempt extends ScoredAttempt {
+  grading: CompletedExamAttemptGradingSnapshot;
+}
+
+function isFinalScoredAttempt(
+  attempt: ScoredAttempt,
+): attempt is FinalScoredAttempt {
+  return (
+    (attempt.gradingStatus ?? EXAM_ATTEMPT_GRADING_STATUS.COMPLETED) ===
+      EXAM_ATTEMPT_GRADING_STATUS.COMPLETED &&
+    hasFinalTotalScore(attempt.grading)
+  );
 }
 
 export interface ScoreAggregateHundredths {
@@ -45,18 +67,19 @@ export interface ScoreAggregateHundredths {
 export function calculateScoreAggregate(
   attempts: ScoredAttempt[],
 ): ScoreAggregateHundredths {
+  const finalAttempts = attempts.filter(isFinalScoredAttempt);
   let total = 0;
   let highest: number | null = null;
   let lowest: number | null = null;
 
-  for (const attempt of attempts) {
+  for (const attempt of finalAttempts) {
     const score = attempt.grading.totalScoreHundredths;
     total += score;
     highest = highest === null ? score : Math.max(highest, score);
     lowest = lowest === null ? score : Math.min(lowest, score);
   }
 
-  return { count: attempts.length, total, highest, lowest };
+  return { count: finalAttempts.length, total, highest, lowest };
 }
 
 export function toScoreStatistics(
@@ -81,11 +104,12 @@ export function toScoreStatistics(
 export function calculatePerformanceStatistics(
   attempts: ScoredAttempt[],
 ): PerformanceStatistics {
+  const finalAttempts = attempts.filter(isFinalScoredAttempt);
   const aggregate = calculateScoreAggregate(attempts);
 
-  if (attempts.length === 0) {
+  if (finalAttempts.length === 0) {
     return {
-      completedAttemptCount: 0,
+      completedAttemptCount: attempts.length,
       first: null,
       latest: null,
       best: null,
@@ -94,7 +118,7 @@ export function calculatePerformanceStatistics(
     };
   }
 
-  const chronologicalAttempts = [...attempts].sort((left, right) => {
+  const chronologicalAttempts = [...finalAttempts].sort((left, right) => {
     const submittedDifference =
       left.submittedAt.getTime() - right.submittedAt.getTime();
 
@@ -253,77 +277,101 @@ export function calculateDynamicQuestionStatistics(
     sections: structure.sections.map((section) => ({
       sectionId: section.id,
       sectionTitle: section.title,
-      questions: section.questions.map((question, questionIndex) => {
-        const results = completedAttempts.map(
-          (attempt) =>
-            (attempt.grading as DynamicAttemptGradingSnapshot).questionsById[
-              question.id
-            ],
-        );
-        const identity = {
-          sectionId: section.id,
-          sectionTitle: section.title,
-          questionId: question.id,
-          questionNumber: questionIndex + 1,
-          questionType: question.type,
-        };
-
-        if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE) {
-          const trueFalseResults = results.filter(
-            (result) => result && "correctStatementCount" in result,
-          );
-          const fullCorrectCount = trueFalseResults.filter(
-            (result) => result.correctStatementCount === 4,
-          ).length;
-          const statementCorrectCounts = { a: 0, b: 0, c: 0, d: 0 };
-          let totalScoreHundredths = 0;
-
-          for (const result of trueFalseResults) {
-            totalScoreHundredths += result.scoreHundredths;
-            for (const statement of PART_TWO_STATEMENTS) {
-              if (result.statements[statement]) {
-                statementCorrectCounts[statement] += 1;
-              }
+      questions:
+        section.questions.flatMap<AdminExamDynamicQuestionStatisticsItem>(
+          (question, questionIndex) => {
+            if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
+              return [];
             }
-          }
 
-          return {
-            ...identity,
-            completedAttemptCount,
-            fullCorrectCount,
-            fullCorrectRatePercent: toRate(fullCorrectCount),
-            averageScoreHundredths:
-              completedAttemptCount === 0
-                ? null
-                : totalScoreHundredths / completedAttemptCount,
-            statements: Object.fromEntries(
-              PART_TWO_STATEMENTS.map((statement) => [
-                statement,
+            const results = completedAttempts.map(
+              (attempt) =>
+                (attempt.grading as DynamicAttemptGradingSnapshot)
+                  .questionsById[question.id],
+            );
+            const identity = {
+              sectionId: section.id,
+              sectionTitle: section.title,
+              questionId: question.id,
+              questionNumber: questionIndex + 1,
+              questionType: question.type,
+            };
+
+            if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE) {
+              const trueFalseResults = results.filter(
+                (result) => result && "correctStatementCount" in result,
+              );
+              const fullCorrectCount = trueFalseResults.filter(
+                (result) => result.correctStatementCount === 4,
+              ).length;
+              const statementCorrectCounts = { a: 0, b: 0, c: 0, d: 0 };
+              let totalScoreHundredths = 0;
+
+              for (const result of trueFalseResults) {
+                totalScoreHundredths += result.scoreHundredths;
+                for (const statement of PART_TWO_STATEMENTS) {
+                  if (result.statements[statement]) {
+                    statementCorrectCounts[statement] += 1;
+                  }
+                }
+              }
+
+              return [
                 {
-                  correctCount: statementCorrectCounts[statement],
-                  correctRatePercent: toRate(statementCorrectCounts[statement]),
+                  ...identity,
+                  completedAttemptCount,
+                  fullCorrectCount,
+                  fullCorrectRatePercent: toRate(fullCorrectCount),
+                  averageScoreHundredths:
+                    completedAttemptCount === 0
+                      ? null
+                      : totalScoreHundredths / completedAttemptCount,
+                  statements: Object.fromEntries(
+                    PART_TWO_STATEMENTS.map((statement) => [
+                      statement,
+                      {
+                        correctCount: statementCorrectCounts[statement],
+                        correctRatePercent: toRate(
+                          statementCorrectCounts[statement],
+                        ),
+                      },
+                    ]),
+                  ) as {
+                    a: {
+                      correctCount: number;
+                      correctRatePercent: number | null;
+                    };
+                    b: {
+                      correctCount: number;
+                      correctRatePercent: number | null;
+                    };
+                    c: {
+                      correctCount: number;
+                      correctRatePercent: number | null;
+                    };
+                    d: {
+                      correctCount: number;
+                      correctRatePercent: number | null;
+                    };
+                  },
                 },
-              ]),
-            ) as {
-              a: { correctCount: number; correctRatePercent: number | null };
-              b: { correctCount: number; correctRatePercent: number | null };
-              c: { correctCount: number; correctRatePercent: number | null };
-              d: { correctCount: number; correctRatePercent: number | null };
-            },
-          };
-        }
+              ];
+            }
 
-        const correctCount = results.filter(
-          (result) => result && "isCorrect" in result && result.isCorrect,
-        ).length;
-        return {
-          ...identity,
-          completedAttemptCount,
-          correctCount,
-          incorrectCount: completedAttemptCount - correctCount,
-          correctRatePercent: toRate(correctCount),
-        };
-      }),
+            const correctCount = results.filter(
+              (result) => result && "isCorrect" in result && result.isCorrect,
+            ).length;
+            return [
+              {
+                ...identity,
+                completedAttemptCount,
+                correctCount,
+                incorrectCount: completedAttemptCount - correctCount,
+                correctRatePercent: toRate(correctCount),
+              },
+            ];
+          },
+        ),
     })),
   };
 }

@@ -76,6 +76,7 @@ vi.mock("@/lib/db/mongoose", () => ({
 }));
 
 import {
+  EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
   STUDENT_EXAM_STATE,
 } from "@/lib/constants/exam-attempt";
@@ -114,6 +115,7 @@ import {
 import type { AppUser } from "@/types/user";
 import type { DynamicExamAnswerKey, ExamAnswerKey } from "@/types/exam";
 import type {
+  DynamicAttemptAnswers,
   EssayImage,
   EssayImageUploadReference,
   EssayImageUploadTicket,
@@ -330,12 +332,15 @@ function createDynamicGrading() {
   );
 }
 
-function createEssayGradingExam(): ExamGradingPersistenceRecord {
+function createEssayGradingExam(
+  overrides: Partial<ExamGradingPersistenceRecord> = {},
+): ExamGradingPersistenceRecord {
   return createGradingExam({
     structureSnapshot: essayStructure,
     answerKey: {
       answersByQuestionId: { "essay-choice": "A" },
     },
+    ...overrides,
   });
 }
 
@@ -741,6 +746,7 @@ describe("ExamAttempt service", () => {
         expiredAttempt.answers ?? createEmptyAttemptAnswers(),
         createAnswerKey(),
       ),
+      EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
       serverNow,
       mocks.transactionSession,
     );
@@ -994,6 +1000,7 @@ describe("ExamAttempt service", () => {
         expiredAttempt.answers ?? createEmptyAttemptAnswers(),
         createAnswerKey(),
       ),
+      EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
       serverNow,
       mocks.transactionSession,
     );
@@ -1301,7 +1308,7 @@ describe("ExamAttempt service", () => {
     expect(result.attempt.answers).toEqual(savedAnswers);
   });
 
-  it("submits an ESSAY_IMAGE attempt without grading and preserves persisted images", async () => {
+  it("submits an ESSAY_IMAGE attempt with pending objective grading and preserves persisted images", async () => {
     const activeAttempt = createEssayAttempt([verifiedEssayImage]);
     const incomingAnswers = {
       answersByQuestionId: {
@@ -1320,11 +1327,19 @@ describe("ExamAttempt service", () => {
     };
     const submittedAttempt = createAttempt({
       status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
       submittedAt: serverNow,
       lastSavedAt: serverNow,
       answers: submittedAnswers,
     });
     const gradingExam = createEssayGradingExam();
+    const grading = gradeDynamicAttemptAnswers(
+      submittedAnswers,
+      gradingExam.answerKey as DynamicExamAnswerKey,
+      essayStructure,
+    );
+    submittedAttempt.grading = grading;
+    submittedAttempt.gradedAt = serverNow;
     mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
     mocks.reserveExamForAttemptGrading.mockResolvedValue(gradingExam);
     mocks.submitOwnedActiveExamAttempt.mockResolvedValue(submittedAttempt);
@@ -1342,6 +1357,8 @@ describe("ExamAttempt service", () => {
         examId: "exam-id",
         studentId: student.id,
         answers: submittedAnswers,
+        grading,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
         essayQuestionIds: ["essay-question"],
         now: serverNow,
       },
@@ -1349,23 +1366,40 @@ describe("ExamAttempt service", () => {
     );
     expect(result.attempt.status).toBe(EXAM_ATTEMPT_STATUS.SUBMITTED);
     expect(result.attempt.answers).toEqual(submittedAnswers);
-    expect(submittedAttempt.grading).toBeUndefined();
+    expect(submittedAttempt.grading).toEqual(grading);
+    expect(grading).toMatchObject({
+      objectiveScoreHundredths: 0,
+      objectiveMaxScoreHundredths: 500,
+      questionsById: {
+        "essay-choice": { isCorrect: false, scoreHundredths: 0 },
+      },
+    });
+    expect(grading).not.toHaveProperty("totalScoreHundredths");
+    expect(grading.questionsById).not.toHaveProperty("essay-question");
+    expect(submittedAttempt.answers).toEqual(submittedAnswers);
   });
 
-  it("auto-submits an expired ESSAY_IMAGE attempt without grading", async () => {
+  it("auto-submits an expired ESSAY_IMAGE attempt with pending objective grading", async () => {
     const expiresAt = new Date("2026-08-11T02:59:00.000Z");
     const expiredAttempt = createEssayAttempt([verifiedEssayImage], {
       expiresAt,
     });
     const autoSubmittedAttempt = createEssayAttempt([verifiedEssayImage], {
       status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
       expiresAt,
       submittedAt: expiresAt,
     });
-    mocks.findOwnedExamAttemptRecord.mockResolvedValue(expiredAttempt);
-    mocks.reserveExamForAttemptGrading.mockResolvedValue(
-      createEssayGradingExam(),
+    const gradingExam = createEssayGradingExam();
+    const grading = gradeDynamicAttemptAnswers(
+      expiredAttempt.answers as DynamicAttemptAnswers,
+      gradingExam.answerKey as DynamicExamAnswerKey,
+      essayStructure,
     );
+    autoSubmittedAttempt.grading = grading;
+    autoSubmittedAttempt.gradedAt = serverNow;
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(expiredAttempt);
+    mocks.reserveExamForAttemptGrading.mockResolvedValue(gradingExam);
     mocks.autoSubmitExpiredExamAttemptRecord.mockResolvedValue(
       autoSubmittedAttempt,
     );
@@ -1381,7 +1415,8 @@ describe("ExamAttempt service", () => {
       student.id,
       expiredAttempt.examId,
       expiredAttempt.answerRevision,
-      undefined,
+      grading,
+      EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
       serverNow,
       mocks.transactionSession,
     );
@@ -1389,27 +1424,80 @@ describe("ExamAttempt service", () => {
     expect(result.attempt.answers).toEqual(expiredAttempt.answers);
   });
 
-  it("returns a receipt-only result for an ungraded ESSAY_IMAGE attempt", async () => {
-    const terminalAttempt = createEssayAttempt([verifiedEssayImage], {
-      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
-      submittedAt: serverNow,
-    });
-    mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
-    mocks.findExamGradingRecordById.mockResolvedValue(createEssayGradingExam());
+  it.each([
+    { showScore: true, showAnswers: true },
+    { showScore: true, showAnswers: false },
+    { showScore: false, showAnswers: true },
+    { showScore: false, showAnswers: false },
+  ])(
+    "returns a pending ESSAY_IMAGE result with score=$showScore and answers=$showAnswers",
+    async ({ showScore, showAnswers }) => {
+      const gradingExam = createEssayGradingExam({
+        settings: {
+          showScoreAfterSubmission: showScore,
+          showAnswersAfterSubmission: showAnswers,
+        },
+      });
+      const terminalAttempt = createEssayAttempt([verifiedEssayImage], {
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+        submittedAt: serverNow,
+      });
+      terminalAttempt.grading = gradeDynamicAttemptAnswers(
+        terminalAttempt.answers as DynamicAttemptAnswers,
+        gradingExam.answerKey as DynamicExamAnswerKey,
+        essayStructure,
+      );
+      terminalAttempt.gradedAt = serverNow;
+      mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
+      mocks.findExamGradingRecordById.mockResolvedValue(gradingExam);
 
-    const result = await getStudentExamAttemptResult(
-      student,
-      "exam-id",
-      terminalAttempt.id,
-    );
+      const result = await getStudentExamAttemptResult(
+        student,
+        "exam-id",
+        terminalAttempt.id,
+      );
 
-    expect(result.visibility).toEqual({ score: false, answers: false });
-    expect(result).not.toHaveProperty("score");
-    expect(result).not.toHaveProperty("dynamicAnswerReview");
-    expect(
-      mocks.setOwnedTerminalExamAttemptGradingForRevision,
-    ).not.toHaveBeenCalled();
-  });
+      expect(result.gradingStatus).toBe(
+        EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+      );
+      expect(result.visibility).toEqual({
+        score: showScore,
+        answers: showAnswers,
+      });
+      expect(result).not.toHaveProperty("score");
+      if (showScore) {
+        expect(result.objectiveScore).toEqual({ earned: 0, maximum: 5 });
+      } else {
+        expect(result).not.toHaveProperty("objectiveScore");
+      }
+
+      if (showAnswers) {
+        expect(
+          result.dynamicAnswerReview?.questionsById["essay-choice"],
+        ).toEqual({
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          studentAnswer: null,
+          correctAnswer: "A",
+          isCorrect: false,
+        });
+        expect(
+          result.dynamicAnswerReview?.questionsById["essay-question"],
+        ).toEqual({
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          studentAnswer: {
+            type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+            images: [verifiedEssayImage],
+          },
+        });
+      } else {
+        expect(result).not.toHaveProperty("dynamicAnswerReview");
+      }
+      expect(
+        mocks.setOwnedTerminalExamAttemptGradingForRevision,
+      ).not.toHaveBeenCalled();
+    },
+  );
 
   it("persists essay image removal before Cloudinary cleanup", async () => {
     const activeAttempt = createEssayAttempt([verifiedEssayImage]);
@@ -1526,6 +1614,7 @@ describe("ExamAttempt service", () => {
         studentId: student.id,
         answers: submittedAnswers,
         grading,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
         now: serverNow,
       },
       mocks.transactionSession,
@@ -1581,6 +1670,7 @@ describe("ExamAttempt service", () => {
       expiredAttempt.examId,
       expiredAttempt.answerRevision,
       gradeAttemptAnswers(persistedAnswers, createAnswerKey()),
+      EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
       serverNow,
       mocks.transactionSession,
     );
@@ -1686,6 +1776,7 @@ describe("ExamAttempt service", () => {
       refreshedAttempt.examId,
       refreshedAttempt.answerRevision,
       latestGrading,
+      EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
       serverNow,
       mocks.transactionSession,
     );
@@ -1752,9 +1843,11 @@ describe("ExamAttempt service", () => {
       terminalAttempt.examId,
       terminalAttempt.studentId,
       grading,
+      EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
       serverNow,
       mocks.transactionSession,
     );
+    expect(result.gradingStatus).toBe(EXAM_ATTEMPT_GRADING_STATUS.COMPLETED);
     expect(result.score?.total).toBe(0.25);
   });
 
@@ -1805,6 +1898,7 @@ describe("ExamAttempt service", () => {
       terminalAttempt.examId,
       terminalAttempt.studentId,
       expect.objectContaining({ answerKeyRevision: 2 }),
+      EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
       serverNow,
       mocks.transactionSession,
     );
@@ -1981,7 +2075,7 @@ describe("ExamAttempt service", () => {
     );
 
     expect(Object.keys(result).sort()).toEqual(
-      ["attempt", "exam", "visibility"].sort(),
+      ["attempt", "exam", "gradingStatus", "visibility"].sort(),
     );
     expect(result).not.toHaveProperty("score");
     expect(result).not.toHaveProperty("answerReview");
@@ -2172,6 +2266,7 @@ describe("ExamAttempt service", () => {
           studentId: student.id,
           answers,
           grading,
+          gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
           now: serverNow,
         },
         mocks.transactionSession,
@@ -2216,6 +2311,7 @@ describe("ExamAttempt service", () => {
         expiredAttempt.examId,
         expiredAttempt.answerRevision,
         grading,
+        EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
         serverNow,
         mocks.transactionSession,
       );
@@ -2341,7 +2437,7 @@ describe("ExamAttempt service", () => {
 
         if (!score && !showAnswers) {
           expect(Object.keys(result).sort()).toEqual(
-            ["attempt", "exam", "visibility"].sort(),
+            ["attempt", "exam", "gradingStatus", "visibility"].sort(),
           );
         }
       },

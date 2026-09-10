@@ -3,6 +3,7 @@ import "server-only";
 import { model, models, Schema, type Model, type Types } from "mongoose";
 
 import {
+  EXAM_ATTEMPT_GRADING_STATUSES,
   EXAM_ATTEMPT_STATUSES,
   EXAM_ATTEMPT_STATUS,
 } from "@/lib/constants/exam-attempt";
@@ -12,6 +13,7 @@ import { examAttemptGradingSnapshotSchema } from "@/lib/validations/attempt-grad
 import type {
   ExamAttemptStatus,
   ExamAttemptAnswers,
+  ExamAttemptGradingStatus,
   ExamAttemptGradingSnapshot,
 } from "@/types/exam-attempt";
 
@@ -20,6 +22,7 @@ export interface ExamAttemptRecord {
   studentId: Types.ObjectId;
   attemptNumber: number;
   status: ExamAttemptStatus;
+  gradingStatus?: ExamAttemptGradingStatus;
   startedAt: Date;
   expiresAt: Date;
   submittedAt?: Date;
@@ -51,6 +54,7 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
       enum: EXAM_ATTEMPT_STATUSES,
       required: true,
     },
+    gradingStatus: { type: String, enum: EXAM_ATTEMPT_GRADING_STATUSES },
     startedAt: { type: Date, required: true },
     expiresAt: { type: Date, required: true },
     submittedAt: { type: Date },

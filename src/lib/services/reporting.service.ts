@@ -1,6 +1,10 @@
 import "server-only";
 
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
   countExamAttemptRecordsByStatus,
@@ -39,10 +43,12 @@ import {
   type ScoredAttempt,
 } from "@/lib/exam/attempt-statistics";
 import {
+  hasFinalTotalScore,
   isDynamicAttemptGradingSnapshot,
   scoreHundredthsToPoints,
 } from "@/lib/exam/grading";
 import { getUniqueExamTopicIds } from "@/lib/exam/question-topics";
+import { examStructureContainsQuestionType } from "@/lib/exam/structure";
 import {
   ExamAttemptNotFoundError,
   ExamAttemptStateConflictError,
@@ -60,7 +66,10 @@ import type {
   AdminResultQuery,
   PaginationQuery,
 } from "@/lib/validations/reporting";
-import type { ExamAttemptGradingSnapshot } from "@/types/exam-attempt";
+import type {
+  ExamAttemptGradingSnapshot,
+  ExamAttemptGradingStatus,
+} from "@/types/exam-attempt";
 import type {
   AdminAttemptDetail,
   AdminDashboardSummary,
@@ -78,6 +87,7 @@ import type { AppUser, StudentAccount } from "@/types/user";
 
 interface PreparedTerminalAttempt extends ExamAttemptPersistenceRecord {
   grading: ExamAttemptGradingSnapshot;
+  gradingStatus: ExamAttemptGradingStatus;
   submittedAt: Date;
 }
 
@@ -161,14 +171,39 @@ function toPaginationMetadata(
 
 function toPreparedTerminalAttempt(
   attempt: ExamAttemptPersistenceRecord,
+  exam: Pick<ExamReportingPersistenceRecord, "structureSnapshot">,
 ): PreparedTerminalAttempt {
   if (!attempt.grading || !attempt.submittedAt) {
+    throw new ExamAttemptStateConflictError();
+  }
+
+  const gradingStatus =
+    attempt.gradingStatus ?? EXAM_ATTEMPT_GRADING_STATUS.COMPLETED;
+  const isPendingManual =
+    gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL;
+  const hasEssayImage = Boolean(
+    exam.structureSnapshot &&
+    examStructureContainsQuestionType(
+      exam.structureSnapshot,
+      EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+    ),
+  );
+
+  if (
+    (isPendingManual &&
+      (!hasEssayImage ||
+        hasFinalTotalScore(attempt.grading) ||
+        !isDynamicAttemptGradingSnapshot(attempt.grading) ||
+        !("objectiveScoreHundredths" in attempt.grading))) ||
+    (!isPendingManual && !hasFinalTotalScore(attempt.grading))
+  ) {
     throw new ExamAttemptStateConflictError();
   }
 
   return {
     ...attempt,
     grading: attempt.grading,
+    gradingStatus,
     submittedAt: attempt.submittedAt,
   };
 }
@@ -182,10 +217,18 @@ function toScoredAttempt(attempt: PreparedTerminalAttempt): ScoredAttempt {
     expiresAt: attempt.expiresAt,
     submittedAt: attempt.submittedAt,
     grading: attempt.grading,
+    gradingStatus: attempt.gradingStatus,
   };
 }
 
 function toAttemptScore(attempt: PreparedTerminalAttempt): AttemptScoreSummary {
+  if (
+    attempt.gradingStatus !== EXAM_ATTEMPT_GRADING_STATUS.COMPLETED ||
+    !hasFinalTotalScore(attempt.grading)
+  ) {
+    throw new ExamAttemptStateConflictError();
+  }
+
   if (isDynamicAttemptGradingSnapshot(attempt.grading)) {
     return {
       total: scoreHundredthsToPoints(attempt.grading.totalScoreHundredths),
@@ -211,6 +254,22 @@ function toAttemptScore(attempt: PreparedTerminalAttempt): AttemptScoreSummary {
       ),
     },
   };
+}
+
+function toObjectiveScore(
+  attempt: PreparedTerminalAttempt,
+): NonNullable<AdminResultSummary["objectiveScore"]> | undefined {
+  return isDynamicAttemptGradingSnapshot(attempt.grading) &&
+    "objectiveScoreHundredths" in attempt.grading
+    ? {
+        earned: scoreHundredthsToPoints(
+          attempt.grading.objectiveScoreHundredths,
+        ),
+        maximum: scoreHundredthsToPoints(
+          attempt.grading.objectiveMaxScoreHundredths,
+        ),
+      }
+    : undefined;
 }
 
 async function getExamMap(
@@ -275,7 +334,7 @@ async function prepareTerminalAttempts(
       }
 
       if (attempt.grading?.answerKeyRevision === exam.answerKeyRevision) {
-        return toPreparedTerminalAttempt(attempt);
+        return toPreparedTerminalAttempt(attempt, exam);
       }
 
       const graded = await ensureTerminalAttemptGrading(attempt, exam, now);
@@ -298,7 +357,7 @@ async function prepareTerminalAttempts(
         });
       }
 
-      return toPreparedTerminalAttempt(graded.attempt);
+      return toPreparedTerminalAttempt(graded.attempt, graded.exam);
     });
     const isConsistent = prepared.every(
       (attempt) =>
@@ -321,6 +380,7 @@ function toAdminResultSummary(
 ): AdminResultSummary {
   const student = studentMap.get(attempt.studentId);
   const exam = examMap.get(attempt.examId);
+  const objectiveScore = toObjectiveScore(attempt);
 
   return {
     id: attempt.id,
@@ -332,7 +392,12 @@ function toAdminResultSummary(
     expiresAt: attempt.expiresAt.toISOString(),
     submittedAt: attempt.submittedAt.toISOString(),
     timeUsedSeconds: getAttemptTimeUsedSeconds(attempt),
-    score: toAttemptScore(attempt),
+    gradingStatus: attempt.gradingStatus,
+    ...(attempt.gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.COMPLETED
+      ? { score: toAttemptScore(attempt) }
+      : objectiveScore
+        ? { objectiveScore }
+        : {}),
   };
 }
 
@@ -431,7 +496,10 @@ export async function getAdminAttemptDetail(
   }
 
   const graded = await ensureTerminalAttemptGrading(resolvedAttempt, exam, now);
-  const preparedAttempt = toPreparedTerminalAttempt(graded.attempt);
+  const preparedAttempt = toPreparedTerminalAttempt(
+    graded.attempt,
+    graded.exam,
+  );
   const result = buildExamAttemptResult(preparedAttempt, graded.exam, {
     score: true,
     answers: true,
@@ -439,7 +507,9 @@ export async function getAdminAttemptDetail(
 
   detail.attempt = result.attempt;
   detail.exam = toExamIdentity(graded.exam);
+  detail.gradingStatus = result.gradingStatus;
   detail.score = result.score;
+  detail.objectiveScore = result.objectiveScore;
   detail.answerReview = result.answerReview;
   detail.structureSnapshot = result.exam.structureSnapshot;
   detail.dynamicAnswerReview = result.dynamicAnswerReview;
@@ -675,21 +745,25 @@ export async function getStudentExamAttemptHistory(
       score: currentExam.settings.showScoreAfterSubmission,
       answers: currentExam.settings.showAnswersAfterSubmission,
     },
-    attempts: attempts.map((attempt) => ({
-      id: attempt.id,
-      attemptNumber: attempt.attemptNumber,
-      status: attempt.status,
-      startedAt: attempt.startedAt.toISOString(),
-      submittedAt: attempt.submittedAt.toISOString(),
-      timeUsedSeconds: getAttemptTimeUsedSeconds(attempt),
-      ...(currentExam.settings.showScoreAfterSubmission
-        ? {
-            score: scoreHundredthsToPoints(
-              attempt.grading.totalScoreHundredths,
-            ),
-          }
-        : {}),
-    })),
+    attempts: attempts.map((attempt) => {
+      const objectiveScore = toObjectiveScore(attempt);
+
+      return {
+        id: attempt.id,
+        attemptNumber: attempt.attemptNumber,
+        status: attempt.status,
+        startedAt: attempt.startedAt.toISOString(),
+        submittedAt: attempt.submittedAt.toISOString(),
+        timeUsedSeconds: getAttemptTimeUsedSeconds(attempt),
+        gradingStatus: attempt.gradingStatus,
+        ...(currentExam.settings.showScoreAfterSubmission &&
+        attempt.gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.COMPLETED
+          ? { score: toAttemptScore(attempt).total }
+          : currentExam.settings.showScoreAfterSubmission && objectiveScore
+            ? { objectiveScore }
+            : {}),
+      };
+    }),
     pagination: toPaginationMetadata(query, page.totalItems),
   };
 }

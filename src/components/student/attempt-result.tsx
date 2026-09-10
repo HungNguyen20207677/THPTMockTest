@@ -1,13 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 
 import { ResultDetailSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchStudentExamAttemptResult } from "@/lib/api/student-exams";
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import { EXAM_SCORING, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
 import {
   formatDuration,
@@ -85,6 +89,45 @@ function DynamicAnswerReview({ result }: { result: StudentExamAttemptResult }) {
                 return null;
               }
 
+              if (item.type === "ESSAY_IMAGE") {
+                return (
+                  <div
+                    key={question.id}
+                    className="border-border rounded-lg border p-4 lg:col-span-2"
+                  >
+                    <p className="font-semibold">Câu {questionIndex + 1}</p>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      Bài tự luận chưa được chấm.
+                    </p>
+                    {item.studentAnswer.images.length > 0 ? (
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {item.studentAnswer.images.map((image, imageIndex) => (
+                          <figure
+                            key={image.publicId}
+                            className="border-border overflow-hidden rounded-lg border"
+                          >
+                            <Image
+                              src={image.secureUrl}
+                              alt={`Ảnh bài làm ${imageIndex + 1}`}
+                              width={image.width}
+                              height={image.height}
+                              className="h-48 w-full object-contain"
+                            />
+                            <figcaption className="text-muted-foreground truncate px-3 py-2 text-xs">
+                              {image.originalFilename}
+                            </figcaption>
+                          </figure>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground mt-3 text-sm">
+                        Không có ảnh bài làm đã nộp.
+                      </p>
+                    )}
+                  </div>
+                );
+              }
+
               if (item.type === "TRUE_FALSE") {
                 return (
                   <div
@@ -155,6 +198,32 @@ function DynamicAnswerReview({ result }: { result: StudentExamAttemptResult }) {
           </div>
         </div>
       ))}
+    </section>
+  );
+}
+
+export function PendingGradingSummary({
+  result,
+}: {
+  result: StudentExamAttemptResult;
+}) {
+  if (result.gradingStatus !== EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL) {
+    return null;
+  }
+
+  return (
+    <section className="border-amber-300 bg-amber-50 rounded-xl border p-6 text-center text-amber-950">
+      <h2 className="text-lg font-semibold">Bài tự luận đang chờ chấm</h2>
+      {result.objectiveScore && (
+        <p className="mt-2 font-medium tabular-nums">
+          Điểm phần đã chấm tự động:{" "}
+          {scoreFormatter.format(result.objectiveScore.earned)} /{" "}
+          {scoreFormatter.format(result.objectiveScore.maximum)}
+        </p>
+      )}
+      <p className="mt-2 text-sm">
+        Điểm tổng kết chưa có cho đến khi phần tự luận được chấm.
+      </p>
     </section>
   );
 }
@@ -413,6 +482,7 @@ export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
       </header>
 
       <ScoreSummary result={result} />
+      <PendingGradingSummary result={result} />
 
       {!result.visibility.score && !result.visibility.answers && (
         <div className="bg-muted rounded-xl p-6 text-center text-sm leading-6">

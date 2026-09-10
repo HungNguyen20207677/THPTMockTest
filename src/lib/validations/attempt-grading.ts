@@ -137,37 +137,79 @@ const dynamicTrueFalseSchema = z.strictObject({
   statements: statementCorrectnessSchema,
 });
 
-export const dynamicAttemptGradingSnapshotSchema: z.ZodType<DynamicAttemptGradingSnapshot> =
-  z
-    .strictObject({
-      answerKeyRevision: z.number().int().min(INITIAL_ANSWER_KEY_REVISION),
-      totalScoreHundredths: scoreHundredthsSchema,
-      sectionScoresHundredths: z.record(z.string(), scoreHundredthsSchema),
-      questionsById: z.record(
-        z.string(),
-        z.union([dynamicCorrectnessSchema, dynamicTrueFalseSchema]),
-      ),
-    })
-    .superRefine((grading, context) => {
-      const sectionTotal = Object.values(
-        grading.sectionScoresHundredths,
-      ).reduce((total, score) => total + score, 0);
-      const questionTotal = Object.values(grading.questionsById).reduce(
-        (total, result) => total + result.scoreHundredths,
-        0,
-      );
+const dynamicGradingBaseShape = {
+  answerKeyRevision: z.number().int().min(INITIAL_ANSWER_KEY_REVISION),
+  sectionScoresHundredths: z.record(z.string(), scoreHundredthsSchema),
+  questionsById: z.record(
+    z.string(),
+    z.union([dynamicCorrectnessSchema, dynamicTrueFalseSchema]),
+  ),
+};
 
-      if (
-        sectionTotal !== grading.totalScoreHundredths ||
-        questionTotal !== grading.totalScoreHundredths
-      ) {
-        context.addIssue({
-          code: "custom",
-          message:
-            "Tổng điểm động không khớp với kết quả từng câu và từng phần.",
-        });
-      }
+function addDynamicScoreConsistencyIssue(
+  grading: {
+    sectionScoresHundredths: Record<string, number>;
+    questionsById: Record<string, { scoreHundredths: number }>;
+  },
+  expectedScore: number,
+  context: z.RefinementCtx,
+): void {
+  const sectionTotal = Object.values(grading.sectionScoresHundredths).reduce(
+    (total, score) => total + score,
+    0,
+  );
+  const questionTotal = Object.values(grading.questionsById).reduce(
+    (total, result) => total + result.scoreHundredths,
+    0,
+  );
+
+  if (sectionTotal !== expectedScore || questionTotal !== expectedScore) {
+    context.addIssue({
+      code: "custom",
+      message: "Tổng điểm động không khớp với kết quả từng câu và từng phần.",
     });
+  }
+}
+
+const dynamicCompletedGradingSchema = z
+  .strictObject({
+    ...dynamicGradingBaseShape,
+    totalScoreHundredths: scoreHundredthsSchema,
+  })
+  .superRefine((grading, context) => {
+    addDynamicScoreConsistencyIssue(
+      grading,
+      grading.totalScoreHundredths,
+      context,
+    );
+  });
+
+const dynamicPendingManualGradingSchema = z
+  .strictObject({
+    ...dynamicGradingBaseShape,
+    objectiveScoreHundredths: scoreHundredthsSchema,
+    objectiveMaxScoreHundredths: scoreHundredthsSchema,
+  })
+  .superRefine((grading, context) => {
+    addDynamicScoreConsistencyIssue(
+      grading,
+      grading.objectiveScoreHundredths,
+      context,
+    );
+
+    if (
+      grading.objectiveScoreHundredths > grading.objectiveMaxScoreHundredths
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["objectiveScoreHundredths"],
+        message: "Điểm phần tự động không thể vượt quá điểm tối đa.",
+      });
+    }
+  });
+
+export const dynamicAttemptGradingSnapshotSchema: z.ZodType<DynamicAttemptGradingSnapshot> =
+  z.union([dynamicCompletedGradingSchema, dynamicPendingManualGradingSchema]);
 
 export const examAttemptGradingSnapshotSchema: z.ZodType<ExamAttemptGradingSnapshot> =
   z.union([attemptGradingSnapshotSchema, dynamicAttemptGradingSnapshotSchema]);

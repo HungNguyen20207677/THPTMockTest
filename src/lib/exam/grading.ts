@@ -20,6 +20,7 @@ import {
 } from "@/lib/validations/exam";
 import type {
   AttemptGradingSnapshot,
+  CompletedExamAttemptGradingSnapshot,
   AttemptPartTwoAnswer,
   DynamicAttemptAnswers,
   DynamicAttemptGradingSnapshot,
@@ -172,14 +173,22 @@ export function gradeDynamicAttemptAnswers(
     createDynamicExamAnswerKeySchema(structure).parse(answerKeyInput);
   const sectionScoresHundredths: Record<string, number> = {};
   const questionsById: Record<string, DynamicQuestionGradingResult> = {};
+  let objectiveMaxScoreHundredths = 0;
+  let containsEssayImage = false;
 
   for (const section of structure.sections) {
     let sectionScore = 0;
 
     for (const question of section.questions) {
+      if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
+        containsEssayImage = true;
+        continue;
+      }
+
       const studentAnswer = answers.answersByQuestionId[question.id];
       const correctAnswer = answerKey.answersByQuestionId[question.id];
       let result: DynamicQuestionGradingResult;
+      objectiveMaxScoreHundredths += question.maxScoreHundredths;
 
       if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE) {
         const isCorrect =
@@ -238,7 +247,7 @@ export function gradeDynamicAttemptAnswers(
           scoreHundredths: isCorrect ? question.maxScoreHundredths : 0,
         };
       } else {
-        throw new Error("ESSAY_IMAGE grading is not supported yet.");
+        throw new Error("Cannot grade an unsupported question type.");
       }
 
       questionsById[question.id] = result;
@@ -248,12 +257,23 @@ export function gradeDynamicAttemptAnswers(
     sectionScoresHundredths[section.id] = sectionScore;
   }
 
+  const objectiveScoreHundredths = Object.values(
+    sectionScoresHundredths,
+  ).reduce((total, score) => total + score, 0);
+
+  if (containsEssayImage) {
+    return {
+      answerKeyRevision,
+      objectiveScoreHundredths,
+      objectiveMaxScoreHundredths,
+      sectionScoresHundredths,
+      questionsById,
+    };
+  }
+
   return {
     answerKeyRevision,
-    totalScoreHundredths: Object.values(sectionScoresHundredths).reduce(
-      (total, score) => total + score,
-      0,
-    ),
+    totalScoreHundredths: objectiveScoreHundredths,
     sectionScoresHundredths,
     questionsById,
   };
@@ -263,6 +283,15 @@ export function isDynamicAttemptGradingSnapshot(
   grading: ExamAttemptGradingSnapshot,
 ): grading is DynamicAttemptGradingSnapshot {
   return "questionsById" in grading;
+}
+
+export function hasFinalTotalScore(
+  grading: ExamAttemptGradingSnapshot,
+): grading is CompletedExamAttemptGradingSnapshot {
+  return (
+    "totalScoreHundredths" in grading &&
+    typeof grading.totalScoreHundredths === "number"
+  );
 }
 
 export function gradeExamAttemptAnswers(

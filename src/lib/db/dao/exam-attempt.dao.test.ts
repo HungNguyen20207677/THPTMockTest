@@ -31,7 +31,10 @@ import {
   saveOwnedActiveExamAttemptAnswers,
   submitOwnedActiveExamAttempt,
 } from "@/lib/db/dao/exam-attempt.dao";
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
 import type { ExamAnswerKey } from "@/types/exam";
@@ -126,7 +129,11 @@ describe("ExamAttempt cascade DAO", () => {
 
     await saveOwnedActiveExamAttemptAnswers(mutation);
     await submitOwnedActiveExamAttempt(
-      { ...mutation, grading: gradeAttemptAnswers(answers, answerKey) },
+      {
+        ...mutation,
+        grading: gradeAttemptAnswers(answers, answerKey),
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+      },
       session as never,
     );
 
@@ -247,6 +254,15 @@ describe("ExamAttempt cascade DAO", () => {
         choice: "B" as const,
       },
     };
+    const grading = {
+      answerKeyRevision: 1,
+      objectiveScoreHundredths: 0,
+      objectiveMaxScoreHundredths: 500,
+      sectionScoresHundredths: { mixed: 0 },
+      questionsById: {
+        choice: { isCorrect: false, scoreHundredths: 0 },
+      },
+    };
 
     await submitOwnedActiveExamAttempt(
       {
@@ -254,6 +270,8 @@ describe("ExamAttempt cascade DAO", () => {
         examId: "exam-id",
         studentId: "student-id",
         answers,
+        grading,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
         essayQuestionIds: ["essay"],
         now,
       },
@@ -264,7 +282,8 @@ describe("ExamAttempt cascade DAO", () => {
       "student-id",
       "exam-id",
       2,
-      undefined,
+      grading,
+      EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
       now,
       session as never,
     );
@@ -287,13 +306,15 @@ describe("ExamAttempt cascade DAO", () => {
             ],
           },
           status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+          gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
           submittedAt: now,
           lastSavedAt: now,
+          grading: { $literal: grading },
+          gradedAt: now,
           updatedAt: now,
         },
       },
     ]);
-    expect(JSON.stringify(submissionUpdate)).not.toContain('"grading"');
     expect(mocks.findOneAndUpdate.mock.calls[0][2]).toEqual({
       returnDocument: "after",
       session,
@@ -304,7 +325,10 @@ describe("ExamAttempt cascade DAO", () => {
       {
         $set: {
           status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+          gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
           submittedAt: "$expiresAt",
+          grading,
+          gradedAt: now,
           updatedAt: now,
         },
       },
@@ -337,7 +361,13 @@ describe("ExamAttempt cascade DAO", () => {
     await expect(
       replaceTerminalExamAttemptGradings(
         "exam-id",
-        [{ attemptId: "attempt-id", grading }],
+        [
+          {
+            attemptId: "attempt-id",
+            grading,
+            gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+          },
+        ],
         gradedAt,
         session as never,
       ),
@@ -356,7 +386,12 @@ describe("ExamAttempt cascade DAO", () => {
       },
     });
     expect(operations[0].updateOne.update).toEqual({
-      $set: { grading, gradedAt, updatedAt: gradedAt },
+      $set: {
+        grading,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+        gradedAt,
+        updatedAt: gradedAt,
+      },
     });
   });
 });

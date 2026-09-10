@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
   calculateDynamicQuestionStatistics,
@@ -67,6 +70,62 @@ function createDynamicAttempt(
       answerKeyRevision: 1,
       totalScoreHundredths: 0,
       sectionScoresHundredths: {},
+      questionsById,
+    },
+  };
+}
+
+const pendingEssayStructure: ExamStructureSnapshot = {
+  sections: [
+    {
+      id: "pending-section",
+      title: "Pending section",
+      questions: [
+        {
+          id: "essay-question",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          maxScoreHundredths: 500,
+        },
+        {
+          id: "choice-question",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+          maxScoreHundredths: 100,
+        },
+        {
+          id: "short-question",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER,
+          maxScoreHundredths: 100,
+        },
+        {
+          id: "true-false-question",
+          type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+          maxScoreHundredths: 200,
+        },
+      ],
+    },
+  ],
+};
+
+function createPendingDynamicAttempt(
+  attemptNumber: number,
+  questionsById: DynamicAttemptGradingSnapshot["questionsById"],
+  status: ScoredAttempt["status"] = EXAM_ATTEMPT_STATUS.SUBMITTED,
+): ScoredAttempt {
+  const objectiveScoreHundredths = Object.values(questionsById).reduce(
+    (total, question) => total + question.scoreHundredths,
+    0,
+  );
+
+  return {
+    ...createDynamicAttempt(attemptNumber, questionsById, status),
+    gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+    grading: {
+      answerKeyRevision: 1,
+      objectiveScoreHundredths,
+      objectiveMaxScoreHundredths: 400,
+      sectionScoresHundredths: {
+        "pending-section": objectiveScoreHundredths,
+      },
       questionsById,
     },
   };
@@ -159,6 +218,46 @@ describe("attempt statistics", () => {
       lowest: 5,
     });
     expect(statistics.average).toBeCloseTo(20 / 3);
+  });
+
+  it("excludes pending manual attempts from final scores without dropping terminal counts", () => {
+    const completedAttempt = createAttempt(800, 1, "2026-08-01T00:00:00.000Z");
+    const pendingAttempt = createPendingDynamicAttempt(
+      2,
+      {},
+      EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+    );
+
+    expect(
+      calculatePerformanceStatistics([completedAttempt, pendingAttempt]),
+    ).toEqual({
+      completedAttemptCount: 2,
+      average: 8,
+      highest: 8,
+      lowest: 8,
+      first: 8,
+      latest: 8,
+      best: 8,
+      improvement: 0,
+    });
+    expect(calculateScoreAggregate([completedAttempt, pendingAttempt])).toEqual(
+      {
+        count: 1,
+        total: 800,
+        highest: 800,
+        lowest: 800,
+      },
+    );
+    expect(calculatePerformanceStatistics([pendingAttempt])).toEqual({
+      completedAttemptCount: 1,
+      average: null,
+      highest: null,
+      lowest: null,
+      first: null,
+      latest: null,
+      best: null,
+      improvement: null,
+    });
   });
 
   it("aggregates Part I and Part III correct and incorrect attempts", () => {
@@ -384,6 +483,82 @@ describe("attempt statistics", () => {
         },
       ],
     });
+  });
+
+  it("aggregates pending objective grading and omits ESSAY_IMAGE question analytics", () => {
+    const submittedAttempt = createPendingDynamicAttempt(1, {
+      "choice-question": { isCorrect: true, scoreHundredths: 100 },
+      "short-question": { isCorrect: false, scoreHundredths: 0 },
+      "true-false-question": {
+        correctStatementCount: 2,
+        scoreHundredths: 50,
+        statements: { a: true, b: false, c: true, d: false },
+      },
+    });
+    const autoSubmittedAttempt = createPendingDynamicAttempt(
+      2,
+      {
+        "choice-question": { isCorrect: false, scoreHundredths: 0 },
+        "short-question": { isCorrect: true, scoreHundredths: 100 },
+        "true-false-question": {
+          correctStatementCount: 4,
+          scoreHundredths: 200,
+          statements: { a: true, b: true, c: true, d: true },
+        },
+      },
+      EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+    );
+
+    const statistics = calculateDynamicQuestionStatistics(
+      pendingEssayStructure,
+      [submittedAttempt, autoSubmittedAttempt],
+    );
+
+    expect(
+      statistics.sections[0].questions.map((question) => ({
+        questionId: question.questionId,
+        questionNumber: question.questionNumber,
+        completedAttemptCount: question.completedAttemptCount,
+      })),
+    ).toEqual([
+      {
+        questionId: "choice-question",
+        questionNumber: 2,
+        completedAttemptCount: 2,
+      },
+      {
+        questionId: "short-question",
+        questionNumber: 3,
+        completedAttemptCount: 2,
+      },
+      {
+        questionId: "true-false-question",
+        questionNumber: 4,
+        completedAttemptCount: 2,
+      },
+    ]);
+    expect(statistics.sections[0].questions[0]).toMatchObject({
+      correctCount: 1,
+      incorrectCount: 1,
+      correctRatePercent: 50,
+    });
+    expect(statistics.sections[0].questions[1]).toMatchObject({
+      correctCount: 1,
+      incorrectCount: 1,
+      correctRatePercent: 50,
+    });
+    expect(statistics.sections[0].questions[2]).toMatchObject({
+      fullCorrectCount: 1,
+      fullCorrectRatePercent: 50,
+      averageScoreHundredths: 125,
+      statements: {
+        a: { correctCount: 2, correctRatePercent: 100 },
+        b: { correctCount: 1, correctRatePercent: 50 },
+        c: { correctCount: 2, correctRatePercent: 100 },
+        d: { correctCount: 1, correctRatePercent: 50 },
+      },
+    });
+    expect(JSON.stringify(statistics)).not.toContain("essay-question");
   });
 
   it("returns null dynamic rates when there are no completed attempts", () => {
@@ -674,6 +849,101 @@ describe("attempt statistics", () => {
         taggedQuestionCount: 1,
         observationCount: 1,
         averagePerformancePercent: 50,
+      },
+    ]);
+  });
+
+  it("keeps pending ESSAY_IMAGE Topics unobserved in Exam and Student analytics", () => {
+    const pendingAttempt = createPendingDynamicAttempt(1, {
+      "choice-question": { isCorrect: true, scoreHundredths: 100 },
+      "short-question": { isCorrect: false, scoreHundredths: 0 },
+      "true-false-question": {
+        correctStatementCount: 3,
+        scoreHundredths: 100,
+        statements: { a: true, b: true, c: true, d: false },
+      },
+    });
+    const pendingTopics = [
+      { questionId: "essay-question", topicIds: ["shared", "essay-only"] },
+      { questionId: "choice-question", topicIds: ["shared"] },
+      { questionId: "short-question", topicIds: ["objective"] },
+      { questionId: "true-false-question", topicIds: ["objective"] },
+    ];
+    const topics = [
+      { id: "shared", name: "Shared" },
+      { id: "objective", name: "Objective" },
+      { id: "essay-only", name: "Essay only" },
+    ];
+
+    expect(
+      calculateTopicStatistics(
+        {
+          questionTopicIds: createEmptyQuestionTopicIds(),
+          questionTopics: pendingTopics,
+          structureSnapshot: pendingEssayStructure,
+        },
+        [pendingAttempt],
+        topics,
+      ),
+    ).toEqual([
+      {
+        topicId: "objective",
+        topicName: "Objective",
+        taggedQuestionCount: 2,
+        observationCount: 2,
+        averagePerformancePercent: 25,
+      },
+      {
+        topicId: "shared",
+        topicName: "Shared",
+        taggedQuestionCount: 2,
+        observationCount: 1,
+        averagePerformancePercent: 100,
+      },
+      {
+        topicId: "essay-only",
+        topicName: "Essay only",
+        taggedQuestionCount: 1,
+        observationCount: 0,
+        averagePerformancePercent: null,
+      },
+    ]);
+
+    const legacyTopicIds = createEmptyQuestionTopicIds();
+    legacyTopicIds.partOne[0] = ["shared"];
+    expect(
+      calculateStudentTopicStatistics(
+        [
+          {
+            questionTopicIds: legacyTopicIds,
+            attempts: [
+              {
+                ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+                grading: createQuestionGrading({ partOneCorrect: [0] }),
+              },
+            ],
+          },
+          {
+            questionTopicIds: createEmptyQuestionTopicIds(),
+            questionTopics: pendingTopics,
+            structureSnapshot: pendingEssayStructure,
+            attempts: [pendingAttempt],
+          },
+        ],
+        topics,
+      ),
+    ).toEqual([
+      {
+        topicId: "objective",
+        topicName: "Objective",
+        observationCount: 2,
+        averagePerformancePercent: 25,
+      },
+      {
+        topicId: "shared",
+        topicName: "Shared",
+        observationCount: 2,
+        averagePerformancePercent: 100,
       },
     ]);
   });

@@ -1,5 +1,6 @@
 import type {
   ESSAY_IMAGE_ALLOWED_FORMATS,
+  EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
   STUDENT_EXAM_STATE,
 } from "@/lib/constants/exam-attempt";
@@ -13,6 +14,8 @@ import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 export type ExamAttemptStatus =
   (typeof EXAM_ATTEMPT_STATUS)[keyof typeof EXAM_ATTEMPT_STATUS];
+export type ExamAttemptGradingStatus =
+  (typeof EXAM_ATTEMPT_GRADING_STATUS)[keyof typeof EXAM_ATTEMPT_GRADING_STATUS];
 export type StudentExamState =
   (typeof STUDENT_EXAM_STATE)[keyof typeof STUDENT_EXAM_STATE];
 
@@ -131,12 +134,27 @@ export interface DynamicTrueFalseQuestionResult {
 export type DynamicQuestionGradingResult =
   DynamicQuestionCorrectnessResult | DynamicTrueFalseQuestionResult;
 
-export interface DynamicAttemptGradingSnapshot {
+interface DynamicAttemptGradingSnapshotBase {
   answerKeyRevision: number;
-  totalScoreHundredths: number;
   sectionScoresHundredths: Record<string, number>;
   questionsById: Record<string, DynamicQuestionGradingResult>;
 }
+
+export interface DynamicCompletedAttemptGradingSnapshot extends DynamicAttemptGradingSnapshotBase {
+  totalScoreHundredths: number;
+}
+
+export interface DynamicPendingManualAttemptGradingSnapshot extends DynamicAttemptGradingSnapshotBase {
+  objectiveScoreHundredths: number;
+  objectiveMaxScoreHundredths: number;
+}
+
+export type DynamicAttemptGradingSnapshot =
+  | DynamicCompletedAttemptGradingSnapshot
+  | DynamicPendingManualAttemptGradingSnapshot;
+
+export type CompletedExamAttemptGradingSnapshot =
+  AttemptGradingSnapshot | DynamicCompletedAttemptGradingSnapshot;
 
 export type ExamAttemptGradingSnapshot =
   AttemptGradingSnapshot | DynamicAttemptGradingSnapshot;
@@ -216,6 +234,11 @@ export interface StudentExamAttemptResult {
     score: boolean;
     answers: boolean;
   };
+  gradingStatus: ExamAttemptGradingStatus;
+  objectiveScore?: {
+    earned: number;
+    maximum: number;
+  };
   score?: {
     total: number;
     sections?: {
@@ -284,10 +307,16 @@ export interface DynamicShortAnswerReview {
   isCorrect: boolean;
 }
 
+export interface DynamicEssayImageAnswerReview {
+  type: "ESSAY_IMAGE";
+  studentAnswer: EssayImageAnswer;
+}
+
 export type DynamicQuestionAnswerReview =
   | DynamicSingleChoiceAnswerReview
   | DynamicTrueFalseAnswerReview
-  | DynamicShortAnswerReview;
+  | DynamicShortAnswerReview
+  | DynamicEssayImageAnswerReview;
 
 export interface StudentPartTwoStatementReview {
   studentAnswer: boolean | null;

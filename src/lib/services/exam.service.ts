@@ -11,6 +11,7 @@ import {
   verifyExamPdfAsset,
 } from "@/lib/cloudinary/exam-pdf";
 import { EXAM_STATUS, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
+import { EXAM_ATTEMPT_GRADING_STATUS } from "@/lib/constants/exam-attempt";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { USER_ROLE } from "@/lib/constants/roles";
 import { findExamStructureTemplateRecordById } from "@/lib/db/dao/exam-structure-template.dao";
@@ -654,16 +655,6 @@ export async function editExam(
           throw new ExamConflictError();
         }
 
-        if (
-          correctedExam.structureSnapshot &&
-          examStructureContainsQuestionType(
-            correctedExam.structureSnapshot,
-            EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
-          )
-        ) {
-          return correctedExam;
-        }
-
         const regradeSources = currentExam.structureSnapshot
           ? await listTerminalExamAttemptRegradeSources(
               examId,
@@ -672,8 +663,17 @@ export async function editExam(
             )
           : await listTerminalExamAttemptRegradeSources(examId, session);
         const gradedAt = new Date();
+        const gradingStatus =
+          correctedExam.structureSnapshot &&
+          examStructureContainsQuestionType(
+            correctedExam.structureSnapshot,
+            EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          )
+            ? EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL
+            : EXAM_ATTEMPT_GRADING_STATUS.COMPLETED;
         const replacements = regradeSources.map((attempt) => ({
           attemptId: attempt.id,
+          gradingStatus,
           grading: gradeExamAttemptAnswers(
             attempt.answers,
             correctedExam.answerKey,

@@ -11,7 +11,10 @@ import { ResultDetailSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchAdminAttemptDetail } from "@/lib/api/reporting";
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import { formatDuration, vietnamDateTimeFormatter } from "@/lib/formatting";
 import type { StudentExamAttemptResult } from "@/types/exam-attempt";
 import type { AdminAttemptDetail } from "@/types/reporting";
@@ -75,7 +78,7 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
   const isTerminal = detail.attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS;
   const result: StudentExamAttemptResult | null =
     isTerminal &&
-    detail.score &&
+    detail.gradingStatus &&
     detail.attempt.submittedAt &&
     detail.attempt.timeUsedSeconds !== undefined
       ? {
@@ -94,6 +97,8 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
             timeUsedSeconds: detail.attempt.timeUsedSeconds,
           },
           visibility: { score: true, answers: Boolean(detail.answerReview) },
+          gradingStatus: detail.gradingStatus,
+          objectiveScore: detail.objectiveScore,
           score: detail.score,
           answerReview: detail.answerReview,
           dynamicAnswerReview: detail.dynamicAnswerReview,
@@ -147,6 +152,19 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
             Đáp án đang làm không được hiển thị cho quản trị viên. Kết quả sẽ có
             sau khi học sinh nộp bài hoặc hết giờ.
           </p>
+        </div>
+      )}
+
+      {detail.gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL && (
+        <div className="border-amber-300 bg-amber-50 rounded-xl border p-6 text-amber-950">
+          <h2 className="font-semibold">Chờ chấm tự luận</h2>
+          {detail.objectiveScore && (
+            <p className="mt-2 font-medium tabular-nums">
+              Điểm phần đã chấm tự động: {detail.objectiveScore.earned} /{" "}
+              {detail.objectiveScore.maximum}
+            </p>
+          )}
+          <p className="mt-2 text-sm">Chưa có điểm tổng kết.</p>
         </div>
       )}
 

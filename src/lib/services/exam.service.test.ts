@@ -87,6 +87,7 @@ import {
   PART3_INPUT_MODE,
 } from "@/lib/constants/exam";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
+import { EXAM_ATTEMPT_GRADING_STATUS } from "@/lib/constants/exam-attempt";
 import { USER_ROLE } from "@/lib/constants/roles";
 import {
   changeExamStatus,
@@ -196,6 +197,29 @@ function createDynamicStructureSnapshot(): ExamStructureSnapshot {
   };
 }
 
+function createEssayCorrectionStructureSnapshot(): ExamStructureSnapshot {
+  return {
+    sections: [
+      {
+        id: "essay-section",
+        title: "Phần hỗn hợp",
+        questions: [
+          {
+            id: "essay-image-question",
+            type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+            maxScoreHundredths: 500,
+          },
+          {
+            id: "essay-choice-question",
+            type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+            maxScoreHundredths: 500,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function createDynamicAnswerKey(
   firstChoice: "A" | "B" = "A",
 ): DynamicExamAnswerKey {
@@ -225,6 +249,37 @@ function createDynamicInput(
     structureTemplateId,
     answerKey: createDynamicAnswerKey(),
     questionTopics: createEmptyQuestionTopics(structure),
+  };
+}
+
+function createEssayCorrectionAnswerKey(
+  choice: "A" | "B" = "A",
+): DynamicExamAnswerKey {
+  return {
+    answersByQuestionId: {
+      "essay-choice-question": choice,
+    },
+  };
+}
+
+function createDynamicUpdateInput(
+  currentExam: ExamPersistenceRecord,
+  structure: ExamStructureSnapshot,
+  answerKey: DynamicExamAnswerKey,
+): UpdateExamInput {
+  const baseInput = createDynamicInput(structure);
+
+  return {
+    title: baseInput.title,
+    description: baseInput.description,
+    status: baseInput.status,
+    visibilityMode: baseInput.visibilityMode,
+    assignedStudentIds: baseInput.assignedStudentIds,
+    part3InputMode: baseInput.part3InputMode,
+    settings: baseInput.settings,
+    answerKey,
+    questionTopics: baseInput.questionTopics,
+    expectedUpdatedAt: currentExam.updatedAt.toISOString(),
   };
 }
 
@@ -916,6 +971,7 @@ describe("exam service", () => {
       .calls[0][1] as Array<{
       attemptId: string;
       grading: ReturnType<typeof gradeAttemptAnswers>;
+      gradingStatus: string;
     }>;
     expect(replacements.map((replacement) => replacement.attemptId)).toEqual([
       "submitted-attempt",
@@ -924,6 +980,12 @@ describe("exam service", () => {
     expect(
       replacements.every(
         (replacement) => replacement.grading.answerKeyRevision === 2,
+      ),
+    ).toBe(true);
+    expect(
+      replacements.every(
+        (replacement) =>
+          replacement.gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
       ),
     ).toBe(true);
     expect(replacements[0].grading.totalScoreHundredths).toBe(25);
@@ -997,6 +1059,7 @@ describe("exam service", () => {
       [
         {
           attemptId: "dynamic-attempt",
+          gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
           grading: {
             answerKeyRevision: 2,
             totalScoreHundredths: 1000,
@@ -1031,15 +1094,163 @@ describe("exam service", () => {
     );
   });
 
+  it("regrades the objective portion of an ESSAY_IMAGE Exam and keeps manual grading pending", async () => {
+    const structureSnapshot = createEssayCorrectionStructureSnapshot();
+    const currentAnswerKey = createEssayCorrectionAnswerKey();
+    const correctedAnswerKey = createEssayCorrectionAnswerKey("B");
+    const currentExam = createStoredExam({
+      structureTemplateId,
+      structureSnapshot,
+      answerKey: currentAnswerKey,
+    });
+    const correctedExam = createStoredExam({
+      structureTemplateId,
+      structureSnapshot,
+      answerKey: correctedAnswerKey,
+      answerKeyRevision: 2,
+    });
+    const essayImage = {
+      publicId: "essay-image",
+      secureUrl:
+        "https://res.cloudinary.com/test/image/upload/v1/essay-image.jpg",
+      originalFilename: "essay-answer.jpg",
+      bytes: 1024,
+      format: "jpg" as const,
+      width: 1200,
+      height: 800,
+    };
+    const answers: DynamicAttemptAnswers = {
+      answersByQuestionId: {
+        "essay-image-question": {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          images: [essayImage],
+        },
+        "essay-choice-question": "B",
+      },
+    };
+    const originalAnswers = structuredClone(answers);
+    const input = createDynamicUpdateInput(
+      currentExam,
+      structureSnapshot,
+      correctedAnswerKey,
+    );
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+    mocks.updateExamAnswerKeyRecord.mockResolvedValue(correctedExam);
+    mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([
+      { id: "essay-attempt", answers },
+    ]);
+    mocks.replaceTerminalExamAttemptGradings.mockResolvedValue(1);
+
+    const result = await editExam(
+      admin,
+      currentExam.id,
+      input,
+      undefined,
+      true,
+    );
+
+    expect(result.answerKey).toEqual(correctedAnswerKey);
+    expect(mocks.updateExamAnswerKeyRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      expect.objectContaining({ answerKey: correctedAnswerKey }),
+      currentExam.updatedAt,
+      1,
+      2,
+      mocks.transactionSession,
+    );
+    expect(mocks.listTerminalExamAttemptRegradeSources).toHaveBeenCalledWith(
+      currentExam.id,
+      mocks.transactionSession,
+      structureSnapshot,
+    );
+    const replacements = mocks.replaceTerminalExamAttemptGradings.mock
+      .calls[0][1] as Array<{
+      attemptId: string;
+      gradingStatus: string;
+      grading: Record<string, unknown>;
+    }>;
+    expect(replacements).toEqual([
+      {
+        attemptId: "essay-attempt",
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+        grading: {
+          answerKeyRevision: 2,
+          objectiveScoreHundredths: 500,
+          objectiveMaxScoreHundredths: 500,
+          sectionScoresHundredths: { "essay-section": 500 },
+          questionsById: {
+            "essay-choice-question": {
+              isCorrect: true,
+              scoreHundredths: 500,
+            },
+          },
+        },
+      },
+    ]);
+    expect(replacements[0].grading).not.toHaveProperty("totalScoreHundredths");
+    expect(replacements[0]).not.toHaveProperty("answers");
+    expect(answers).toEqual(originalAnswers);
+    expect(mocks.replaceTerminalExamAttemptGradings).toHaveBeenCalledWith(
+      currentExam.id,
+      replacements,
+      expect.any(Date),
+      mocks.transactionSession,
+    );
+  });
+
   it("rolls back the corrected key and regrades when the transaction fails", async () => {
-    const currentExam = createStoredExam();
-    const input = createValidInput();
-    input.answerKey.partOne[0] = "B";
-    const answers = createEmptyAttemptAnswers();
+    const structureSnapshot = createEssayCorrectionStructureSnapshot();
+    const currentAnswerKey = createEssayCorrectionAnswerKey();
+    const correctedAnswerKey = createEssayCorrectionAnswerKey("B");
+    const currentExam = createStoredExam({
+      structureTemplateId,
+      structureSnapshot,
+      answerKey: currentAnswerKey,
+    });
+    const input = createDynamicUpdateInput(
+      currentExam,
+      structureSnapshot,
+      correctedAnswerKey,
+    );
+    const answers: DynamicAttemptAnswers = {
+      answersByQuestionId: {
+        "essay-image-question": {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          images: [
+            {
+              publicId: "essay-image",
+              secureUrl:
+                "https://res.cloudinary.com/test/image/upload/v1/essay-image.jpg",
+              originalFilename: "essay-answer.jpg",
+              bytes: 1024,
+              format: "jpg",
+              width: 1200,
+              height: 800,
+            },
+          ],
+        },
+        "essay-choice-question": "B",
+      },
+    };
+    const originalGrading = {
+      answerKeyRevision: 1,
+      objectiveScoreHundredths: 0,
+      objectiveMaxScoreHundredths: 500,
+      sectionScoresHundredths: { "essay-section": 0 },
+      questionsById: {
+        "essay-choice-question": {
+          isCorrect: false,
+          scoreHundredths: 0,
+        },
+      },
+    };
     const databaseState = {
       answerKey: structuredClone(currentExam.answerKey),
       answerKeyRevision: currentExam.answerKeyRevision,
-      gradingRevision: currentExam.answerKeyRevision,
+      grading: structuredClone(originalGrading),
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+      answers: structuredClone(answers),
     };
     mocks.findExamRecordById.mockResolvedValue(currentExam);
     mocks.hasExamAttemptRecords.mockResolvedValue(true);
@@ -1047,6 +1258,8 @@ describe("exam service", () => {
       databaseState.answerKey = structuredClone(input.answerKey);
       databaseState.answerKeyRevision = 2;
       return createStoredExam({
+        structureTemplateId,
+        structureSnapshot,
         answerKey: input.answerKey,
         answerKeyRevision: 2,
       });
@@ -1055,7 +1268,19 @@ describe("exam service", () => {
       { id: "submitted-attempt", answers },
     ]);
     mocks.replaceTerminalExamAttemptGradings.mockImplementation(async () => {
-      databaseState.gradingRevision = 2;
+      databaseState.grading = {
+        answerKeyRevision: 2,
+        objectiveScoreHundredths: 500,
+        objectiveMaxScoreHundredths: 500,
+        sectionScoresHundredths: { "essay-section": 500 },
+        questionsById: {
+          "essay-choice-question": {
+            isCorrect: true,
+            scoreHundredths: 500,
+          },
+        },
+      };
+      databaseState.gradingStatus = EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL;
       throw new Error("Regrade failed");
     });
     mocks.withMongoTransaction.mockImplementation(
@@ -1067,7 +1292,9 @@ describe("exam service", () => {
         } catch (error) {
           databaseState.answerKey = snapshot.answerKey;
           databaseState.answerKeyRevision = snapshot.answerKeyRevision;
-          databaseState.gradingRevision = snapshot.gradingRevision;
+          databaseState.grading = snapshot.grading;
+          databaseState.gradingStatus = snapshot.gradingStatus;
+          databaseState.answers = snapshot.answers;
           throw error;
         }
       },
@@ -1085,7 +1312,9 @@ describe("exam service", () => {
     expect(databaseState).toEqual({
       answerKey: currentExam.answerKey,
       answerKeyRevision: 1,
-      gradingRevision: 1,
+      grading: originalGrading,
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+      answers,
     });
   });
 

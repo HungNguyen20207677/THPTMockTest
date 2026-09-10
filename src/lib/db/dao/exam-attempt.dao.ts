@@ -3,12 +3,17 @@ import "server-only";
 import type { ClientSession, Types } from "mongoose";
 
 import {
+  EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
   TERMINAL_EXAM_ATTEMPT_STATUSES,
 } from "@/lib/constants/exam-attempt";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { ExamAttemptModel } from "@/lib/db/models/exam-attempt.model";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
+import {
+  hasFinalTotalScore,
+  isDynamicAttemptGradingSnapshot,
+} from "@/lib/exam/grading";
 import {
   examAttemptAnswersSchema,
   isDynamicAttemptAnswers,
@@ -17,6 +22,7 @@ import { examAttemptGradingSnapshotSchema } from "@/lib/validations/attempt-grad
 import type {
   ExamAttemptStatus,
   ExamAttemptAnswers,
+  ExamAttemptGradingStatus,
   ExamAttemptGradingSnapshot,
 } from "@/types/exam-attempt";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
@@ -27,6 +33,7 @@ export interface ExamAttemptPersistenceRecord {
   studentId: string;
   attemptNumber: number;
   status: ExamAttemptStatus;
+  gradingStatus?: ExamAttemptGradingStatus;
   startedAt: Date;
   expiresAt: Date;
   submittedAt?: Date;
@@ -68,7 +75,8 @@ export interface MutateOwnedEssayImageInput {
 }
 
 export interface FinalizeOwnedExamAttemptInput extends MutateOwnedExamAttemptInput {
-  grading?: ExamAttemptGradingSnapshot;
+  grading: ExamAttemptGradingSnapshot;
+  gradingStatus: ExamAttemptGradingStatus;
 }
 
 export interface ExamAttemptReportFilter {
@@ -91,6 +99,7 @@ export interface ExamAttemptRegradeSource {
 export interface ExamAttemptGradingReplacement {
   attemptId: string;
   grading: ExamAttemptGradingSnapshot;
+  gradingStatus: ExamAttemptGradingStatus;
 }
 
 interface ExamAttemptDocumentData {
@@ -99,6 +108,7 @@ interface ExamAttemptDocumentData {
   studentId: Types.ObjectId;
   attemptNumber: number;
   status: ExamAttemptStatus;
+  gradingStatus?: ExamAttemptGradingStatus;
   startedAt: Date;
   expiresAt: Date;
   submittedAt?: Date;
@@ -113,13 +123,38 @@ interface ExamAttemptDocumentData {
 
 let examAttemptIndexesPromise: Promise<void> | null = null;
 
-function getAutoSubmitUpdate(now: Date, grading?: ExamAttemptGradingSnapshot) {
+function assertValidGradingState(
+  gradingStatus: ExamAttemptGradingStatus,
+  grading: ExamAttemptGradingSnapshot,
+): void {
+  const hasFinalScore = hasFinalTotalScore(grading);
+
+  if (
+    (gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.COMPLETED &&
+      !hasFinalScore) ||
+    (gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL &&
+      (hasFinalScore ||
+        !isDynamicAttemptGradingSnapshot(grading) ||
+        !("objectiveScoreHundredths" in grading)))
+  ) {
+    throw new Error("ExamAttempt grading state is inconsistent.");
+  }
+}
+
+function getAutoSubmitUpdate(
+  now: Date,
+  grading: ExamAttemptGradingSnapshot,
+  gradingStatus: ExamAttemptGradingStatus,
+) {
+  assertValidGradingState(gradingStatus, grading);
   return [
     {
       $set: {
         status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+        gradingStatus,
         submittedAt: "$expiresAt",
-        ...(grading ? { grading, gradedAt: now } : {}),
+        grading,
+        gradedAt: now,
         updatedAt: now,
       },
     },
@@ -177,6 +212,7 @@ function toExamAttemptRecord(
     studentId: attempt.studentId.toString(),
     attemptNumber: attempt.attemptNumber,
     status: attempt.status,
+    gradingStatus: attempt.gradingStatus,
     startedAt: attempt.startedAt,
     expiresAt: attempt.expiresAt,
     submittedAt: attempt.submittedAt,
@@ -417,6 +453,7 @@ export async function submitOwnedActiveExamAttempt(
   session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
+  assertValidGradingState(input.gradingStatus, input.grading);
 
   const essayQuestionIds = new Set(input.essayQuestionIds ?? []);
   const dynamicAnswers = isDynamicAttemptAnswers(input.answers)
@@ -447,11 +484,11 @@ export async function submitOwnedActiveExamAttempt(
               ],
             },
             status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+            gradingStatus: input.gradingStatus,
             submittedAt: input.now,
             lastSavedAt: input.now,
-            ...(input.grading
-              ? { grading: { $literal: input.grading }, gradedAt: input.now }
-              : {}),
+            grading: { $literal: input.grading },
+            gradedAt: input.now,
             updatedAt: input.now,
           },
         },
@@ -460,11 +497,11 @@ export async function submitOwnedActiveExamAttempt(
         $set: {
           answers: input.answers,
           status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+          gradingStatus: input.gradingStatus,
           submittedAt: input.now,
           lastSavedAt: input.now,
-          ...(input.grading
-            ? { grading: input.grading, gradedAt: input.now }
-            : {}),
+          grading: input.grading,
+          gradedAt: input.now,
         },
       };
 
@@ -494,7 +531,8 @@ export async function autoSubmitExpiredExamAttemptRecord(
   studentId: string,
   examId: string,
   expectedAnswerRevision: number,
-  grading: ExamAttemptGradingSnapshot | undefined,
+  grading: ExamAttemptGradingSnapshot,
+  gradingStatus: ExamAttemptGradingStatus,
   now: Date,
   session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
@@ -509,7 +547,7 @@ export async function autoSubmitExpiredExamAttemptRecord(
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
       expiresAt: { $lte: now },
     },
-    getAutoSubmitUpdate(now, grading),
+    getAutoSubmitUpdate(now, grading, gradingStatus),
     { returnDocument: "after", session },
   )
     .lean<ExamAttemptDocumentData>()
@@ -523,10 +561,12 @@ export async function setOwnedTerminalExamAttemptGradingForRevision(
   examId: string,
   studentId: string,
   grading: ExamAttemptGradingSnapshot,
+  gradingStatus: ExamAttemptGradingStatus,
   gradedAt: Date,
   session: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
+  assertValidGradingState(gradingStatus, grading);
 
   const attempt = await ExamAttemptModel.findOneAndUpdate(
     {
@@ -544,7 +584,7 @@ export async function setOwnedTerminalExamAttemptGradingForRevision(
         },
       ],
     },
-    { $set: { grading, gradedAt } },
+    { $set: { grading, gradingStatus, gradedAt } },
     { returnDocument: "after", runValidators: true, session },
   )
     .lean<ExamAttemptDocumentData>()
@@ -604,6 +644,9 @@ export async function replaceTerminalExamAttemptGradings(
     ...replacement,
     grading: examAttemptGradingSnapshotSchema.parse(replacement.grading),
   }));
+  for (const replacement of validatedReplacements) {
+    assertValidGradingState(replacement.gradingStatus, replacement.grading);
+  }
   const result = await ExamAttemptModel.bulkWrite(
     validatedReplacements.map((replacement) => ({
       updateOne: {
@@ -615,6 +658,7 @@ export async function replaceTerminalExamAttemptGradings(
         update: {
           $set: {
             grading: replacement.grading,
+            gradingStatus: replacement.gradingStatus,
             gradedAt,
             updatedAt: gradedAt,
           },

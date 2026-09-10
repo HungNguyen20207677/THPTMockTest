@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { EXAM_STRUCTURE } from "@/lib/constants/exam";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
-import { attemptGradingSnapshotSchema } from "@/lib/validations/attempt-grading";
+import {
+  attemptGradingSnapshotSchema,
+  dynamicAttemptGradingSnapshotSchema,
+} from "@/lib/validations/attempt-grading";
 import type { ExamAnswerKey } from "@/types/exam";
 
 function createAnswerKey(): ExamAnswerKey {
@@ -53,6 +56,38 @@ describe("attempt grading snapshot validation", () => {
     contradictory.partTwo[0].scoreHundredths = 100;
 
     expect(attemptGradingSnapshotSchema.safeParse(contradictory).success).toBe(
+      false,
+    );
+  });
+
+  it("keeps completed totals distinct from pending objective grading", () => {
+    const base = {
+      answerKeyRevision: 1,
+      sectionScoresHundredths: { mixed: 500 },
+      questionsById: {
+        choice: { isCorrect: true, scoreHundredths: 500 },
+      },
+    };
+    const completed = { ...base, totalScoreHundredths: 500 };
+    const pending = {
+      ...base,
+      objectiveScoreHundredths: 500,
+      objectiveMaxScoreHundredths: 500,
+    };
+
+    expect(
+      dynamicAttemptGradingSnapshotSchema.safeParse(completed).success,
+    ).toBe(true);
+    expect(dynamicAttemptGradingSnapshotSchema.safeParse(pending).success).toBe(
+      true,
+    );
+    expect(
+      dynamicAttemptGradingSnapshotSchema.safeParse({
+        ...pending,
+        totalScoreHundredths: 500,
+      }).success,
+    ).toBe(false);
+    expect(dynamicAttemptGradingSnapshotSchema.safeParse(base).success).toBe(
       false,
     );
   });

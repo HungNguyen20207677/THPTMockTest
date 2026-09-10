@@ -9,7 +9,10 @@ import {
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import {
   formatDuration,
   scoreFormatter,
@@ -83,13 +86,29 @@ export function AdminResultTable({
       header: "Thời gian",
       cell: ({ getValue }) => formatDuration(getValue()),
     }),
-    columnHelper.accessor("score.total", {
+    columnHelper.display({
+      id: "score",
       header: "Điểm",
-      cell: ({ getValue }) => (
-        <span className="font-semibold tabular-nums">
-          {scoreFormatter.format(getValue())}
-        </span>
-      ),
+      cell: ({ row }) =>
+        row.original.gradingStatus ===
+        EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL ? (
+          <div>
+            <p className="font-semibold">Chờ chấm tự luận</p>
+            {row.original.objectiveScore && (
+              <p className="text-muted-foreground text-xs tabular-nums">
+                Đã chấm tự động:{" "}
+                {scoreFormatter.format(row.original.objectiveScore.earned)} /{" "}
+                {scoreFormatter.format(row.original.objectiveScore.maximum)}
+              </p>
+            )}
+          </div>
+        ) : (
+          <span className="font-semibold tabular-nums">
+            {row.original.score
+              ? scoreFormatter.format(row.original.score.total)
+              : "Chưa có"}
+          </span>
+        ),
     }),
     columnHelper.display({
       id: "actions",

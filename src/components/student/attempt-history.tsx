@@ -8,7 +8,10 @@ import { PaginationControls } from "@/components/shared/pagination-controls";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import { fetchStudentExamAttemptHistory } from "@/lib/api/student-exams";
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import {
   formatDuration,
   scoreFormatter,
@@ -161,9 +164,14 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
                   {formatDuration(attempt.timeUsedSeconds)}
                 </td>
                 <td className="px-4 py-3 font-semibold tabular-nums">
-                  {attempt.score === undefined
-                    ? "Chưa công bố"
-                    : scoreFormatter.format(attempt.score)}
+                  {attempt.gradingStatus ===
+                  EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL
+                    ? attempt.objectiveScore
+                      ? `Chờ chấm · ${scoreFormatter.format(attempt.objectiveScore.earned)} / ${scoreFormatter.format(attempt.objectiveScore.maximum)}`
+                      : "Bài tự luận đang chờ chấm"
+                    : attempt.score === undefined
+                      ? "Chưa công bố"
+                      : scoreFormatter.format(attempt.score)}
                 </td>
                 <td className="px-4 py-3">
                   <Button asChild size="sm" variant="outline">

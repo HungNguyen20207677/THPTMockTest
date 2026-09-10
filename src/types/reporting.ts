@@ -1,4 +1,5 @@
 import type {
+  ExamAttemptGradingStatus,
   ExamAttemptStatus,
   StudentExamAttemptResult,
 } from "@/types/exam-attempt";
@@ -69,7 +70,9 @@ export interface AdminResultSummary {
   expiresAt: string;
   submittedAt: string;
   timeUsedSeconds: number;
-  score: AttemptScoreSummary;
+  gradingStatus: ExamAttemptGradingStatus;
+  score?: AttemptScoreSummary;
+  objectiveScore?: StudentExamAttemptResult["objectiveScore"];
 }
 
 export interface AdminResultList {
@@ -89,7 +92,9 @@ export interface AdminAttemptDetail {
     submittedAt?: string;
     timeUsedSeconds?: number;
   };
+  gradingStatus?: ExamAttemptGradingStatus;
   score?: AttemptScoreSummary;
+  objectiveScore?: StudentExamAttemptResult["objectiveScore"];
   answerReview?: StudentExamAttemptResult["answerReview"];
   structureSnapshot?: ExamStructureSnapshot;
   dynamicAnswerReview?: StudentExamAttemptResult["dynamicAnswerReview"];
@@ -231,7 +236,9 @@ export interface StudentExamAttemptHistoryItem {
   startedAt: string;
   submittedAt: string;
   timeUsedSeconds: number;
+  gradingStatus: ExamAttemptGradingStatus;
   score?: number;
+  objectiveScore?: StudentExamAttemptResult["objectiveScore"];
 }
 
 export interface StudentExamAttemptHistory {

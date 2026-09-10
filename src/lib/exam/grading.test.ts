@@ -308,6 +308,6 @@ describe("THPT Math grading", () => {
       "true-false": 200,
       "short-answer": 200,
     });
-    expect(grading.totalScoreHundredths).toBe(500);
+    expect(grading).toMatchObject({ totalScoreHundredths: 500 });
   });
 });
