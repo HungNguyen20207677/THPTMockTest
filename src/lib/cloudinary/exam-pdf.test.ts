@@ -67,6 +67,7 @@ describe("Exam PDF Cloudinary flow", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("generates signed raw-upload parameters without exposing the secret", () => {
@@ -157,6 +158,30 @@ describe("Exam PDF Cloudinary flow", () => {
       statusCode: 400,
     });
     expect(mocks.destroy).not.toHaveBeenCalled();
+  });
+
+  it("reports a safe server error when Cloudinary verification is unavailable", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    mocks.resource.mockRejectedValue({
+      http_code: 420,
+      message: "Cloudinary response containing internal details",
+    });
+
+    await expect(verifyExamPdfAsset(createReference())).rejects.toMatchObject({
+      code: "PDF_UPLOAD_FAILED",
+      statusCode: 502,
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "Could not verify a Cloudinary PDF asset.",
+      {
+        publicId,
+        statusCode: 420,
+        errorName: "UnknownError",
+      },
+    );
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
   it("rejects an oversized Cloudinary asset", async () => {

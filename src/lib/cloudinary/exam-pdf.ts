@@ -245,7 +245,18 @@ export async function verifyExamPdfAsset(
       type: "upload",
       timeout: CLOUDINARY_REQUEST_TIMEOUT_MS,
     });
-  } catch {
+  } catch (error) {
+    console.error("Could not verify a Cloudinary PDF asset.", {
+      publicId: reference.publicId,
+      statusCode:
+        typeof error === "object" &&
+        error !== null &&
+        "http_code" in error &&
+        typeof error.http_code === "number"
+          ? error.http_code
+          : undefined,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
     throw new ExamPdfUploadError();
   }
 

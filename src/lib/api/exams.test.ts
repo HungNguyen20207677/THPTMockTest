@@ -75,6 +75,17 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function cloudinaryUploadResponse(file: File): Response {
+  return jsonResponse({
+    public_id: publicId,
+    resource_type: "raw",
+    type: "upload",
+    bytes: file.size,
+    secure_url: `https://res.cloudinary.com/test-cloud/raw/upload/v1786363200/${publicId}`,
+    placeholder: false,
+  });
+}
+
 describe("Exam API client", () => {
   beforeEach(() => {
     fetchMock.mockReset();
@@ -93,7 +104,7 @@ describe("Exam API client", () => {
     const result = { data: { exam: { id: "exam-id" } } };
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ data: { upload: ticket } }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(cloudinaryUploadResponse(file))
       .mockResolvedValueOnce(jsonResponse(result));
 
     await expect(createExamRecord(input, file)).resolves.toEqual(result);
@@ -149,7 +160,7 @@ describe("Exam API client", () => {
     });
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ data: { upload: ticket } }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(cloudinaryUploadResponse(file))
       .mockResolvedValueOnce(
         jsonResponse(
           {
@@ -174,6 +185,74 @@ describe("Exam API client", () => {
     const cleanupRequest = fetchMock.mock.calls[3][1] as RequestInit;
     expect(cleanupRequest.method).toBe("DELETE");
     expect(JSON.parse(cleanupRequest.body as string)).toEqual(reference);
+  });
+
+  it("surfaces a safe Cloudinary signature error without creating an Exam", async () => {
+    const file = new File(["%PDF-1.7"], "de-thi.pdf", {
+      type: "application/pdf",
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ data: { upload: ticket } }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: {
+              message: "Invalid Signature secret-response-detail",
+            },
+          },
+          401,
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      createExamRecord(createValidInput(), file),
+    ).rejects.toMatchObject({
+      code: "PDF_UPLOAD_FAILED",
+      statusCode: 401,
+      message:
+        "Phiên tải PDF không hợp lệ hoặc đã hết hạn. Vui lòng thử lưu lại.",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/admin/exams/pdf");
+    expect(
+      fetchMock.mock.calls.some(([url]) => url === "/api/admin/exams"),
+    ).toBe(false);
+  });
+
+  it("rejects mismatched Cloudinary success metadata before creating an Exam", async () => {
+    const file = new File(["%PDF-1.7"], "de-thi.pdf", {
+      type: "application/pdf",
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ data: { upload: ticket } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          public_id: publicId,
+          resource_type: "image",
+          type: "upload",
+          bytes: file.size,
+          secure_url:
+            "https://res.cloudinary.com/test-cloud/image/upload/v1/not-a-pdf",
+          placeholder: false,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      createExamRecord(createValidInput(), file),
+    ).rejects.toMatchObject({
+      code: "PDF_UPLOAD_FAILED",
+      statusCode: 502,
+      message: "Cloudinary trả về thông tin tệp PDF không hợp lệ.",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/admin/exams/pdf");
+    expect(
+      fetchMock.mock.calls.some(([url]) => url === "/api/admin/exams"),
+    ).toBe(false);
   });
 
   it("attempts signed cleanup when the Cloudinary response is lost", async () => {

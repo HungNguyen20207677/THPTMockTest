@@ -760,6 +760,26 @@ describe("exam service", () => {
     );
   });
 
+  it("does not persist an Exam when Cloudinary PDF verification fails", async () => {
+    const verificationError = Object.assign(
+      new Error("Could not verify Cloudinary PDF"),
+      { code: "PDF_UPLOAD_FAILED", statusCode: 502 },
+    );
+    mocks.verifyExamPdfAsset.mockRejectedValue(verificationError);
+    mocks.discardExamPdfUpload.mockResolvedValue(undefined);
+
+    await expect(
+      createExam(admin, createValidInput(), replacementPdfUpload),
+    ).rejects.toBe(verificationError);
+
+    expect(mocks.verifyExamPdfAsset).toHaveBeenCalledWith(replacementPdfUpload);
+    expect(mocks.withMongoTransaction).not.toHaveBeenCalled();
+    expect(mocks.createExamRecord).not.toHaveBeenCalled();
+    expect(mocks.discardExamPdfUpload).toHaveBeenCalledWith(
+      replacementPdfUpload,
+    );
+  });
+
   it("does not verify or delete an upload reference already owned by an Exam", async () => {
     const owner = createStoredExam({ pdf: newPdf });
     mocks.findExamRecordById.mockResolvedValue(createStoredExam());
