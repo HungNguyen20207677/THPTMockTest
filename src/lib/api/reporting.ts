@@ -8,6 +8,7 @@ import type {
   AdminResultList,
   AdminStudentDetail,
 } from "@/types/reporting";
+import type { ManualEssayGradingRequest } from "@/lib/validations/attempt-grading";
 
 export interface AdminResultFilters {
   page?: number;
@@ -46,6 +47,17 @@ export function fetchAdminAttemptDetail(
   attemptId: string,
 ): Promise<ApiSuccessResponse<{ detail: AdminAttemptDetail }>> {
   return apiRequest(`/api/admin/results/${attemptId}`);
+}
+
+export function updateAdminManualEssayGrading(
+  attemptId: string,
+  input: ManualEssayGradingRequest,
+): Promise<ApiSuccessResponse<{ detail: AdminAttemptDetail }>> {
+  return apiRequest(`/api/admin/results/${attemptId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }
 
 export function fetchAdminStudentDetail(

@@ -1,6 +1,7 @@
 import type {
   ExamAttemptGradingStatus,
   ExamAttemptStatus,
+  ManualEssayScore,
   StudentExamAttemptResult,
 } from "@/types/exam-attempt";
 import type { ExamStatus } from "@/types/exam";
@@ -98,6 +99,12 @@ export interface AdminAttemptDetail {
   answerReview?: StudentExamAttemptResult["answerReview"];
   structureSnapshot?: ExamStructureSnapshot;
   dynamicAnswerReview?: StudentExamAttemptResult["dynamicAnswerReview"];
+  manualGrading?: {
+    revision: number;
+    manualEssayScores: ManualEssayScore[];
+    essayScoreHundredths?: number;
+    essayMaxScoreHundredths: number;
+  };
 }
 
 export interface AdminStudentExamPerformance {
@@ -195,9 +202,17 @@ export interface AdminExamDynamicTrueFalseQuestionStatistics extends AdminExamDy
   };
 }
 
+export interface AdminExamDynamicEssayQuestionStatistics extends AdminExamDynamicQuestionIdentity {
+  completedAttemptCount?: never;
+  gradedAttemptCount: number;
+  averageScoreHundredths: number | null;
+  averagePerformancePercent: number | null;
+}
+
 export type AdminExamDynamicQuestionStatisticsItem =
   | AdminExamDynamicQuestionCorrectnessStatistics
-  | AdminExamDynamicTrueFalseQuestionStatistics;
+  | AdminExamDynamicTrueFalseQuestionStatistics
+  | AdminExamDynamicEssayQuestionStatistics;
 
 export interface AdminExamDynamicQuestionStatistics {
   sections: Array<{

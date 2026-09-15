@@ -253,6 +253,12 @@ export class ExamAttemptResultUnavailableError extends AppError {
   }
 }
 
+export class ManualEssayGradingValidationError extends AppError {
+  constructor(message = "Điểm tự luận không hợp lệ.") {
+    super(message, "INVALID_MANUAL_ESSAY_GRADING", 400);
+  }
+}
+
 export class EssayImageQuestionNotFoundError extends AppError {
   constructor() {
     super(

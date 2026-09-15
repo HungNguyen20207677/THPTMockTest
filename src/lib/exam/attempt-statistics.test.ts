@@ -485,7 +485,7 @@ describe("attempt statistics", () => {
     });
   });
 
-  it("aggregates pending objective grading and omits ESSAY_IMAGE question analytics", () => {
+  it("aggregates pending objective grading without treating ESSAY_IMAGE as graded", () => {
     const submittedAttempt = createPendingDynamicAttempt(1, {
       "choice-question": { isCorrect: true, scoreHundredths: 100 },
       "short-question": { isCorrect: false, scoreHundredths: 0 },
@@ -522,6 +522,11 @@ describe("attempt statistics", () => {
       })),
     ).toEqual([
       {
+        questionId: "essay-question",
+        questionNumber: 1,
+        completedAttemptCount: undefined,
+      },
+      {
         questionId: "choice-question",
         questionNumber: 2,
         completedAttemptCount: 2,
@@ -537,10 +542,15 @@ describe("attempt statistics", () => {
         completedAttemptCount: 2,
       },
     ]);
-    expect(statistics.sections[0].questions[0]).toMatchObject({
-      correctCount: 1,
-      incorrectCount: 1,
-      correctRatePercent: 50,
+    expect(statistics.sections[0].questions[0]).toEqual({
+      sectionId: "pending-section",
+      sectionTitle: "Pending section",
+      questionId: "essay-question",
+      questionNumber: 1,
+      questionType: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+      gradedAttemptCount: 0,
+      averageScoreHundredths: null,
+      averagePerformancePercent: null,
     });
     expect(statistics.sections[0].questions[1]).toMatchObject({
       correctCount: 1,
@@ -548,6 +558,11 @@ describe("attempt statistics", () => {
       correctRatePercent: 50,
     });
     expect(statistics.sections[0].questions[2]).toMatchObject({
+      correctCount: 1,
+      incorrectCount: 1,
+      correctRatePercent: 50,
+    });
+    expect(statistics.sections[0].questions[3]).toMatchObject({
       fullCorrectCount: 1,
       fullCorrectRatePercent: 50,
       averageScoreHundredths: 125,
@@ -558,7 +573,6 @@ describe("attempt statistics", () => {
         d: { correctCount: 1, correctRatePercent: 50 },
       },
     });
-    expect(JSON.stringify(statistics)).not.toContain("essay-question");
   });
 
   it("returns null dynamic rates when there are no completed attempts", () => {

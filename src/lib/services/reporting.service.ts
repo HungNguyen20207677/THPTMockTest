@@ -43,6 +43,7 @@ import {
   type ScoredAttempt,
 } from "@/lib/exam/attempt-statistics";
 import {
+  getCanonicalManualEssayScores,
   hasFinalTotalScore,
   isDynamicAttemptGradingSnapshot,
   scoreHundredthsToPoints,
@@ -513,6 +514,56 @@ export async function getAdminAttemptDetail(
   detail.answerReview = result.answerReview;
   detail.structureSnapshot = result.exam.structureSnapshot;
   detail.dynamicAnswerReview = result.dynamicAnswerReview;
+
+  if (
+    result.exam.structureSnapshot &&
+    isDynamicAttemptGradingSnapshot(preparedAttempt.grading) &&
+    examStructureContainsQuestionType(
+      result.exam.structureSnapshot,
+      EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+    )
+  ) {
+    const manualEssayScores = getCanonicalManualEssayScores(
+      preparedAttempt.grading,
+      result.exam.structureSnapshot,
+    );
+    const objectiveScoreHundredths = Object.values(
+      preparedAttempt.grading.questionsById,
+    ).reduce((total, question) => total + question.scoreHundredths, 0);
+    const objectiveMaxScoreHundredths = result.exam.structureSnapshot.sections
+      .flatMap((section) => section.questions)
+      .filter(
+        (question) =>
+          question.type !== EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+      )
+      .reduce((total, question) => total + question.maxScoreHundredths, 0);
+    const essayMaxScoreHundredths = result.exam.structureSnapshot.sections
+      .flatMap((section) => section.questions)
+      .filter(
+        (question) =>
+          question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+      )
+      .reduce((total, question) => total + question.maxScoreHundredths, 0);
+
+    detail.objectiveScore = {
+      earned: scoreHundredthsToPoints(objectiveScoreHundredths),
+      maximum: scoreHundredthsToPoints(objectiveMaxScoreHundredths),
+    };
+    detail.manualGrading = {
+      revision: preparedAttempt.manualGradingRevision ?? 0,
+      manualEssayScores,
+      essayMaxScoreHundredths,
+      ...(preparedAttempt.gradingStatus ===
+      EXAM_ATTEMPT_GRADING_STATUS.COMPLETED
+        ? {
+            essayScoreHundredths: manualEssayScores.reduce(
+              (total, score) => total + (score.scoreHundredths ?? 0),
+              0,
+            ),
+          }
+        : {}),
+    };
+  }
   return detail;
 }
 

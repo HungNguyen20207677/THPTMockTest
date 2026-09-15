@@ -24,9 +24,12 @@ import type {
   AttemptPartTwoAnswer,
   DynamicAttemptAnswers,
   DynamicAttemptGradingSnapshot,
+  DynamicCompletedAttemptGradingSnapshot,
+  DynamicPendingManualAttemptGradingSnapshot,
   DynamicQuestionGradingResult,
   ExamAttemptAnswers,
   ExamAttemptGradingSnapshot,
+  ManualEssayScore,
 } from "@/types/exam-attempt";
 import type {
   AnyExamAnswerKey,
@@ -173,6 +176,7 @@ export function gradeDynamicAttemptAnswers(
     createDynamicExamAnswerKeySchema(structure).parse(answerKeyInput);
   const sectionScoresHundredths: Record<string, number> = {};
   const questionsById: Record<string, DynamicQuestionGradingResult> = {};
+  const manualEssayScores: ManualEssayScore[] = [];
   let objectiveMaxScoreHundredths = 0;
   let containsEssayImage = false;
 
@@ -182,6 +186,10 @@ export function gradeDynamicAttemptAnswers(
     for (const question of section.questions) {
       if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
         containsEssayImage = true;
+        manualEssayScores.push({
+          questionId: question.id,
+          scoreHundredths: null,
+        });
         continue;
       }
 
@@ -268,6 +276,7 @@ export function gradeDynamicAttemptAnswers(
       objectiveMaxScoreHundredths,
       sectionScoresHundredths,
       questionsById,
+      manualEssayScores,
     };
   }
 
@@ -276,6 +285,169 @@ export function gradeDynamicAttemptAnswers(
     totalScoreHundredths: objectiveScoreHundredths,
     sectionScoresHundredths,
     questionsById,
+  };
+}
+
+export function normalizeManualEssayScores(
+  structure: ExamStructureSnapshot,
+  scores: ManualEssayScore[],
+  requireCompleteScores: boolean,
+): ManualEssayScore[] {
+  const essayQuestions = structure.sections.flatMap((section) =>
+    section.questions.filter(
+      (question) => question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+    ),
+  );
+  const essayQuestionById = new Map(
+    essayQuestions.map((question) => [question.id, question] as const),
+  );
+  const scoreByQuestionId = new Map<string, number | null>();
+
+  for (const score of scores) {
+    const question = essayQuestionById.get(score.questionId);
+
+    if (!question || scoreByQuestionId.has(score.questionId)) {
+      throw new Error("Manual essay scores contain an invalid question ID.");
+    }
+
+    if (
+      score.scoreHundredths !== null &&
+      (!Number.isInteger(score.scoreHundredths) ||
+        score.scoreHundredths < 0 ||
+        score.scoreHundredths > question.maxScoreHundredths)
+    ) {
+      throw new Error("Manual essay score is outside the allowed range.");
+    }
+
+    scoreByQuestionId.set(score.questionId, score.scoreHundredths);
+  }
+
+  if (
+    essayQuestions.length === 0 ||
+    scoreByQuestionId.size !== essayQuestions.length
+  ) {
+    throw new Error("Manual essay scores must include every essay question.");
+  }
+
+  const normalizedScores = essayQuestions.map((question) => ({
+    questionId: question.id,
+    scoreHundredths: scoreByQuestionId.get(question.id) ?? null,
+  }));
+
+  if (
+    requireCompleteScores &&
+    normalizedScores.some((score) => score.scoreHundredths === null)
+  ) {
+    throw new Error(
+      "Manual essay scores must be complete before finalization.",
+    );
+  }
+
+  return normalizedScores;
+}
+
+export function getCanonicalManualEssayScores(
+  grading: DynamicAttemptGradingSnapshot,
+  structure: ExamStructureSnapshot,
+): ManualEssayScore[] {
+  const scores =
+    grading.manualEssayScores ??
+    structure.sections.flatMap((section) =>
+      section.questions
+        .filter(
+          (question) =>
+            question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        )
+        .map((question) => ({
+          questionId: question.id,
+          scoreHundredths: null,
+        })),
+    );
+
+  return normalizeManualEssayScores(
+    structure,
+    scores,
+    hasFinalTotalScore(grading),
+  );
+}
+
+export function applyManualEssayScores(
+  objectiveGrading: DynamicAttemptGradingSnapshot,
+  structure: ExamStructureSnapshot,
+  scores: ManualEssayScore[],
+  finalize: false,
+): DynamicPendingManualAttemptGradingSnapshot;
+export function applyManualEssayScores(
+  objectiveGrading: DynamicAttemptGradingSnapshot,
+  structure: ExamStructureSnapshot,
+  scores: ManualEssayScore[],
+  finalize: true,
+): DynamicCompletedAttemptGradingSnapshot;
+export function applyManualEssayScores(
+  objectiveGrading: DynamicAttemptGradingSnapshot,
+  structure: ExamStructureSnapshot,
+  scores: ManualEssayScore[],
+  finalize: boolean,
+):
+  | DynamicPendingManualAttemptGradingSnapshot
+  | DynamicCompletedAttemptGradingSnapshot {
+  if (
+    hasFinalTotalScore(objectiveGrading) ||
+    !("objectiveScoreHundredths" in objectiveGrading)
+  ) {
+    throw new Error("Manual essay grading requires objective grading data.");
+  }
+
+  const manualEssayScores = normalizeManualEssayScores(
+    structure,
+    scores,
+    finalize,
+  );
+
+  if (!finalize) {
+    return { ...objectiveGrading, manualEssayScores };
+  }
+
+  const sectionScoresHundredths = {
+    ...objectiveGrading.sectionScoresHundredths,
+  };
+  let essayScoreHundredths = 0;
+
+  for (const section of structure.sections) {
+    for (const question of section.questions) {
+      if (question.type !== EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
+        continue;
+      }
+
+      const score = manualEssayScores.find(
+        (manualScore) => manualScore.questionId === question.id,
+      )?.scoreHundredths;
+
+      if (score === null || score === undefined) {
+        throw new Error(
+          "Manual essay scores must be complete before finalization.",
+        );
+      }
+
+      sectionScoresHundredths[section.id] =
+        (sectionScoresHundredths[section.id] ?? 0) + score;
+      essayScoreHundredths += score;
+    }
+  }
+
+  const totalScoreHundredths =
+    objectiveGrading.objectiveScoreHundredths + essayScoreHundredths;
+
+  if (totalScoreHundredths > EXAM_SCORING_HUNDREDTHS.totalMaximum) {
+    throw new Error("Final score exceeds the Exam maximum.");
+  }
+
+  return {
+    answerKeyRevision: objectiveGrading.answerKeyRevision,
+    totalScoreHundredths,
+    sectionScoresHundredths,
+    questionsById: objectiveGrading.questionsById,
+    manualEssayScores,
   };
 }
 
@@ -321,4 +493,53 @@ export function gradeExamAttemptAnswers(
   }
 
   return gradeAttemptAnswers(answers, answerKey, answerKeyRevision);
+}
+
+export function regradeExamAttemptAnswersPreservingManualScores(
+  answers: ExamAttemptAnswers,
+  answerKey: AnyExamAnswerKey,
+  answerKeyRevision: number,
+  structure: ExamStructureSnapshot | undefined,
+  previousGrading: ExamAttemptGradingSnapshot | undefined,
+  preserveCompletedManualGrading: boolean,
+): ExamAttemptGradingSnapshot {
+  const objectiveGrading = gradeExamAttemptAnswers(
+    answers,
+    answerKey,
+    answerKeyRevision,
+    structure,
+  );
+
+  if (
+    !structure ||
+    !isDynamicAttemptGradingSnapshot(objectiveGrading) ||
+    !("objectiveScoreHundredths" in objectiveGrading)
+  ) {
+    return objectiveGrading;
+  }
+
+  const previousManualEssayScores =
+    previousGrading && isDynamicAttemptGradingSnapshot(previousGrading)
+      ? previousGrading.manualEssayScores
+      : undefined;
+  const manualEssayScores =
+    previousManualEssayScores ?? objectiveGrading.manualEssayScores;
+
+  if (!manualEssayScores) {
+    return objectiveGrading;
+  }
+
+  return preserveCompletedManualGrading
+    ? applyManualEssayScores(
+        objectiveGrading,
+        structure,
+        manualEssayScores,
+        true,
+      )
+    : applyManualEssayScores(
+        objectiveGrading,
+        structure,
+        manualEssayScores,
+        false,
+      );
 }

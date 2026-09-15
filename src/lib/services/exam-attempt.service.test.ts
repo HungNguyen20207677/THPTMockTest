@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   listAllExamAttemptRecordsForStudent: vi.fn(),
   removeEssayImageFromOwnedActiveExamAttempt: vi.fn(),
   saveOwnedActiveExamAttemptAnswers: vi.fn(),
+  setTerminalManualEssayGrading: vi.fn(),
   setOwnedTerminalExamAttemptGradingForRevision: vi.fn(),
   submitOwnedActiveExamAttempt: vi.fn(),
   findExamGradingRecordById: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   removeEssayImageFromOwnedActiveExamAttempt:
     mocks.removeEssayImageFromOwnedActiveExamAttempt,
   saveOwnedActiveExamAttemptAnswers: mocks.saveOwnedActiveExamAttemptAnswers,
+  setTerminalManualEssayGrading: mocks.setTerminalManualEssayGrading,
   setOwnedTerminalExamAttemptGradingForRevision:
     mocks.setOwnedTerminalExamAttemptGradingForRevision,
   submitOwnedActiveExamAttempt: mocks.submitOwnedActiveExamAttempt,
@@ -97,6 +99,7 @@ import type {
 } from "@/lib/db/dao/exam.dao";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import {
+  applyManualEssayScores,
   gradeAttemptAnswers,
   gradeDynamicAttemptAnswers,
 } from "@/lib/exam/grading";
@@ -111,11 +114,13 @@ import {
   saveExamAttemptAnswers,
   startOrResumeExamAttempt,
   submitExamAttempt,
+  updateManualEssayGrading,
 } from "@/lib/services/exam-attempt.service";
 import type { AppUser } from "@/types/user";
 import type { DynamicExamAnswerKey, ExamAnswerKey } from "@/types/exam";
 import type {
   DynamicAttemptAnswers,
+  DynamicAttemptGradingSnapshot,
   EssayImage,
   EssayImageUploadReference,
   EssayImageUploadTicket,
@@ -128,6 +133,12 @@ const student: AppUser = {
   username: "student",
   fullName: "Hoc Sinh",
   role: USER_ROLE.STUDENT,
+};
+const admin: AppUser = {
+  id: "admin-id",
+  username: "admin",
+  fullName: "Quan Tri",
+  role: USER_ROLE.ADMIN,
 };
 
 function createStudentExam(
@@ -377,6 +388,35 @@ function createEssayAttempt(
     },
   };
   return createAttempt({ answers, ...overrides });
+}
+
+function createTerminalEssayAttempt(
+  status:
+    | typeof EXAM_ATTEMPT_STATUS.SUBMITTED
+    | typeof EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED = EXAM_ATTEMPT_STATUS.SUBMITTED,
+): ExamAttemptPersistenceRecord {
+  const answers: DynamicAttemptAnswers = {
+    answersByQuestionId: {
+      "essay-question": {
+        type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        images: [verifiedEssayImage],
+      },
+      "essay-choice": "A",
+    },
+  };
+
+  return createEssayAttempt([verifiedEssayImage], {
+    status,
+    submittedAt: serverNow,
+    answers,
+    gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+    grading: gradeDynamicAttemptAnswers(
+      answers,
+      { answersByQuestionId: { "essay-choice": "A" } },
+      essayStructure,
+    ),
+    manualGradingRevision: 0,
+  });
 }
 
 function mockAttemptCreation(): void {
@@ -1499,6 +1539,70 @@ describe("ExamAttempt service", () => {
     },
   );
 
+  it.each([
+    { showScore: true, showAnswers: true },
+    { showScore: true, showAnswers: false },
+    { showScore: false, showAnswers: true },
+    { showScore: false, showAnswers: false },
+  ])(
+    "applies final ESSAY_IMAGE score=$showScore and answers=$showAnswers visibility",
+    async ({ showScore, showAnswers }) => {
+      const gradingExam = createEssayGradingExam({
+        settings: {
+          showScoreAfterSubmission: showScore,
+          showAnswersAfterSubmission: showAnswers,
+        },
+      });
+      const terminalAttempt = createTerminalEssayAttempt();
+      terminalAttempt.grading = applyManualEssayScores(
+        terminalAttempt.grading as ReturnType<
+          typeof gradeDynamicAttemptAnswers
+        >,
+        essayStructure,
+        [{ questionId: "essay-question", scoreHundredths: 425 }],
+        true,
+      );
+      terminalAttempt.gradingStatus = EXAM_ATTEMPT_GRADING_STATUS.COMPLETED;
+      mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
+      mocks.findExamGradingRecordById.mockResolvedValue(gradingExam);
+
+      const result = await getStudentExamAttemptResult(
+        student,
+        "exam-id",
+        terminalAttempt.id,
+      );
+
+      expect(result.gradingStatus).toBe(EXAM_ATTEMPT_GRADING_STATUS.COMPLETED);
+      if (showScore) {
+        expect(result.score).toEqual({
+          total: 9.25,
+          sectionsById: { "essay-section": 9.25 },
+        });
+        expect(result.essayScores).toEqual([
+          { questionId: "essay-question", score: 4.25, maximum: 5 },
+        ]);
+      } else {
+        expect(result).not.toHaveProperty("score");
+        expect(result).not.toHaveProperty("essayScores");
+      }
+
+      if (showAnswers) {
+        expect(
+          result.dynamicAnswerReview?.questionsById["essay-question"],
+        ).toEqual({
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          studentAnswer: {
+            type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+            images: [verifiedEssayImage],
+          },
+          ...(showScore ? { score: 4.25 } : {}),
+        });
+      } else {
+        expect(result).not.toHaveProperty("dynamicAnswerReview");
+      }
+    },
+  );
+
   it("persists essay image removal before Cloudinary cleanup", async () => {
     const activeAttempt = createEssayAttempt([verifiedEssayImage]);
     const savedAttempt = createEssayAttempt([], {
@@ -2596,5 +2700,289 @@ describe("ExamAttempt service", () => {
         activeAttemptId: activeAttempt.id,
       }),
     ]);
+  });
+
+  describe("manual ESSAY_IMAGE grading", () => {
+    function arrangeManualGrading(
+      attempt = createTerminalEssayAttempt(),
+      exam = createEssayGradingExam(),
+    ) {
+      mocks.findExamAttemptRecordById.mockResolvedValue(attempt);
+      mocks.reserveExamForAttemptGrading.mockResolvedValue(exam);
+      mocks.setTerminalManualEssayGrading.mockImplementation(
+        async (input: {
+          grading: ExamAttemptPersistenceRecord["grading"];
+          gradingStatus: ExamAttemptPersistenceRecord["gradingStatus"];
+        }) => ({
+          ...attempt,
+          grading: input.grading,
+          gradingStatus: input.gradingStatus,
+          manualGradingRevision: (attempt.manualGradingRevision ?? 0) + 1,
+        }),
+      );
+      return attempt;
+    }
+
+    it("saves a partial draft without creating a final total", async () => {
+      const multiEssayStructure: ExamStructureSnapshot = {
+        sections: [
+          {
+            id: "essay-section",
+            title: "Essay section",
+            questions: [
+              {
+                id: "essay-one",
+                type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+                maxScoreHundredths: 250,
+              },
+              {
+                id: "essay-two",
+                type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+                maxScoreHundredths: 250,
+              },
+              {
+                id: "essay-choice",
+                type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+                maxScoreHundredths: 500,
+              },
+            ],
+          },
+        ],
+      };
+      const answers: DynamicAttemptAnswers = {
+        answersByQuestionId: {
+          "essay-one": { type: "ESSAY_IMAGE", images: [] },
+          "essay-two": { type: "ESSAY_IMAGE", images: [] },
+          "essay-choice": "A",
+        },
+      };
+      const exam = createEssayGradingExam({
+        structureSnapshot: multiEssayStructure,
+      });
+      const attempt = createTerminalEssayAttempt();
+      attempt.answers = answers;
+      attempt.grading = gradeDynamicAttemptAnswers(
+        answers,
+        exam.answerKey as DynamicExamAnswerKey,
+        multiEssayStructure,
+      );
+      arrangeManualGrading(attempt, exam);
+
+      const result = await updateManualEssayGrading(admin, attempt.id, {
+        action: "SAVE_DRAFT",
+        expectedRevision: 0,
+        manualEssayScores: [
+          { questionId: "essay-two", scoreHundredths: null },
+          { questionId: "essay-one", scoreHundredths: 125 },
+        ],
+      });
+
+      expect(result.gradingStatus).toBe(
+        EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+      );
+      expect(result.grading).toMatchObject({
+        objectiveScoreHundredths: 500,
+        manualEssayScores: [
+          { questionId: "essay-one", scoreHundredths: 125 },
+          { questionId: "essay-two", scoreHundredths: null },
+        ],
+      });
+      expect(result.grading).not.toHaveProperty("totalScoreHundredths");
+    });
+
+    it.each([
+      ["negative", [{ questionId: "essay-question", scoreHundredths: -1 }]],
+      [
+        "above maximum",
+        [{ questionId: "essay-question", scoreHundredths: 501 }],
+      ],
+      ["non-essay", [{ questionId: "essay-choice", scoreHundredths: 0 }]],
+      [
+        "duplicate",
+        [
+          { questionId: "essay-question", scoreHundredths: 100 },
+          { questionId: "essay-question", scoreHundredths: 200 },
+        ],
+      ],
+    ])("rejects a %s manual score", async (_label, manualEssayScores) => {
+      const attempt = arrangeManualGrading();
+
+      await expect(
+        updateManualEssayGrading(admin, attempt.id, {
+          action: "SAVE_DRAFT",
+          expectedRevision: 0,
+          manualEssayScores,
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_MANUAL_ESSAY_GRADING" });
+      expect(mocks.setTerminalManualEssayGrading).not.toHaveBeenCalled();
+    });
+
+    it("does not finalize while an essay score is missing", async () => {
+      const attempt = arrangeManualGrading();
+
+      await expect(
+        updateManualEssayGrading(admin, attempt.id, {
+          action: "FINALIZE",
+          expectedRevision: 0,
+          manualEssayScores: [
+            { questionId: "essay-question", scoreHundredths: null },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_MANUAL_ESSAY_GRADING" });
+    });
+
+    it.each([
+      EXAM_ATTEMPT_STATUS.SUBMITTED,
+      EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+    ])(
+      "finalizes a %s attempt from server-calculated scores",
+      async (status) => {
+        const attempt = arrangeManualGrading(
+          createTerminalEssayAttempt(status),
+        );
+        const originalAnswers = structuredClone(attempt.answers);
+        const originalAttemptFields = {
+          answerRevision: attempt.answerRevision,
+          startedAt: attempt.startedAt,
+          expiresAt: attempt.expiresAt,
+          submittedAt: attempt.submittedAt,
+          lastSavedAt: attempt.lastSavedAt,
+          createdAt: attempt.createdAt,
+          updatedAt: attempt.updatedAt,
+        };
+
+        const result = await updateManualEssayGrading(admin, attempt.id, {
+          action: "FINALIZE",
+          expectedRevision: 0,
+          manualEssayScores: [
+            { questionId: "essay-question", scoreHundredths: 425 },
+          ],
+        });
+
+        expect(result.status).toBe(status);
+        expect(result.gradingStatus).toBe(
+          EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+        );
+        expect(result.grading).toMatchObject({
+          totalScoreHundredths: 925,
+          sectionScoresHundredths: { "essay-section": 925 },
+          manualEssayScores: [
+            { questionId: "essay-question", scoreHundredths: 425 },
+          ],
+        });
+        expect(result.answers).toEqual(originalAnswers);
+        expect({
+          answerRevision: result.answerRevision,
+          startedAt: result.startedAt,
+          expiresAt: result.expiresAt,
+          submittedAt: result.submittedAt,
+          lastSavedAt: result.lastSavedAt,
+          createdAt: result.createdAt,
+          updatedAt: result.updatedAt,
+        }).toEqual(originalAttemptFields);
+        expect(
+          mocks.setTerminalManualEssayGrading.mock.calls[0][0],
+        ).not.toHaveProperty("answers");
+      },
+    );
+
+    it("corrects a completed essay score and keeps the attempt completed", async () => {
+      const attempt = createTerminalEssayAttempt();
+      attempt.grading = applyManualEssayScores(
+        attempt.grading as ReturnType<typeof gradeDynamicAttemptAnswers>,
+        essayStructure,
+        [{ questionId: "essay-question", scoreHundredths: 300 }],
+        true,
+      );
+      attempt.gradingStatus = EXAM_ATTEMPT_GRADING_STATUS.COMPLETED;
+      attempt.manualGradingRevision = 3;
+      const originalAnswers = structuredClone(attempt.answers);
+      const originalGrading = structuredClone(
+        attempt.grading,
+      ) as DynamicAttemptGradingSnapshot;
+      const originalAttemptFields = {
+        answerRevision: attempt.answerRevision,
+        startedAt: attempt.startedAt,
+        expiresAt: attempt.expiresAt,
+        submittedAt: attempt.submittedAt,
+        lastSavedAt: attempt.lastSavedAt,
+        createdAt: attempt.createdAt,
+        updatedAt: attempt.updatedAt,
+      };
+      arrangeManualGrading(attempt);
+
+      const result = await updateManualEssayGrading(admin, attempt.id, {
+        action: "CORRECT",
+        expectedRevision: 3,
+        manualEssayScores: [
+          { questionId: "essay-question", scoreHundredths: 450 },
+        ],
+        confirmCorrection: true,
+      });
+
+      expect(result.gradingStatus).toBe(EXAM_ATTEMPT_GRADING_STATUS.COMPLETED);
+      expect(result.grading).toMatchObject({
+        answerKeyRevision: originalGrading?.answerKeyRevision,
+        questionsById: originalGrading?.questionsById,
+        totalScoreHundredths: 950,
+      });
+      expect(result.answers).toEqual(originalAnswers);
+      expect({
+        answerRevision: result.answerRevision,
+        startedAt: result.startedAt,
+        expiresAt: result.expiresAt,
+        submittedAt: result.submittedAt,
+        lastSavedAt: result.lastSavedAt,
+        createdAt: result.createdAt,
+        updatedAt: result.updatedAt,
+      }).toEqual(originalAttemptFields);
+      expect(mocks.setTerminalManualEssayGrading).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedRevision: 3,
+          expectedGradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+          gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+        }),
+        mocks.transactionSession,
+      );
+    });
+
+    it("rejects a stale grading revision", async () => {
+      const attempt = arrangeManualGrading();
+      mocks.setTerminalManualEssayGrading.mockResolvedValue(null);
+
+      await expect(
+        updateManualEssayGrading(admin, attempt.id, {
+          action: "SAVE_DRAFT",
+          expectedRevision: 0,
+          manualEssayScores: [
+            { questionId: "essay-question", scoreHundredths: 100 },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_STATE_CONFLICT" });
+    });
+
+    it("rejects active attempts and STUDENT callers", async () => {
+      const activeAttempt = createEssayAttempt();
+      mocks.findExamAttemptRecordById.mockResolvedValue(activeAttempt);
+
+      await expect(
+        updateManualEssayGrading(admin, activeAttempt.id, {
+          action: "SAVE_DRAFT",
+          expectedRevision: 0,
+          manualEssayScores: [
+            { questionId: "essay-question", scoreHundredths: 0 },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_STATE_CONFLICT" });
+      await expect(
+        updateManualEssayGrading(student, activeAttempt.id, {
+          action: "SAVE_DRAFT",
+          expectedRevision: 0,
+          manualEssayScores: [
+            { questionId: "essay-question", scoreHundredths: 0 },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
   });
 });

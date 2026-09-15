@@ -331,6 +331,30 @@ function createPendingEssayGrading(): DynamicAttemptGradingSnapshot {
   };
 }
 
+function createCompletedEssayGrading(
+  essayScoreHundredths: number,
+): DynamicAttemptGradingSnapshot {
+  return {
+    answerKeyRevision: 1,
+    totalScoreHundredths: 200 + essayScoreHundredths,
+    sectionScoresHundredths: {
+      "essay-section": 200 + essayScoreHundredths,
+    },
+    questionsById: {
+      "essay-choice": { isCorrect: true, scoreHundredths: 100 },
+      "essay-true-false": {
+        correctStatementCount: 3,
+        scoreHundredths: 100,
+        statements: { a: true, b: true, c: true, d: false },
+      },
+      "essay-short": { isCorrect: false, scoreHundredths: 0 },
+    },
+    manualEssayScores: [
+      { questionId: "essay-question", scoreHundredths: essayScoreHundredths },
+    ],
+  };
+}
+
 function createStudent(
   overrides: Partial<UserAccountRecord> = {},
 ): UserAccountRecord {
@@ -993,6 +1017,11 @@ describe("reporting service", () => {
         ),
       ).toEqual([
         {
+          questionId: "essay-question",
+          questionNumber: 1,
+          completedAttemptCount: undefined,
+        },
+        {
           questionId: "essay-choice",
           questionNumber: 2,
           completedAttemptCount: 1,
@@ -1008,6 +1037,18 @@ describe("reporting service", () => {
           completedAttemptCount: 1,
         },
       ]);
+      expect(
+        report.dynamicQuestionStatistics?.sections[0].questions[0],
+      ).toEqual({
+        sectionId: "essay-section",
+        sectionTitle: "Essay section",
+        questionId: "essay-question",
+        questionNumber: 1,
+        questionType: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        gradedAttemptCount: 0,
+        averageScoreHundredths: null,
+        averagePerformancePercent: null,
+      });
       expect(report.topicStatistics).toEqual([
         {
           topicId: "objective-topic",
@@ -1031,9 +1072,149 @@ describe("reporting service", () => {
           averagePerformancePercent: null,
         },
       ]);
-      expect(JSON.stringify(report.dynamicQuestionStatistics)).not.toContain(
-        "essay-question",
+    });
+
+    it("updates finalized essay reporting while excluding pending draft scores", async () => {
+      const exam = createEssayReportingExam();
+      const pendingAttempt = createAttempt({
+        id: "pending-essay-attempt",
+        attemptNumber: 3,
+        submittedAt: new Date("2026-08-11T02:30:00.000Z"),
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+        grading: {
+          ...createPendingEssayGrading(),
+          manualEssayScores: [
+            { questionId: "essay-question", scoreHundredths: 350 },
+          ],
+        },
+      });
+      const firstCompletedAttempt = createAttempt({
+        id: "first-completed-essay-attempt",
+        attemptNumber: 1,
+        submittedAt: new Date("2026-08-11T01:30:00.000Z"),
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+        grading: createCompletedEssayGrading(100),
+      });
+      const correctedAttempt = createAttempt({
+        id: "corrected-essay-attempt",
+        attemptNumber: 2,
+        submittedAt: new Date("2026-08-11T02:00:00.000Z"),
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+        grading: createCompletedEssayGrading(200),
+        manualGradingRevision: 1,
+      });
+      const attempts = [
+        pendingAttempt,
+        firstCompletedAttempt,
+        correctedAttempt,
+      ];
+      mocks.findExamReportingRecordById.mockResolvedValue(exam);
+      mocks.listTerminalExamAttemptRecords.mockResolvedValue(attempts);
+      mocks.findExamReportingRecordsByIds.mockResolvedValue([exam]);
+
+      const reportBeforeCorrection = await getAdminExamResults(admin, exam.id);
+      const studentBeforeCorrection = await getAdminStudentDetail(
+        admin,
+        studentActor.id,
       );
+
+      expect(reportBeforeCorrection.statistics).toEqual({
+        average: 3.5,
+        highest: 4,
+        lowest: 3,
+      });
+      expect(reportBeforeCorrection.students[0].statistics).toMatchObject({
+        completedAttemptCount: 3,
+        average: 3.5,
+        first: 3,
+        latest: 4,
+        best: 4,
+        improvement: 1,
+      });
+      expect(
+        reportBeforeCorrection.dynamicQuestionStatistics?.sections[0].questions.find(
+          (question) => question.questionId === "essay-question",
+        ),
+      ).toMatchObject({
+        gradedAttemptCount: 2,
+        averageScoreHundredths: 150,
+        averagePerformancePercent: 37.5,
+      });
+      expect(
+        reportBeforeCorrection.topicStatistics.find(
+          (topic) => topic.topicId === "essay-only-topic",
+        ),
+      ).toMatchObject({
+        observationCount: 2,
+        averagePerformancePercent: 37.5,
+      });
+      expect(studentBeforeCorrection.statistics).toEqual({
+        completedAttemptCount: 3,
+        average: 3.5,
+        best: 4,
+        latest: 4,
+      });
+      expect(
+        studentBeforeCorrection.topicStatistics.find(
+          (topic) => topic.topicId === "essay-only-topic",
+        ),
+      ).toMatchObject({
+        observationCount: 2,
+        averagePerformancePercent: 37.5,
+      });
+
+      correctedAttempt.grading = createCompletedEssayGrading(400);
+      correctedAttempt.manualGradingRevision = 2;
+
+      const reportAfterCorrection = await getAdminExamResults(admin, exam.id);
+      const studentAfterCorrection = await getAdminStudentDetail(
+        admin,
+        studentActor.id,
+      );
+
+      expect(reportAfterCorrection.statistics).toEqual({
+        average: 4.5,
+        highest: 6,
+        lowest: 3,
+      });
+      expect(reportAfterCorrection.students[0].statistics).toMatchObject({
+        average: 4.5,
+        first: 3,
+        latest: 6,
+        best: 6,
+        improvement: 3,
+      });
+      expect(
+        reportAfterCorrection.dynamicQuestionStatistics?.sections[0].questions.find(
+          (question) => question.questionId === "essay-question",
+        ),
+      ).toMatchObject({
+        gradedAttemptCount: 2,
+        averageScoreHundredths: 250,
+        averagePerformancePercent: 62.5,
+      });
+      expect(
+        reportAfterCorrection.topicStatistics.find(
+          (topic) => topic.topicId === "essay-only-topic",
+        ),
+      ).toMatchObject({
+        observationCount: 2,
+        averagePerformancePercent: 62.5,
+      });
+      expect(studentAfterCorrection.statistics).toEqual({
+        completedAttemptCount: 3,
+        average: 4.5,
+        best: 6,
+        latest: 6,
+      });
+      expect(
+        studentAfterCorrection.topicStatistics.find(
+          (topic) => topic.topicId === "essay-only-topic",
+        ),
+      ).toMatchObject({
+        observationCount: 2,
+        averagePerformancePercent: 62.5,
+      });
     });
 
     it("merges pending objective and legacy Student Topics without adding an essay observation", async () => {
@@ -1569,6 +1750,68 @@ describe("reporting service", () => {
     });
     expect(detail.score).toBeUndefined();
     expect(JSON.stringify(detail)).not.toContain('"score":');
+  });
+
+  it("reads draft essay scores back in canonical order with ungraded scores null", async () => {
+    const structure = structuredClone(essayReportingStructure);
+    structure.sections[0].questions[0].maxScoreHundredths = 200;
+    structure.sections[0].questions.splice(1, 0, {
+      id: "essay-question-two",
+      type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+      maxScoreHundredths: 200,
+    });
+    const exam = createEssayReportingExam({
+      structureSnapshot: structure,
+      questionTopics: [
+        ...(createEssayReportingExam().questionTopics ?? []),
+        { questionId: "essay-question-two", topicIds: [] },
+      ],
+    });
+    const attempt = createAttempt({
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+      grading: {
+        ...createPendingEssayGrading(),
+        manualEssayScores: [
+          { questionId: "essay-question-two", scoreHundredths: null },
+          { questionId: "essay-question", scoreHundredths: 125 },
+        ],
+      },
+      manualGradingRevision: 4,
+    });
+    mocks.findExamAttemptRecordById.mockResolvedValue(attempt);
+    mocks.findExamReportingRecordById.mockResolvedValue(exam);
+    mocks.buildExamAttemptResult.mockReturnValue({
+      exam: {
+        id: exam.id,
+        title: exam.title,
+        structureSnapshot: structure,
+      },
+      attempt: {
+        id: attempt.id,
+        attemptNumber: attempt.attemptNumber,
+        status: attempt.status,
+        startedAt: attempt.startedAt.toISOString(),
+        expiresAt: attempt.expiresAt.toISOString(),
+        submittedAt: attempt.submittedAt?.toISOString() ?? "",
+        timeUsedSeconds: 3600,
+      },
+      visibility: { score: true, answers: true },
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+      objectiveScore: { earned: 2, maximum: 6 },
+      dynamicAnswerReview: { questionsById: {} },
+    });
+
+    const detail = await getAdminAttemptDetail(admin, attempt.id);
+
+    expect(detail.manualGrading).toEqual({
+      revision: 4,
+      manualEssayScores: [
+        { questionId: "essay-question", scoreHundredths: 125 },
+        { questionId: "essay-question-two", scoreHundredths: null },
+      ],
+      essayMaxScoreHundredths: 400,
+    });
+    expect(detail.score).toBeUndefined();
   });
 
   it("honors current score visibility in a student's hidden-Exam history", async () => {

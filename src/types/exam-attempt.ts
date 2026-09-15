@@ -131,6 +131,11 @@ export interface DynamicTrueFalseQuestionResult {
   statements: PartTwoAnswer;
 }
 
+export interface ManualEssayScore {
+  questionId: string;
+  scoreHundredths: number | null;
+}
+
 export type DynamicQuestionGradingResult =
   DynamicQuestionCorrectnessResult | DynamicTrueFalseQuestionResult;
 
@@ -138,6 +143,7 @@ interface DynamicAttemptGradingSnapshotBase {
   answerKeyRevision: number;
   sectionScoresHundredths: Record<string, number>;
   questionsById: Record<string, DynamicQuestionGradingResult>;
+  manualEssayScores?: ManualEssayScore[];
 }
 
 export interface DynamicCompletedAttemptGradingSnapshot extends DynamicAttemptGradingSnapshotBase {
@@ -248,6 +254,11 @@ export interface StudentExamAttemptResult {
     };
     sectionsById?: Record<string, number>;
   };
+  essayScores?: Array<{
+    questionId: string;
+    score: number;
+    maximum: number;
+  }>;
   answerReview?: {
     partOne: Array<{
       studentAnswer: PartOneAnswer | null;
@@ -310,6 +321,7 @@ export interface DynamicShortAnswerReview {
 export interface DynamicEssayImageAnswerReview {
   type: "ESSAY_IMAGE";
   studentAnswer: EssayImageAnswer;
+  score?: number;
 }
 
 export type DynamicQuestionAnswerReview =

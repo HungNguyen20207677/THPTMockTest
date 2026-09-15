@@ -30,6 +30,7 @@ export interface ExamAttemptRecord {
   answers: ExamAttemptAnswers;
   answerRevision: number;
   grading?: ExamAttemptGradingSnapshot;
+  manualGradingRevision?: number;
   gradedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -78,6 +79,7 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
         message: "Attempt grading is malformed.",
       },
     },
+    manualGradingRevision: { type: Number, min: 0 },
     gradedAt: { type: Date },
   },
   {

@@ -9,6 +9,7 @@ import type {
   AttemptGradingSnapshot,
   DynamicAttemptGradingSnapshot,
   ExamAttemptGradingSnapshot,
+  ManualEssayScore,
 } from "@/types/exam-attempt";
 
 const scoreHundredthsSchema = z
@@ -136,6 +137,10 @@ const dynamicTrueFalseSchema = z.strictObject({
   scoreHundredths: scoreHundredthsSchema,
   statements: statementCorrectnessSchema,
 });
+const manualEssayScoreSchema: z.ZodType<ManualEssayScore> = z.strictObject({
+  questionId: z.string().min(1),
+  scoreHundredths: scoreHundredthsSchema.nullable(),
+});
 
 const dynamicGradingBaseShape = {
   answerKeyRevision: z.number().int().min(INITIAL_ANSWER_KEY_REVISION),
@@ -144,15 +149,18 @@ const dynamicGradingBaseShape = {
     z.string(),
     z.union([dynamicCorrectnessSchema, dynamicTrueFalseSchema]),
   ),
+  manualEssayScores: z.array(manualEssayScoreSchema).optional(),
 };
 
 function addDynamicScoreConsistencyIssue(
   grading: {
     sectionScoresHundredths: Record<string, number>;
     questionsById: Record<string, { scoreHundredths: number }>;
+    manualEssayScores?: ManualEssayScore[];
   },
   expectedScore: number,
   context: z.RefinementCtx,
+  includeManualEssayScores = false,
 ): void {
   const sectionTotal = Object.values(grading.sectionScoresHundredths).reduce(
     (total, score) => total + score,
@@ -162,8 +170,26 @@ function addDynamicScoreConsistencyIssue(
     (total, result) => total + result.scoreHundredths,
     0,
   );
+  const manualEssayScores = grading.manualEssayScores;
+  const manualEssayTotal = manualEssayScores?.reduce(
+    (total, result) => total + (result.scoreHundredths ?? 0),
+    0,
+  );
+  const questionIds = manualEssayScores?.map((score) => score.questionId) ?? [];
 
-  if (sectionTotal !== expectedScore || questionTotal !== expectedScore) {
+  if (new Set(questionIds).size !== questionIds.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["manualEssayScores"],
+      message: "Mỗi câu tự luận chỉ được xuất hiện một lần.",
+    });
+  }
+
+  if (
+    sectionTotal !== expectedScore ||
+    questionTotal + (includeManualEssayScores ? (manualEssayTotal ?? 0) : 0) !==
+      expectedScore
+  ) {
     context.addIssue({
       code: "custom",
       message: "Tổng điểm động không khớp với kết quả từng câu và từng phần.",
@@ -181,7 +207,18 @@ const dynamicCompletedGradingSchema = z
       grading,
       grading.totalScoreHundredths,
       context,
+      true,
     );
+
+    if (
+      grading.manualEssayScores?.some((score) => score.scoreHundredths === null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["manualEssayScores"],
+        message: "Điểm tự luận phải đầy đủ khi hoàn tất chấm.",
+      });
+    }
   });
 
 const dynamicPendingManualGradingSchema = z
@@ -213,3 +250,30 @@ export const dynamicAttemptGradingSnapshotSchema: z.ZodType<DynamicAttemptGradin
 
 export const examAttemptGradingSnapshotSchema: z.ZodType<ExamAttemptGradingSnapshot> =
   z.union([attemptGradingSnapshotSchema, dynamicAttemptGradingSnapshotSchema]);
+
+export const manualEssayGradingActionSchema = z.enum([
+  "SAVE_DRAFT",
+  "FINALIZE",
+  "CORRECT",
+]);
+
+export const manualEssayGradingRequestSchema = z
+  .strictObject({
+    action: manualEssayGradingActionSchema,
+    expectedRevision: z.number().int().min(0),
+    manualEssayScores: z.array(manualEssayScoreSchema),
+    confirmCorrection: z.literal(true).optional(),
+  })
+  .superRefine((input, context) => {
+    if (input.action === "CORRECT" && input.confirmCorrection !== true) {
+      context.addIssue({
+        code: "custom",
+        path: ["confirmCorrection"],
+        message: "Cần xác nhận trước khi sửa điểm tự luận.",
+      });
+    }
+  });
+
+export type ManualEssayGradingRequest = z.infer<
+  typeof manualEssayGradingRequestSchema
+>;

@@ -59,7 +59,13 @@ function CorrectnessBadge({ isCorrect }: { isCorrect: boolean }) {
   );
 }
 
-function DynamicAnswerReview({ result }: { result: StudentExamAttemptResult }) {
+function DynamicAnswerReview({
+  result,
+  hideEssayImages,
+}: {
+  result: StudentExamAttemptResult;
+  hideEssayImages: boolean;
+}) {
   const review = result.dynamicAnswerReview;
   const structure = result.exam.structureSnapshot;
 
@@ -90,15 +96,28 @@ function DynamicAnswerReview({ result }: { result: StudentExamAttemptResult }) {
               }
 
               if (item.type === "ESSAY_IMAGE") {
+                if (hideEssayImages) {
+                  return null;
+                }
+
                 return (
                   <div
                     key={question.id}
                     className="border-border rounded-lg border p-4 lg:col-span-2"
                   >
                     <p className="font-semibold">Câu {questionIndex + 1}</p>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      Bài tự luận chưa được chấm.
-                    </p>
+                    {item.score === undefined ? (
+                      <p className="text-muted-foreground mt-1 text-sm">
+                        Bài tự luận chưa được chấm.
+                      </p>
+                    ) : (
+                      <p className="text-primary mt-1 font-medium tabular-nums">
+                        Điểm: {scoreFormatter.format(item.score)} /{" "}
+                        {scoreFormatter.format(
+                          question.maxScoreHundredths / 100,
+                        )}
+                      </p>
+                    )}
                     {item.studentAnswer.images.length > 0 ? (
                       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         {item.studentAnswer.images.map((image, imageIndex) => (
@@ -292,13 +311,44 @@ export function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
           </div>
         ))}
       </div>
+      {result.essayScores && result.essayScores.length > 0 && (
+        <div className="border-border bg-background rounded-lg border p-4">
+          <p className="font-semibold">Điểm tự luận</p>
+          <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {result.essayScores.map((item) => (
+              <p key={item.questionId} className="tabular-nums">
+                {(() => {
+                  const identity = result.exam.structureSnapshot?.sections
+                    .flatMap((section) =>
+                      section.questions.map((question, questionIndex) => ({
+                        question,
+                        questionIndex,
+                      })),
+                    )
+                    .find(({ question }) => question.id === item.questionId);
+
+                  return `Câu ${(identity?.questionIndex ?? 0) + 1}: ${scoreFormatter.format(item.score)} / ${scoreFormatter.format(item.maximum)}`;
+                })()}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
-export function AnswerReview({ result }: { result: StudentExamAttemptResult }) {
+export function AnswerReview({
+  result,
+  hideEssayImages = false,
+}: {
+  result: StudentExamAttemptResult;
+  hideEssayImages?: boolean;
+}) {
   if (result.dynamicAnswerReview && result.exam.structureSnapshot) {
-    return <DynamicAnswerReview result={result} />;
+    return (
+      <DynamicAnswerReview result={result} hideEssayImages={hideEssayImages} />
+    );
   }
 
   const review = result.answerReview;

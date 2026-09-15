@@ -20,6 +20,7 @@ import {
   listAllExamAttemptRecordsForStudent,
   removeEssayImageFromOwnedActiveExamAttempt,
   saveOwnedActiveExamAttemptAnswers,
+  setTerminalManualEssayGrading,
   setOwnedTerminalExamAttemptGradingForRevision,
   submitOwnedActiveExamAttempt,
   type ExamAttemptPersistenceRecord,
@@ -50,9 +51,12 @@ import { withMongoTransaction } from "@/lib/db/mongoose";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { examStructureContainsQuestionType } from "@/lib/exam/structure";
 import {
+  applyManualEssayScores,
   gradeExamAttemptAnswers,
+  getCanonicalManualEssayScores,
   hasFinalTotalScore,
   isDynamicAttemptGradingSnapshot,
+  regradeExamAttemptAnswersPreservingManualScores,
   scoreHundredthsToPoints,
 } from "@/lib/exam/grading";
 import {
@@ -78,6 +82,7 @@ import {
   EssayImageLimitError,
   EssayImageNotFoundError,
   EssayImageQuestionNotFoundError,
+  ManualEssayGradingValidationError,
 } from "@/lib/errors/app-error";
 import type {
   AttemptPartTwoAnswer,
@@ -109,6 +114,7 @@ import type {
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { AppUser } from "@/types/user";
 import type { EssayImageUploadIntent } from "@/lib/validations/essay-image";
+import type { ManualEssayGradingRequest } from "@/lib/validations/attempt-grading";
 
 const ATTEMPT_DURATION_MS = EXAM_STRUCTURE.durationMinutes * 60 * 1000;
 const START_ATTEMPT_MAX_RETRIES = 3;
@@ -123,6 +129,12 @@ const EXAM_STATE_ORDER: Record<StudentExamState, number> = {
 
 function assertStudent(actor: AppUser): void {
   if (actor.role !== USER_ROLE.STUDENT) {
+    throw new ForbiddenError();
+  }
+}
+
+function assertAdmin(actor: AppUser): void {
+  if (actor.role !== USER_ROLE.ADMIN) {
     throw new ForbiddenError();
   }
 }
@@ -1132,6 +1144,112 @@ export async function finalizeExpiredExamAttempt(
   return toAttemptMutationResult(resolvedAttempt, serverNow);
 }
 
+export async function updateManualEssayGrading(
+  actor: AppUser,
+  attemptId: string,
+  input: ManualEssayGradingRequest,
+): Promise<ExamAttemptPersistenceRecord> {
+  assertAdmin(actor);
+  const storedAttempt = await findExamAttemptRecordById(attemptId);
+
+  if (!storedAttempt) {
+    throw new ExamAttemptNotFoundError();
+  }
+
+  if (!isTerminalExamAttemptStatus(storedAttempt.status)) {
+    throw new ExamAttemptStateConflictError();
+  }
+
+  return withMongoTransaction(async (session) => {
+    const exam = await reserveExamForAttemptGrading(
+      storedAttempt.examId,
+      session,
+    );
+
+    if (!exam) {
+      throw new ExamNotFoundError();
+    }
+
+    const currentAttempt = await findExamAttemptRecordById(attemptId, session);
+
+    if (!currentAttempt) {
+      throw new ExamAttemptNotFoundError();
+    }
+
+    if (
+      !isTerminalExamAttemptStatus(currentAttempt.status) ||
+      !exam.structureSnapshot ||
+      !structureContainsEssayImage(exam.structureSnapshot)
+    ) {
+      throw new ExamAttemptStateConflictError();
+    }
+
+    const expectedGradingStatus =
+      input.action === "CORRECT"
+        ? EXAM_ATTEMPT_GRADING_STATUS.COMPLETED
+        : EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL;
+
+    if (getExamAttemptGradingStatus(currentAttempt) !== expectedGradingStatus) {
+      throw new ExamAttemptStateConflictError();
+    }
+
+    const objectiveGrading = gradeExamAttemptAnswers(
+      getAttemptAnswers(currentAttempt, exam.structureSnapshot),
+      exam.answerKey,
+      exam.answerKeyRevision,
+      exam.structureSnapshot,
+    );
+
+    if (!isDynamicAttemptGradingSnapshot(objectiveGrading)) {
+      throw new ExamAttemptStateConflictError();
+    }
+
+    const shouldFinalize = input.action !== "SAVE_DRAFT";
+    let grading: DynamicAttemptGradingSnapshot;
+
+    try {
+      grading = shouldFinalize
+        ? applyManualEssayScores(
+            objectiveGrading,
+            exam.structureSnapshot,
+            input.manualEssayScores,
+            true,
+          )
+        : applyManualEssayScores(
+            objectiveGrading,
+            exam.structureSnapshot,
+            input.manualEssayScores,
+            false,
+          );
+    } catch (error) {
+      throw new ManualEssayGradingValidationError(
+        error instanceof Error ? error.message : "Điểm tự luận không hợp lệ.",
+      );
+    }
+
+    const updatedAttempt = await setTerminalManualEssayGrading(
+      {
+        attemptId,
+        examId: currentAttempt.examId,
+        expectedRevision: input.expectedRevision,
+        expectedGradingStatus,
+        grading,
+        gradingStatus: shouldFinalize
+          ? EXAM_ATTEMPT_GRADING_STATUS.COMPLETED
+          : EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+        gradedAt: new Date(),
+      },
+      session,
+    );
+
+    if (!updatedAttempt) {
+      throw new ExamAttemptStateConflictError();
+    }
+
+    return updatedAttempt;
+  });
+}
+
 export async function ensureTerminalAttemptGrading(
   attempt: ExamAttemptPersistenceRecord,
   exam: ExamGradingPersistenceRecord,
@@ -1154,15 +1272,20 @@ export async function ensureTerminalAttemptGrading(
       throw new ExamNotFoundError();
     }
 
-    const grading = gradeExamAttemptAnswers(
+    const grading = regradeExamAttemptAnswersPreservingManualScores(
       getAttemptAnswers(attempt, currentExam.structureSnapshot),
       currentExam.answerKey,
       currentExam.answerKeyRevision,
       currentExam.structureSnapshot,
+      attempt.grading,
+      getExamAttemptGradingStatus(attempt) ===
+        EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
     );
-    const gradingStatus = getGradingStatusForStructure(
+    const gradingStatus = structureContainsEssayImage(
       currentExam.structureSnapshot,
-    );
+    )
+      ? getExamAttemptGradingStatus(attempt)
+      : EXAM_ATTEMPT_GRADING_STATUS.COMPLETED;
     const gradedAttempt = await setOwnedTerminalExamAttemptGradingForRevision(
       attempt.id,
       attempt.examId,
@@ -1212,6 +1335,14 @@ function buildDynamicAnswerReview(
   structure: ExamStructureSnapshot,
   showScores: boolean,
 ): NonNullable<StudentExamAttemptResult["dynamicAnswerReview"]> {
+  const manualEssayScoreByQuestionId = new Map(
+    getEssayImageQuestionIds(structure).length > 0
+      ? getCanonicalManualEssayScores(grading, structure).map((score) => [
+          score.questionId,
+          score.scoreHundredths,
+        ])
+      : [],
+  );
   const entries = structure.sections.flatMap((section) =>
     section.questions.map((question) => {
       const studentAnswer = answers.answersByQuestionId[question.id];
@@ -1232,6 +1363,13 @@ function buildDynamicAnswerReview(
         review = {
           type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
           studentAnswer: studentAnswer as EssayImageAnswer,
+          ...(showScores && hasFinalTotalScore(grading)
+            ? {
+                score: scoreHundredthsToPoints(
+                  manualEssayScoreByQuestionId.get(question.id) ?? 0,
+                ),
+              }
+            : {}),
         };
       } else if (!questionGrading) {
         throw new ExamAttemptStateConflictError();
@@ -1410,6 +1548,9 @@ export function buildExamAttemptResult(
     }
 
     if (visibility.score) {
+      const manualEssayScores = containsEssayImage
+        ? getCanonicalManualEssayScores(grading, exam.structureSnapshot)
+        : [];
       result.score = {
         total: scoreHundredthsToPoints(grading.totalScoreHundredths),
         sectionsById: Object.fromEntries(
@@ -1418,6 +1559,32 @@ export function buildExamAttemptResult(
           ),
         ),
       };
+      if (manualEssayScores.length > 0) {
+        result.essayScores = exam.structureSnapshot.sections.flatMap(
+          (section) =>
+            section.questions.flatMap((question) => {
+              if (question.type !== EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
+                return [];
+              }
+
+              const score = manualEssayScores.find(
+                (item) => item.questionId === question.id,
+              )?.scoreHundredths;
+
+              if (score === null || score === undefined) {
+                throw new ExamAttemptStateConflictError();
+              }
+
+              return [
+                {
+                  questionId: question.id,
+                  score: scoreHundredthsToPoints(score),
+                  maximum: scoreHundredthsToPoints(question.maxScoreHundredths),
+                },
+              ];
+            }),
+        );
+      }
     }
 
     if (visibility.answers) {

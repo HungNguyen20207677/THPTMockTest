@@ -41,6 +41,7 @@ export interface ExamAttemptPersistenceRecord {
   answers?: ExamAttemptAnswers;
   answerRevision: number;
   grading?: ExamAttemptGradingSnapshot;
+  manualGradingRevision?: number;
   gradedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -94,12 +95,24 @@ export interface ExamAttemptStatusCounts {
 export interface ExamAttemptRegradeSource {
   id: string;
   answers: ExamAttemptAnswers;
+  grading?: ExamAttemptGradingSnapshot;
+  gradingStatus?: ExamAttemptGradingStatus;
 }
 
 export interface ExamAttemptGradingReplacement {
   attemptId: string;
   grading: ExamAttemptGradingSnapshot;
   gradingStatus: ExamAttemptGradingStatus;
+}
+
+export interface SetManualEssayGradingInput {
+  attemptId: string;
+  examId: string;
+  expectedRevision: number;
+  expectedGradingStatus: ExamAttemptGradingStatus;
+  grading: ExamAttemptGradingSnapshot;
+  gradingStatus: ExamAttemptGradingStatus;
+  gradedAt: Date;
 }
 
 interface ExamAttemptDocumentData {
@@ -116,6 +129,7 @@ interface ExamAttemptDocumentData {
   answers?: unknown;
   answerRevision?: number;
   grading?: unknown;
+  manualGradingRevision?: number;
   gradedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -154,6 +168,7 @@ function getAutoSubmitUpdate(
         gradingStatus,
         submittedAt: "$expiresAt",
         grading,
+        manualGradingRevision: 0,
         gradedAt: now,
         updatedAt: now,
       },
@@ -169,6 +184,19 @@ function getExpectedAnswerRevisionFilter(
         $or: [{ answerRevision: 0 }, { answerRevision: { $exists: false } }],
       }
     : { answerRevision: expectedAnswerRevision };
+}
+
+function getExpectedManualGradingRevisionFilter(
+  expectedRevision: number,
+): Record<string, unknown> {
+  return expectedRevision === 0
+    ? {
+        $or: [
+          { manualGradingRevision: 0 },
+          { manualGradingRevision: { $exists: false } },
+        ],
+      }
+    : { manualGradingRevision: expectedRevision };
 }
 
 async function prepareExamAttemptModel(): Promise<void> {
@@ -220,6 +248,7 @@ function toExamAttemptRecord(
     answers: parsedAnswers?.data ?? createEmptyAttemptAnswers(),
     answerRevision: attempt.answerRevision ?? 0,
     grading: parsedGrading?.data,
+    manualGradingRevision: attempt.manualGradingRevision ?? 0,
     gradedAt: attempt.gradedAt,
     createdAt: attempt.createdAt,
     updatedAt: attempt.updatedAt,
@@ -277,12 +306,17 @@ export async function findLatestExamAttemptRecord(
 
 export async function findExamAttemptRecordById(
   attemptId: string,
+  session?: ClientSession,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
 
-  const attempt = await ExamAttemptModel.findById(attemptId)
-    .lean<ExamAttemptDocumentData>()
-    .exec();
+  let query = ExamAttemptModel.findById(attemptId);
+
+  if (session) {
+    query = query.session(session);
+  }
+
+  const attempt = await query.lean<ExamAttemptDocumentData>().exec();
 
   return attempt ? toExamAttemptRecord(attempt) : null;
 }
@@ -488,6 +522,7 @@ export async function submitOwnedActiveExamAttempt(
             submittedAt: input.now,
             lastSavedAt: input.now,
             grading: { $literal: input.grading },
+            manualGradingRevision: 0,
             gradedAt: input.now,
             updatedAt: input.now,
           },
@@ -501,6 +536,7 @@ export async function submitOwnedActiveExamAttempt(
           submittedAt: input.now,
           lastSavedAt: input.now,
           grading: input.grading,
+          manualGradingRevision: 0,
           gradedAt: input.now,
         },
       };
@@ -593,6 +629,37 @@ export async function setOwnedTerminalExamAttemptGradingForRevision(
   return attempt ? toExamAttemptRecord(attempt) : null;
 }
 
+export async function setTerminalManualEssayGrading(
+  input: SetManualEssayGradingInput,
+  session: ClientSession,
+): Promise<ExamAttemptPersistenceRecord | null> {
+  await prepareExamAttemptModel();
+  assertValidGradingState(input.gradingStatus, input.grading);
+
+  const attempt = await ExamAttemptModel.findOneAndUpdate(
+    {
+      _id: input.attemptId,
+      examId: input.examId,
+      status: { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
+      gradingStatus: input.expectedGradingStatus,
+      ...getExpectedManualGradingRevisionFilter(input.expectedRevision),
+    },
+    {
+      $set: {
+        grading: input.grading,
+        gradingStatus: input.gradingStatus,
+        gradedAt: input.gradedAt,
+      },
+      $inc: { manualGradingRevision: 1 },
+    },
+    { returnDocument: "after", runValidators: true, session },
+  )
+    .lean<ExamAttemptDocumentData>()
+    .exec();
+
+  return attempt ? toExamAttemptRecord(attempt) : null;
+}
+
 export async function listTerminalExamAttemptRegradeSources(
   examId: string,
   session: ClientSession,
@@ -604,9 +671,16 @@ export async function listTerminalExamAttemptRegradeSources(
     examId,
     status: { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
   })
-    .select({ answers: 1 })
+    .select({ answers: 1, grading: 1, gradingStatus: 1 })
     .session(session)
-    .lean<Array<Pick<ExamAttemptDocumentData, "_id" | "answers">>>()
+    .lean<
+      Array<
+        Pick<
+          ExamAttemptDocumentData,
+          "_id" | "answers" | "grading" | "gradingStatus"
+        >
+      >
+    >()
     .exec();
 
   return attempts.map((attempt) => {
@@ -621,9 +695,20 @@ export async function listTerminalExamAttemptRegradeSources(
       throw new Error("Stored ExamAttempt answers are malformed.");
     }
 
+    const parsedGrading =
+      attempt.grading === undefined
+        ? null
+        : examAttemptGradingSnapshotSchema.safeParse(attempt.grading);
+
+    if (parsedGrading && !parsedGrading.success) {
+      throw new Error("Stored ExamAttempt grading is malformed.");
+    }
+
     return {
       id: attempt._id.toString(),
       answers: parsedAnswers.data,
+      grading: parsedGrading?.data,
+      gradingStatus: attempt.gradingStatus,
     };
   });
 }

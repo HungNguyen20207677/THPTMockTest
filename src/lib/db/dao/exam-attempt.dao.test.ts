@@ -29,11 +29,13 @@ import {
   removeEssayImageFromOwnedActiveExamAttempt,
   replaceTerminalExamAttemptGradings,
   saveOwnedActiveExamAttemptAnswers,
+  setTerminalManualEssayGrading,
   submitOwnedActiveExamAttempt,
 } from "@/lib/db/dao/exam-attempt.dao";
 import {
   EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
+  TERMINAL_EXAM_ATTEMPT_STATUSES,
 } from "@/lib/constants/exam-attempt";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
@@ -310,6 +312,7 @@ describe("ExamAttempt cascade DAO", () => {
           submittedAt: now,
           lastSavedAt: now,
           grading: { $literal: grading },
+          manualGradingRevision: 0,
           gradedAt: now,
           updatedAt: now,
         },
@@ -328,6 +331,7 @@ describe("ExamAttempt cascade DAO", () => {
           gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
           submittedAt: "$expiresAt",
           grading,
+          manualGradingRevision: 0,
           gradedAt: now,
           updatedAt: now,
         },
@@ -339,6 +343,96 @@ describe("ExamAttempt cascade DAO", () => {
       expiresAt: { $lte: now },
     });
     expect(expiresAt.getTime()).toBeLessThan(now.getTime());
+  });
+
+  it("persists only manual grading fields behind revision compare-and-set filters", async () => {
+    const session = { id: "manual-grading-session" };
+    const draftGradedAt = new Date("2026-08-11T03:00:00.000Z");
+    const correctedAt = new Date("2026-08-11T03:05:00.000Z");
+    const draftGrading = {
+      answerKeyRevision: 2,
+      objectiveScoreHundredths: 500,
+      objectiveMaxScoreHundredths: 500,
+      sectionScoresHundredths: { mixed: 500 },
+      questionsById: {
+        choice: { isCorrect: true, scoreHundredths: 500 },
+      },
+      manualEssayScores: [{ questionId: "essay", scoreHundredths: null }],
+    };
+    const correctedGrading = {
+      answerKeyRevision: 2,
+      totalScoreHundredths: 900,
+      sectionScoresHundredths: { mixed: 900 },
+      questionsById: {
+        choice: { isCorrect: true, scoreHundredths: 500 },
+      },
+      manualEssayScores: [{ questionId: "essay", scoreHundredths: 400 }],
+    };
+
+    await setTerminalManualEssayGrading(
+      {
+        attemptId: "attempt-id",
+        examId: "exam-id",
+        expectedRevision: 0,
+        expectedGradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+        grading: draftGrading,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+        gradedAt: draftGradedAt,
+      },
+      session as never,
+    );
+    await setTerminalManualEssayGrading(
+      {
+        attemptId: "attempt-id",
+        examId: "exam-id",
+        expectedRevision: 3,
+        expectedGradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+        grading: correctedGrading,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+        gradedAt: correctedAt,
+      },
+      session as never,
+    );
+
+    expect(mocks.findOneAndUpdate.mock.calls[0]).toEqual([
+      {
+        _id: "attempt-id",
+        examId: "exam-id",
+        status: { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+        $or: [
+          { manualGradingRevision: 0 },
+          { manualGradingRevision: { $exists: false } },
+        ],
+      },
+      {
+        $set: {
+          grading: draftGrading,
+          gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+          gradedAt: draftGradedAt,
+        },
+        $inc: { manualGradingRevision: 1 },
+      },
+      { returnDocument: "after", runValidators: true, session },
+    ]);
+    expect(mocks.findOneAndUpdate.mock.calls[1]).toEqual([
+      {
+        _id: "attempt-id",
+        examId: "exam-id",
+        status: { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+        manualGradingRevision: 3,
+      },
+      {
+        $set: {
+          grading: correctedGrading,
+          gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+          gradedAt: correctedAt,
+        },
+        $inc: { manualGradingRevision: 1 },
+      },
+      { returnDocument: "after", runValidators: true, session },
+    ]);
   });
 
   it("replaces only grading fields for terminal attempts", async () => {

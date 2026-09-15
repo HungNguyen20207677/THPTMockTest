@@ -43,7 +43,10 @@ import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { reserveStudentsForExamAssignment } from "@/lib/db/dao/user.dao";
 import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
-import { gradeExamAttemptAnswers } from "@/lib/exam/grading";
+import {
+  hasFinalTotalScore,
+  regradeExamAttemptAnswersPreservingManualScores,
+} from "@/lib/exam/grading";
 import {
   createEmptyQuestionTopicIds,
   getUniqueExamTopicIds,
@@ -663,24 +666,38 @@ export async function editExam(
             )
           : await listTerminalExamAttemptRegradeSources(examId, session);
         const gradedAt = new Date();
-        const gradingStatus =
+        const hasEssayImage = Boolean(
           correctedExam.structureSnapshot &&
           examStructureContainsQuestionType(
             correctedExam.structureSnapshot,
             EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
-          )
-            ? EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL
-            : EXAM_ATTEMPT_GRADING_STATUS.COMPLETED;
-        const replacements = regradeSources.map((attempt) => ({
-          attemptId: attempt.id,
-          gradingStatus,
-          grading: gradeExamAttemptAnswers(
-            attempt.answers,
-            correctedExam.answerKey,
-            correctedExam.answerKeyRevision,
-            correctedExam.structureSnapshot,
           ),
-        }));
+        );
+        const replacements = regradeSources.map((attempt) => {
+          const previousGradingStatus =
+            attempt.gradingStatus ??
+            (attempt.grading && hasFinalTotalScore(attempt.grading)
+              ? EXAM_ATTEMPT_GRADING_STATUS.COMPLETED
+              : hasEssayImage
+                ? EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL
+                : EXAM_ATTEMPT_GRADING_STATUS.COMPLETED);
+
+          return {
+            attemptId: attempt.id,
+            gradingStatus: hasEssayImage
+              ? previousGradingStatus
+              : EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+            grading: regradeExamAttemptAnswersPreservingManualScores(
+              attempt.answers,
+              correctedExam.answerKey,
+              correctedExam.answerKeyRevision,
+              correctedExam.structureSnapshot,
+              attempt.grading,
+              hasEssayImage &&
+                previousGradingStatus === EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+            ),
+          };
+        });
         const matchedCount = await replaceTerminalExamAttemptGradings(
           examId,
           replacements,

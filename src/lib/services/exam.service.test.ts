@@ -104,7 +104,11 @@ import type {
 import type { ExamStructureTemplatePersistenceRecord } from "@/lib/db/dao/exam-structure-template.dao";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { isDynamicExamAnswerKey } from "@/lib/exam/answer-key";
-import { gradeAttemptAnswers } from "@/lib/exam/grading";
+import {
+  applyManualEssayScores,
+  gradeAttemptAnswers,
+  gradeDynamicAttemptAnswers,
+} from "@/lib/exam/grading";
 import {
   createEmptyQuestionTopicIds,
   createEmptyQuestionTopics,
@@ -1138,7 +1142,21 @@ describe("exam service", () => {
     mocks.hasExamAttemptRecords.mockResolvedValue(true);
     mocks.updateExamAnswerKeyRecord.mockResolvedValue(correctedExam);
     mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([
-      { id: "essay-attempt", answers },
+      {
+        id: "essay-attempt",
+        answers,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+        grading: {
+          ...gradeDynamicAttemptAnswers(
+            answers,
+            currentAnswerKey,
+            structureSnapshot,
+          ),
+          manualEssayScores: [
+            { questionId: "essay-image-question", scoreHundredths: 250 },
+          ],
+        },
+      },
     ]);
     mocks.replaceTerminalExamAttemptGradings.mockResolvedValue(1);
 
@@ -1185,6 +1203,9 @@ describe("exam service", () => {
               scoreHundredths: 500,
             },
           },
+          manualEssayScores: [
+            { questionId: "essay-image-question", scoreHundredths: 250 },
+          ],
         },
       },
     ]);
@@ -1197,6 +1218,74 @@ describe("exam service", () => {
       expect.any(Date),
       mocks.transactionSession,
     );
+  });
+
+  it("preserves finalized essay scores and recalculates the total after an answer-key correction", async () => {
+    const structureSnapshot = createEssayCorrectionStructureSnapshot();
+    const currentAnswerKey = createEssayCorrectionAnswerKey();
+    const correctedAnswerKey = createEssayCorrectionAnswerKey("B");
+    const currentExam = createStoredExam({
+      structureTemplateId,
+      structureSnapshot,
+      answerKey: currentAnswerKey,
+    });
+    const correctedExam = createStoredExam({
+      ...currentExam,
+      answerKey: correctedAnswerKey,
+      answerKeyRevision: 2,
+    });
+    const answers: DynamicAttemptAnswers = {
+      answersByQuestionId: {
+        "essay-image-question": {
+          type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+          images: [],
+        },
+        "essay-choice-question": "B",
+      },
+    };
+    const completedGrading = applyManualEssayScores(
+      gradeDynamicAttemptAnswers(answers, currentAnswerKey, structureSnapshot),
+      structureSnapshot,
+      [{ questionId: "essay-image-question", scoreHundredths: 250 }],
+      true,
+    );
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.hasExamAttemptRecords.mockResolvedValue(true);
+    mocks.updateExamAnswerKeyRecord.mockResolvedValue(correctedExam);
+    mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([
+      {
+        id: "completed-essay-attempt",
+        answers,
+        grading: completedGrading,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+      },
+    ]);
+    mocks.replaceTerminalExamAttemptGradings.mockResolvedValue(1);
+
+    await editExam(
+      admin,
+      currentExam.id,
+      createDynamicUpdateInput(
+        currentExam,
+        structureSnapshot,
+        correctedAnswerKey,
+      ),
+      undefined,
+      true,
+    );
+
+    const replacement =
+      mocks.replaceTerminalExamAttemptGradings.mock.calls[0][1][0];
+    expect(replacement).toMatchObject({
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+      grading: {
+        answerKeyRevision: 2,
+        totalScoreHundredths: 750,
+        manualEssayScores: [
+          { questionId: "essay-image-question", scoreHundredths: 250 },
+        ],
+      },
+    });
   });
 
   it("rolls back the corrected key and regrades when the transaction fails", async () => {
@@ -1265,7 +1354,12 @@ describe("exam service", () => {
       });
     });
     mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([
-      { id: "submitted-attempt", answers },
+      {
+        id: "submitted-attempt",
+        answers,
+        grading: originalGrading,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+      },
     ]);
     mocks.replaceTerminalExamAttemptGradings.mockImplementation(async () => {
       databaseState.grading = {

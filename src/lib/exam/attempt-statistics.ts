@@ -7,6 +7,7 @@ import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-tem
 import {
   isDynamicAttemptGradingSnapshot,
   hasFinalTotalScore,
+  getCanonicalManualEssayScores,
   scoreHundredthsToPoints,
 } from "@/lib/exam/grading";
 import {
@@ -281,7 +282,50 @@ export function calculateDynamicQuestionStatistics(
         section.questions.flatMap<AdminExamDynamicQuestionStatisticsItem>(
           (question, questionIndex) => {
             if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE) {
-              return [];
+              const manualScores = completedAttempts.flatMap((attempt) => {
+                if (
+                  (attempt.gradingStatus ??
+                    EXAM_ATTEMPT_GRADING_STATUS.COMPLETED) !==
+                    EXAM_ATTEMPT_GRADING_STATUS.COMPLETED ||
+                  !hasFinalTotalScore(attempt.grading)
+                ) {
+                  return [];
+                }
+
+                const score = getCanonicalManualEssayScores(
+                  attempt.grading as DynamicAttemptGradingSnapshot,
+                  structure,
+                ).find(
+                  (manualScore) => manualScore.questionId === question.id,
+                )?.scoreHundredths;
+
+                return score === null || score === undefined ? [] : [score];
+              });
+              const totalScoreHundredths = manualScores.reduce(
+                (total, score) => total + score,
+                0,
+              );
+              const gradedAttemptCount = manualScores.length;
+
+              return [
+                {
+                  sectionId: section.id,
+                  sectionTitle: section.title,
+                  questionId: question.id,
+                  questionNumber: questionIndex + 1,
+                  questionType: question.type,
+                  gradedAttemptCount,
+                  averageScoreHundredths:
+                    gradedAttemptCount === 0
+                      ? null
+                      : totalScoreHundredths / gradedAttemptCount,
+                  averagePerformancePercent:
+                    gradedAttemptCount === 0
+                      ? null
+                      : (totalScoreHundredths * 100) /
+                        (gradedAttemptCount * question.maxScoreHundredths),
+                },
+              ];
             }
 
             const results = completedAttempts.map(
@@ -423,12 +467,37 @@ function accumulateTopicPerformance(
           continue;
         }
 
-        const result = attempt.grading.questionsById[question.questionId];
-        if (!result) {
-          continue;
+        if (
+          question.questionType === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE
+        ) {
+          if (
+            (attempt.gradingStatus ?? EXAM_ATTEMPT_GRADING_STATUS.COMPLETED) !==
+              EXAM_ATTEMPT_GRADING_STATUS.COMPLETED ||
+            !hasFinalTotalScore(attempt.grading)
+          ) {
+            continue;
+          }
+
+          const manualScore = getCanonicalManualEssayScores(
+            attempt.grading,
+            normalizedSource.structureSnapshot,
+          ).find(
+            (score) => score.questionId === question.questionId,
+          )?.scoreHundredths;
+
+          if (manualScore === null || manualScore === undefined) {
+            continue;
+          }
+
+          performance = (manualScore * 100) / question.maxScoreHundredths;
+        } else {
+          const result = attempt.grading.questionsById[question.questionId];
+          if (!result) {
+            continue;
+          }
+          performance =
+            (result.scoreHundredths * 100) / question.maxScoreHundredths;
         }
-        performance =
-          (result.scoreHundredths * 100) / question.maxScoreHundredths;
       } else {
         if (normalizedSource.structureSnapshot) {
           continue;

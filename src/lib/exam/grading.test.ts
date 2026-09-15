@@ -4,6 +4,7 @@ import { EXAM_STRUCTURE } from "@/lib/constants/exam";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import {
+  applyManualEssayScores,
   gradeAttemptAnswers,
   gradeDynamicAttemptAnswers,
   scoreHundredthsToPoints,
@@ -309,5 +310,62 @@ describe("THPT Math grading", () => {
       "short-answer": 200,
     });
     expect(grading).toMatchObject({ totalScoreHundredths: 500 });
+  });
+
+  it("allows the exact Exam maximum and rejects a final essay total above it", () => {
+    const structure = examStructureSnapshotSchema.parse({
+      sections: [
+        {
+          id: "mixed",
+          title: "Mixed",
+          questions: [
+            {
+              id: "choice",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              maxScoreHundredths: 500,
+            },
+            {
+              id: "essay",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+              maxScoreHundredths: 500,
+            },
+          ],
+        },
+      ],
+    });
+    const objectiveGrading = {
+      answerKeyRevision: 1,
+      objectiveScoreHundredths: 500,
+      objectiveMaxScoreHundredths: 500,
+      sectionScoresHundredths: { mixed: 500 },
+      questionsById: {
+        choice: { isCorrect: true, scoreHundredths: 500 },
+      },
+    };
+
+    expect(
+      applyManualEssayScores(
+        objectiveGrading,
+        structure,
+        [{ questionId: "essay", scoreHundredths: 500 }],
+        true,
+      ),
+    ).toMatchObject({ totalScoreHundredths: 1000 });
+
+    expect(() =>
+      applyManualEssayScores(
+        {
+          ...objectiveGrading,
+          objectiveScoreHundredths: 501,
+          sectionScoresHundredths: { mixed: 501 },
+          questionsById: {
+            choice: { isCorrect: true, scoreHundredths: 501 },
+          },
+        },
+        structure,
+        [{ questionId: "essay", scoreHundredths: 500 }],
+        true,
+      ),
+    ).toThrow("Final score exceeds the Exam maximum.");
   });
 });

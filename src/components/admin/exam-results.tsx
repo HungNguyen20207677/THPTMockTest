@@ -75,7 +75,32 @@ function DynamicQuestionStatistics({
                     {questionTypeLabels[question.questionType]}
                   </span>
                 </div>
-                {"statements" in question ? (
+                {"gradedAttemptCount" in question ? (
+                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                    <div>
+                      <p className="text-muted-foreground">Lượt đã chấm</p>
+                      <p className="font-medium tabular-nums">
+                        {question.gradedAttemptCount}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Điểm TB</p>
+                      <p className="font-medium tabular-nums">
+                        {formatAverageScoreHundredths(
+                          question.averageScoreHundredths,
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Mức độ đạt TB</p>
+                      <p className="font-medium tabular-nums">
+                        {formatPerformancePercent(
+                          question.averagePerformancePercent,
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                ) : "statements" in question ? (
                   <>
                     <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                       <div>
