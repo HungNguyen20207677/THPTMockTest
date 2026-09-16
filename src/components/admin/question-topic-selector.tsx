@@ -2,28 +2,39 @@
 
 import { useDeferredValue, useEffect, useId, useRef, useState } from "react";
 
+import { TopicCreateDialog } from "@/components/admin/topic-create-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiClientError } from "@/lib/api/client";
-import { normalizeTopicName } from "@/lib/utils/topic-name";
+import {
+  addTopicSelection,
+  getTopicContext,
+  topicMatchesSearch,
+} from "@/lib/curriculum/topic-context";
 import { topicNameSchema } from "@/lib/validations/topic";
+import type { CreateTopicInput } from "@/lib/validations/topic";
+import type { Chapter, Grade } from "@/types/curriculum";
 import type { Topic } from "@/types/topic";
 
 interface QuestionTopicSelectorProps {
   label: string;
   topics: Topic[];
+  grades: Grade[];
+  chapters: Chapter[];
   value: string[];
   disabled?: boolean;
   isLoading: boolean;
   loadError: string | null;
   onChange: (topicIds: string[]) => void;
-  onCreateTopic: (name: string) => Promise<Topic>;
+  onCreateTopic: (input: CreateTopicInput) => Promise<Topic>;
   onRetry: () => void;
 }
 
 export function QuestionTopicSelector({
   label,
   topics,
+  grades,
+  chapters,
   value,
   disabled = false,
   isLoading,
@@ -37,22 +48,15 @@ export function QuestionTopicSelector({
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
-  const normalizedSearch = normalizeTopicName(deferredSearch);
-  const filteredTopics = normalizedSearch
+  const filteredTopics = deferredSearch.trim()
     ? topics.filter((topic) =>
-        normalizeTopicName(topic.name).includes(normalizedSearch),
+        topicMatchesSearch(topic, deferredSearch, chapters, grades),
       )
     : topics;
   const parsedTopicName = topicNameSchema.safeParse(search);
-  const hasExactMatch = parsedTopicName.success
-    ? topics.some(
-        (topic) =>
-          normalizeTopicName(topic.name) ===
-          normalizeTopicName(parsedTopicName.data),
-      )
-    : true;
   const listId = `${generatedId}-list`;
 
   useEffect(() => {
@@ -81,15 +85,16 @@ export function QuestionTopicSelector({
     };
   }, [isOpen]);
 
-  async function createAndSelectTopic(name: string) {
+  async function createAndSelectTopic(input: CreateTopicInput) {
     setIsCreating(true);
     setCreateError(null);
 
     try {
-      const topic = await onCreateTopic(name);
-      onChange(value.includes(topic.id) ? value : [...value, topic.id]);
+      const topic = await onCreateTopic(input);
+      onChange(addTopicSelection(value, topic.id));
       setSearch("");
       setIsOpen(false);
+      setIsCreateDialogOpen(false);
     } catch (error) {
       if (error instanceof ApiClientError) {
         if (error.code === "UNAUTHENTICATED") {
@@ -183,10 +188,9 @@ export function QuestionTopicSelector({
                 !isLoading &&
                 !loadError &&
                 parsedTopicName.success &&
-                !hasExactMatch &&
                 !isCreating
               ) {
-                void createAndSelectTopic(parsedTopicName.data);
+                setIsCreateDialogOpen(true);
               }
             }}
             onChange={(event) => {
@@ -221,7 +225,7 @@ export function QuestionTopicSelector({
               {filteredTopics.map((topic) => (
                 <label
                   key={topic.id}
-                  className="border-border flex cursor-pointer items-center gap-2 border-b px-2.5 py-2 text-sm last:border-b-0"
+                  className="border-border flex cursor-pointer items-start gap-2 border-b px-2.5 py-2 text-sm last:border-b-0"
                 >
                   <input
                     type="checkbox"
@@ -236,7 +240,12 @@ export function QuestionTopicSelector({
                       )
                     }
                   />
-                  <span className="min-w-0 truncate">{topic.name}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate">{topic.name}</span>
+                    <span className="text-muted-foreground block truncate text-xs">
+                      {getTopicContext(topic, chapters, grades)}
+                    </span>
+                  </span>
                 </label>
               ))}
               {filteredTopics.length === 0 && (
@@ -247,23 +256,20 @@ export function QuestionTopicSelector({
             </div>
           )}
 
-          {!isLoading &&
-            !loadError &&
-            parsedTopicName.success &&
-            !hasExactMatch && (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-auto w-full justify-start px-2 py-2 text-left whitespace-normal"
-                disabled={isCreating}
-                onClick={() => void createAndSelectTopic(parsedTopicName.data)}
-              >
-                {isCreating
-                  ? "Đang tạo chủ đề..."
-                  : `+ Tạo chủ đề "${parsedTopicName.data}"`}
-              </Button>
-            )}
+          {!isLoading && !loadError && parsedTopicName.success && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-auto w-full justify-start px-2 py-2 text-left whitespace-normal"
+              disabled={isCreating}
+              onClick={() => setIsCreateDialogOpen(true)}
+            >
+              {isCreating
+                ? "Đang tạo chủ đề..."
+                : `+ Tạo chủ đề "${parsedTopicName.data}"`}
+            </Button>
+          )}
           {createError && (
             <p role="alert" className="text-destructive px-2 text-sm">
               {createError}
@@ -271,6 +277,21 @@ export function QuestionTopicSelector({
           )}
         </div>
       )}
+      <TopicCreateDialog
+        open={isCreateDialogOpen}
+        initialName={parsedTopicName.success ? parsedTopicName.data : search}
+        grades={grades}
+        chapters={chapters}
+        isCreating={isCreating}
+        error={createError}
+        onClose={() => {
+          if (!isCreating) {
+            setIsCreateDialogOpen(false);
+            setCreateError(null);
+          }
+        }}
+        onCreate={createAndSelectTopic}
+      />
     </div>
   );
 }

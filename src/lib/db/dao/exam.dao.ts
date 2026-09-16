@@ -913,6 +913,35 @@ export async function removeStudentFromExamAssignments(
   return result.modifiedCount;
 }
 
+export async function hasExamRecordsWithTopicId(
+  topicId: string,
+  session: ClientSession,
+): Promise<boolean> {
+  await prepareExamModel();
+  return Boolean(
+    await ExamModel.exists({
+      $or: [
+        {
+          "questionTopicIds.partOne": {
+            $elemMatch: { $elemMatch: { $eq: topicId } },
+          },
+        },
+        {
+          "questionTopicIds.partTwo": {
+            $elemMatch: { $elemMatch: { $eq: topicId } },
+          },
+        },
+        {
+          "questionTopicIds.partThree": {
+            $elemMatch: { $elemMatch: { $eq: topicId } },
+          },
+        },
+        { "questionTopics.topicIds": topicId },
+      ],
+    }).session(session),
+  );
+}
+
 export async function deleteExamRecord(
   examId: string,
   expectedUpdatedAt: Date,

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { TOPIC_NAME_MAX_LENGTH } from "@/lib/constants/topic";
 import { cleanTopicName, normalizeTopicName } from "@/lib/utils/topic-name";
+import { chapterIdSchema } from "@/lib/validations/curriculum";
 
 export const topicIdSchema = z
   .string()
@@ -26,7 +27,16 @@ export const topicNameSchema = z
   );
 
 export const createTopicSchema = z.strictObject({
+  chapterId: chapterIdSchema,
   name: topicNameSchema,
+});
+
+export const updateTopicSchema = createTopicSchema.extend({
+  expectedUpdatedAt: z.string().datetime(),
+});
+
+export const deleteTopicSchema = z.strictObject({
+  expectedUpdatedAt: z.string().datetime(),
 });
 
 export const listTopicsQuerySchema = z.strictObject({
@@ -39,3 +49,5 @@ export const listTopicsQuerySchema = z.strictObject({
 });
 
 export type CreateTopicInput = z.output<typeof createTopicSchema>;
+export type UpdateTopicInput = z.output<typeof updateTopicSchema>;
+export type DeleteTopicInput = z.output<typeof deleteTopicSchema>;

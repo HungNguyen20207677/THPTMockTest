@@ -61,6 +61,66 @@ export class RequestTooLargeError extends AppError {
   }
 }
 
+export class GradeNotFoundError extends AppError {
+  constructor() {
+    super("Không tìm thấy khối.", "GRADE_NOT_FOUND", 404);
+  }
+}
+
+export class ChapterNotFoundError extends AppError {
+  constructor() {
+    super("Không tìm thấy chương.", "CHAPTER_NOT_FOUND", 404);
+  }
+}
+
+export class TopicNotFoundError extends AppError {
+  constructor() {
+    super("Không tìm thấy chủ đề.", "TOPIC_NOT_FOUND", 404);
+  }
+}
+
+export class CurriculumNameConflictError extends AppError {
+  constructor(resource: "khối" | "chương" | "chủ đề") {
+    super(
+      `Tên ${resource} đã tồn tại trong phạm vi này.`,
+      "CURRICULUM_NAME_EXISTS",
+      409,
+    );
+  }
+}
+
+export class CurriculumConflictError extends AppError {
+  constructor(resource: "khối" | "chương" | "chủ đề") {
+    super(
+      `${resource[0].toLocaleUpperCase("vi")}${resource.slice(1)} đã được cập nhật ở nơi khác. Vui lòng tải lại trước khi lưu.`,
+      "CURRICULUM_CONFLICT",
+      409,
+    );
+  }
+}
+
+export class GradeNotEmptyError extends AppError {
+  constructor() {
+    super("Không thể xóa khối vì vẫn còn chương.", "GRADE_NOT_EMPTY", 409);
+  }
+}
+
+export class ChapterNotEmptyError extends AppError {
+  constructor() {
+    super("Không thể xóa chương vì vẫn còn chủ đề.", "CHAPTER_NOT_EMPTY", 409);
+  }
+}
+
+export class TopicInUseError extends AppError {
+  constructor() {
+    super(
+      "Không thể xóa chủ đề vì chủ đề đang được sử dụng trong đề thi.",
+      "TOPIC_IN_USE",
+      409,
+    );
+  }
+}
+
 export class ExamNotFoundError extends AppError {
   constructor() {
     super("Không tìm thấy đề thi.", "EXAM_NOT_FOUND", 404);

@@ -8,6 +8,7 @@ import { normalizeTopicName } from "@/lib/utils/topic-name";
 
 export interface TopicPersistenceRecord {
   id: string;
+  chapterId?: string;
   name: string;
   normalizedName: string;
   createdAt: Date;
@@ -16,6 +17,7 @@ export interface TopicPersistenceRecord {
 
 interface TopicDocumentData {
   _id: Types.ObjectId;
+  chapterId?: Types.ObjectId;
   name: string;
   normalizedName: string;
   createdAt: Date;
@@ -24,12 +26,44 @@ interface TopicDocumentData {
 
 let topicIndexesPromise: Promise<void> | null = null;
 
+function isIndexNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (("code" in error && error.code === 27) ||
+      ("codeName" in error && error.codeName === "IndexNotFound"))
+  );
+}
+
+async function removeLegacyGlobalNameIndex(): Promise<void> {
+  const indexes = await TopicModel.collection.indexes();
+  const legacyIndex = indexes.find(
+    (index) =>
+      index.unique === true &&
+      !index.partialFilterExpression &&
+      Object.keys(index.key).length === 1 &&
+      index.key.normalizedName === 1,
+  );
+
+  if (!legacyIndex?.name) {
+    return;
+  }
+
+  try {
+    await TopicModel.collection.dropIndex(legacyIndex.name);
+  } catch (error) {
+    if (!isIndexNotFoundError(error)) {
+      throw error;
+    }
+  }
+}
+
 async function prepareTopicModel(): Promise<void> {
   await connectToDatabase();
 
   if (!topicIndexesPromise) {
     topicIndexesPromise = TopicModel.init()
-      .then(() => undefined)
+      .then(removeLegacyGlobalNameIndex)
       .catch((error: unknown) => {
         topicIndexesPromise = null;
         throw error;
@@ -42,6 +76,7 @@ async function prepareTopicModel(): Promise<void> {
 function toTopicRecord(topic: TopicDocumentData): TopicPersistenceRecord {
   return {
     id: topic._id.toString(),
+    ...(topic.chapterId ? { chapterId: topic.chapterId.toString() } : {}),
     name: topic.name,
     normalizedName: topic.normalizedName,
     createdAt: topic.createdAt,
@@ -73,11 +108,22 @@ export async function listTopicRecords(
   return topics.map(toTopicRecord);
 }
 
-export async function findTopicRecordByNormalizedName(
+export async function findTopicRecordById(
+  topicId: string,
+): Promise<TopicPersistenceRecord | null> {
+  await prepareTopicModel();
+  const topic = await TopicModel.findById(topicId)
+    .lean<TopicDocumentData>()
+    .exec();
+  return topic ? toTopicRecord(topic) : null;
+}
+
+export async function findTopicRecordByChapterAndNormalizedName(
+  chapterId: string,
   normalizedName: string,
 ): Promise<TopicPersistenceRecord | null> {
   await prepareTopicModel();
-  const topic = await TopicModel.findOne({ normalizedName })
+  const topic = await TopicModel.findOne({ chapterId, normalizedName })
     .lean<TopicDocumentData>()
     .exec();
 
@@ -101,27 +147,76 @@ export async function findTopicRecordsByIds(
   return topics.map(toTopicRecord);
 }
 
-export async function createTopicRecord(input: {
-  name: string;
-  normalizedName: string;
-}): Promise<TopicPersistenceRecord> {
+export async function createTopicRecord(
+  input: {
+    chapterId: string;
+    name: string;
+    normalizedName: string;
+  },
+  session: ClientSession,
+): Promise<TopicPersistenceRecord> {
   await prepareTopicModel();
-  const topic = await TopicModel.create(input);
+  const topic = new TopicModel(input);
+  await topic.save({ session });
 
   return toTopicRecord(topic.toObject() as TopicDocumentData);
 }
 
-export async function countTopicRecordsByIds(
+export async function updateTopicRecord(
+  topicId: string,
+  input: { chapterId: string; name: string; normalizedName: string },
+  expectedUpdatedAt: Date,
+  session: ClientSession,
+): Promise<TopicPersistenceRecord | null> {
+  await prepareTopicModel();
+  const topic = await TopicModel.findOneAndUpdate(
+    { _id: topicId, updatedAt: expectedUpdatedAt },
+    { $set: input },
+    { returnDocument: "after", runValidators: true, session },
+  )
+    .lean<TopicDocumentData>()
+    .exec();
+  return topic ? toTopicRecord(topic) : null;
+}
+
+export async function deleteTopicRecord(
+  topicId: string,
+  expectedUpdatedAt: Date,
+  session: ClientSession,
+): Promise<boolean> {
+  await prepareTopicModel();
+  const topic = await TopicModel.findOneAndDelete(
+    { _id: topicId, updatedAt: expectedUpdatedAt },
+    { session },
+  )
+    .lean<TopicDocumentData>()
+    .exec();
+  return Boolean(topic);
+}
+
+export async function hasTopicRecordsForChapter(
+  chapterId: string,
+  session: ClientSession,
+): Promise<boolean> {
+  await prepareTopicModel();
+  return Boolean(await TopicModel.exists({ chapterId }).session(session));
+}
+
+export async function reserveTopicRecordsByIds(
   topicIds: string[],
   session: ClientSession,
 ): Promise<number> {
-  await prepareTopicModel();
+  const uniqueTopicIds = [...new Set(topicIds)];
 
-  if (topicIds.length === 0) {
+  if (uniqueTopicIds.length === 0) {
     return 0;
   }
 
-  return TopicModel.countDocuments({ _id: { $in: topicIds } })
-    .session(session)
-    .exec();
+  await prepareTopicModel();
+  const result = await TopicModel.updateMany(
+    { _id: { $in: uniqueTopicIds } },
+    { $inc: { integrityRevision: 1 } },
+    { session, timestamps: false },
+  ).exec();
+  return result.matchedCount;
 }

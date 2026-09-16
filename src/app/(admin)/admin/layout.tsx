@@ -15,6 +15,7 @@ export default async function AdminLayout({
           { href: "/admin", label: "Tổng quan" },
           { href: "/admin/students", label: "Quản lý học sinh" },
           { href: "/admin/exams", label: "Quản lý đề thi" },
+          { href: "/admin/topics", label: "Chủ đề & kiến thức" },
           {
             href: "/admin/exam-structure-templates",
             label: "Mẫu cấu trúc",

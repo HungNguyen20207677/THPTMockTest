@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
   findExamIdsWithAttemptRecords: vi.fn(),
   reserveStudentsForExamAssignment: vi.fn(),
   hasExamAttemptRecords: vi.fn(),
-  countTopicRecordsByIds: vi.fn(),
+  reserveTopicRecordsByIds: vi.fn(),
   transactionSession: { id: "transaction-session" },
   withMongoTransaction: vi.fn(),
 }));
@@ -73,7 +73,7 @@ vi.mock("@/lib/db/dao/user.dao", () => ({
 }));
 
 vi.mock("@/lib/db/dao/topic.dao", () => ({
-  countTopicRecordsByIds: mocks.countTopicRecordsByIds,
+  reserveTopicRecordsByIds: mocks.reserveTopicRecordsByIds,
 }));
 
 vi.mock("@/lib/db/mongoose", () => ({
@@ -389,7 +389,7 @@ describe("exam service", () => {
     mocks.reserveStudentsForExamAssignment.mockResolvedValue(true);
     mocks.hasExamAttemptRecords.mockReset();
     mocks.hasExamAttemptRecords.mockResolvedValue(false);
-    mocks.countTopicRecordsByIds.mockReset();
+    mocks.reserveTopicRecordsByIds.mockReset();
     mocks.withMongoTransaction.mockReset();
     mocks.withMongoTransaction.mockImplementation(
       (operation: (session: unknown) => Promise<unknown>) =>
@@ -497,13 +497,13 @@ describe("exam service", () => {
     const input = createValidInput();
     input.questionTopicIds.partOne[0] = [firstTopicId];
     mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
-    mocks.countTopicRecordsByIds.mockResolvedValue(0);
+    mocks.reserveTopicRecordsByIds.mockResolvedValue(0);
     mocks.discardExamPdfUpload.mockResolvedValue(undefined);
 
     await expect(
       createExam(admin, input, replacementPdfUpload),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR", statusCode: 400 });
-    expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
+    expect(mocks.reserveTopicRecordsByIds).toHaveBeenCalledWith(
       [firstTopicId],
       mocks.transactionSession,
     );
@@ -517,13 +517,13 @@ describe("exam service", () => {
       createStructureTemplate(),
     );
     mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
-    mocks.countTopicRecordsByIds.mockResolvedValue(0);
+    mocks.reserveTopicRecordsByIds.mockResolvedValue(0);
     mocks.discardExamPdfUpload.mockResolvedValue(undefined);
 
     await expect(
       createExam(admin, input, replacementPdfUpload),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR", statusCode: 400 });
-    expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
+    expect(mocks.reserveTopicRecordsByIds).toHaveBeenCalledWith(
       [firstTopicId],
       mocks.transactionSession,
     );
@@ -547,7 +547,7 @@ describe("exam service", () => {
     let persistedInput: SaveExamRecordInput | undefined;
     mocks.findExamStructureTemplateRecordById.mockResolvedValue(template);
     mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
-    mocks.countTopicRecordsByIds.mockResolvedValue(2);
+    mocks.reserveTopicRecordsByIds.mockResolvedValue(2);
     mocks.createExamRecord.mockImplementation(
       async (examInput: SaveExamRecordInput, createdBy: string) => {
         persistedInput = examInput;
@@ -569,7 +569,7 @@ describe("exam service", () => {
       admin.id,
       mocks.transactionSession,
     );
-    expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
+    expect(mocks.reserveTopicRecordsByIds).toHaveBeenCalledWith(
       [firstTopicId, secondTopicId],
       mocks.transactionSession,
     );
@@ -1648,7 +1648,7 @@ describe("exam service", () => {
     });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
     mocks.hasExamAttemptRecords.mockResolvedValue(true);
-    mocks.countTopicRecordsByIds.mockResolvedValue(2);
+    mocks.reserveTopicRecordsByIds.mockResolvedValue(2);
     mocks.updateExamMetadataRecord.mockResolvedValue(updatedExam);
 
     const result = await editExam(admin, currentExam.id, {
@@ -1683,7 +1683,7 @@ describe("exam service", () => {
       [assignedStudentId],
       mocks.transactionSession,
     );
-    expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
+    expect(mocks.reserveTopicRecordsByIds).toHaveBeenCalledWith(
       [firstTopicId, secondTopicId],
       mocks.transactionSession,
     );
@@ -1735,14 +1735,14 @@ describe("exam service", () => {
       attemptsStarted: true,
     });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
-    mocks.countTopicRecordsByIds.mockResolvedValue(2);
+    mocks.reserveTopicRecordsByIds.mockResolvedValue(2);
     mocks.updateExamMetadataRecord.mockResolvedValue(updatedExam);
 
     const result = await editExam(admin, currentExam.id, input);
 
     expect(result.questionTopics).toEqual(expectedQuestionTopics);
     expect(result.hasAttempts).toBe(true);
-    expect(mocks.countTopicRecordsByIds).toHaveBeenCalledWith(
+    expect(mocks.reserveTopicRecordsByIds).toHaveBeenCalledWith(
       [firstTopicId, secondTopicId],
       mocks.transactionSession,
     );

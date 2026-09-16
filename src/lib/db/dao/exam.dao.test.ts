@@ -42,6 +42,7 @@ import {
 import {
   findExamRecordById,
   findStudentExamRecordById,
+  hasExamRecordsWithTopicId,
   isPublishedExamAvailableToStudent,
   listPublishedStudentExamRecords,
   listStudentExamRecordsByIds,
@@ -172,6 +173,39 @@ describe("Exam DAO compatibility", () => {
     expect(exam?.questionTopics).toEqual(
       createEmptyQuestionTopics(dynamicStructureSnapshot),
     );
+  });
+
+  it("checks fixed and dynamic nested Topic assignments before deletion", async () => {
+    const topicId = "64b000000000000000000011";
+    const session = { id: "session" };
+    const sessionQuery = vi.fn().mockResolvedValue({ _id: "exam-id" });
+    mocks.exists.mockReturnValue({ session: sessionQuery });
+
+    await expect(
+      hasExamRecordsWithTopicId(topicId, session as never),
+    ).resolves.toBe(true);
+
+    expect(mocks.exists).toHaveBeenCalledWith({
+      $or: [
+        {
+          "questionTopicIds.partOne": {
+            $elemMatch: { $elemMatch: { $eq: topicId } },
+          },
+        },
+        {
+          "questionTopicIds.partTwo": {
+            $elemMatch: { $elemMatch: { $eq: topicId } },
+          },
+        },
+        {
+          "questionTopicIds.partThree": {
+            $elemMatch: { $elemMatch: { $eq: topicId } },
+          },
+        },
+        { "questionTopics.topicIds": topicId },
+      ],
+    });
+    expect(sessionQuery).toHaveBeenCalledWith(session);
   });
 
   it("maps the legacy student workspace safely to BUBBLE", async () => {

@@ -38,7 +38,7 @@ import {
   type ExamPersistenceRecord,
   type SaveExamRecordInput,
 } from "@/lib/db/dao/exam.dao";
-import { countTopicRecordsByIds } from "@/lib/db/dao/topic.dao";
+import { reserveTopicRecordsByIds } from "@/lib/db/dao/topic.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { reserveStudentsForExamAssignment } from "@/lib/db/dao/user.dao";
@@ -189,7 +189,7 @@ async function assertExamTopicsExist(
 
   if (
     topicIds.length > 0 &&
-    (await countTopicRecordsByIds(topicIds, session)) !== topicIds.length
+    (await reserveTopicRecordsByIds(topicIds, session)) !== topicIds.length
   ) {
     throw new RequestValidationError(
       "Một hoặc nhiều chủ đề được chọn không tồn tại.",

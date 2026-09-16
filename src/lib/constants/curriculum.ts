@@ -1,0 +1,2 @@
+export const GRADE_NAME_MAX_LENGTH = 50;
+export const CHAPTER_NAME_MAX_LENGTH = 100;

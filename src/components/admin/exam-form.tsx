@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiClientError } from "@/lib/api/client";
+import { fetchChapters, fetchGrades } from "@/lib/api/curriculum";
 import { fetchExamStructureTemplates } from "@/lib/api/exam-structure-templates";
 import { createExamRecord, fetchExam, updateExamRecord } from "@/lib/api/exams";
 import { fetchStudents } from "@/lib/api/students";
@@ -60,6 +61,8 @@ import {
   type ExamEditorOutput,
 } from "@/lib/validations/exam";
 import { getExamPdfValidationError } from "@/lib/validations/exam-pdf";
+import type { CreateTopicInput } from "@/lib/validations/topic";
+import type { Chapter, Grade } from "@/types/curriculum";
 import type {
   AnyExamAnswerKey,
   ExamDetail,
@@ -293,6 +296,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [studentLoadVersion, setStudentLoadVersion] = useState(0);
   const [studentSearch, setStudentSearch] = useState("");
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [grades, setGrades] = useState<Grade[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
   const [isLoadingTopics, setIsLoadingTopics] = useState(true);
   const [topicLoadError, setTopicLoadError] = useState<string | null>(null);
   const [topicLoadVersion, setTopicLoadVersion] = useState(0);
@@ -504,10 +509,12 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   useEffect(() => {
     let isCurrent = true;
 
-    void fetchTopics()
-      .then((response) => {
+    void Promise.all([fetchGrades(), fetchChapters(), fetchTopics()])
+      .then(([gradeResponse, chapterResponse, topicResponse]) => {
         if (isCurrent) {
-          setTopics(response.data.topics);
+          setGrades(gradeResponse.data.grades);
+          setChapters(chapterResponse.data.chapters);
+          setTopics(topicResponse.data.topics);
           setIsLoadingTopics(false);
           setTopicLoadError(null);
         }
@@ -577,11 +584,11 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     setSubmissionError(null);
   }
 
-  async function handleCreateTopic(name: string): Promise<Topic> {
+  async function handleCreateTopic(input: CreateTopicInput): Promise<Topic> {
     setPendingTopicCreations((count) => count + 1);
 
     try {
-      const response = await createTopicRecord({ name });
+      const response = await createTopicRecord(input);
       const topic = response.data.topic;
 
       setTopics((currentTopics) =>
@@ -911,6 +918,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                             <QuestionTopicSelector
                               label="Chủ đề kiến thức"
                               topics={topics}
+                              grades={grades}
+                              chapters={chapters}
                               value={questionTopicIds}
                               disabled={isBusy}
                               isLoading={isLoadingTopics}
@@ -1603,6 +1612,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                             <QuestionTopicSelector
                               label="Chủ đề kiến thức"
                               topics={topics}
+                              grades={grades}
+                              chapters={chapters}
                               value={field.value ?? []}
                               disabled={isBusy}
                               isLoading={isLoadingTopics}
@@ -1648,6 +1659,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                             <QuestionTopicSelector
                               label="Chủ đề của toàn bộ câu a/b/c/d"
                               topics={topics}
+                              grades={grades}
+                              chapters={chapters}
                               value={field.value ?? []}
                               disabled={isBusy}
                               isLoading={isLoadingTopics}
@@ -1785,6 +1798,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                           <QuestionTopicSelector
                             label="Chủ đề kiến thức"
                             topics={topics}
+                            grades={grades}
+                            chapters={chapters}
                             value={field.value ?? []}
                             disabled={isBusy}
                             isLoading={isLoadingTopics}
