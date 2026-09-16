@@ -59,7 +59,7 @@ export function UserMenu({ user }: { user: AppUser }) {
         type="button"
         aria-expanded={isOpen}
         aria-controls={menuId}
-        className="hover:bg-accent focus-visible:border-ring focus-visible:ring-ring/50 flex h-10 items-center gap-2 rounded-lg border border-transparent px-1.5 outline-none transition-colors focus-visible:ring-3 sm:px-2"
+        className="hover:bg-accent focus-visible:border-ring focus-visible:ring-ring/50 flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-1.5 outline-none transition-colors focus-visible:ring-3 sm:px-2"
         onClick={() => setIsOpen((open) => !open)}
       >
         <span className="bg-primary/10 text-primary flex size-8 items-center justify-center rounded-full text-xs font-bold">

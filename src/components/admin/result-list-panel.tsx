@@ -155,7 +155,7 @@ export function AdminResultListPanel({
           <label className="space-y-1 text-sm">
             <span className="font-medium">Học sinh</span>
             <select
-              className="border-input bg-background h-10 w-full rounded-md border px-3"
+              className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
               value={selectedStudentId}
               onChange={(event) => {
                 setSelectedStudentId(event.target.value);
@@ -173,7 +173,7 @@ export function AdminResultListPanel({
           <label className="space-y-1 text-sm">
             <span className="font-medium">Đề thi</span>
             <select
-              className="border-input bg-background h-10 w-full rounded-md border px-3"
+              className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
               value={selectedExamId}
               onChange={(event) => {
                 setSelectedExamId(event.target.value);
@@ -191,7 +191,7 @@ export function AdminResultListPanel({
           <label className="space-y-1 text-sm">
             <span className="font-medium">Cách nộp</span>
             <select
-              className="border-input bg-background h-10 w-full rounded-md border px-3"
+              className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
               value={selectedStatus}
               onChange={(event) => {
                 setSelectedStatus(
@@ -246,6 +246,8 @@ export function AdminResultListPanel({
             variant="outline"
             onClick={() => {
               setIsLoading(true);
+              setError(null);
+              setData(null);
               setRefreshVersion((version) => version + 1);
             }}
           >

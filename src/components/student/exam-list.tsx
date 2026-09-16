@@ -127,11 +127,13 @@ export function StudentExamList() {
     });
     setIsStarting(true);
     setStartError(null);
+    let navigationStarted = false;
 
     try {
       const response = await confirmStart();
       const { attempt } = response.data.context;
       router.push(getAttemptHref(target.id, attempt.id));
+      navigationStarted = true;
     } catch (error) {
       setStartError(getRequestError(error));
 
@@ -147,8 +149,10 @@ export function StudentExamList() {
         setRefreshVersion((version) => version + 1);
       }
     } finally {
-      startInFlightRef.current = false;
-      setIsStarting(false);
+      if (!navigationStarted) {
+        startInFlightRef.current = false;
+        setIsStarting(false);
+      }
     }
   }
 

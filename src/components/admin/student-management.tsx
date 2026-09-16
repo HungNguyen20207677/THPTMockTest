@@ -59,6 +59,9 @@ export function StudentManagement() {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [isMutating, setIsMutating] = useState(false);
+  const [pendingStatusStudentId, setPendingStatusStudentId] = useState<
+    string | null
+  >(null);
   const [deleteTarget, setDeleteTarget] = useState<StudentAccount | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const formTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -123,6 +126,7 @@ export function StudentManagement() {
     }
 
     setIsMutating(true);
+    setPendingStatusStudentId(student.id);
     setActionError(null);
 
     try {
@@ -133,6 +137,7 @@ export function StudentManagement() {
     } catch (error) {
       setActionError(getActionError(error));
     } finally {
+      setPendingStatusStudentId(null);
       setIsMutating(false);
     }
   }
@@ -278,6 +283,7 @@ export function StudentManagement() {
         <StudentTable
           students={students}
           isBusy={isMutating || activePanel !== null}
+          pendingStatusStudentId={pendingStatusStudentId}
           onEdit={(student, trigger) => {
             formTriggerRef.current = trigger;
             setActivePanel({ type: "edit", student });

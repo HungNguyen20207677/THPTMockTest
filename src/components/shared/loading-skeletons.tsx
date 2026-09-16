@@ -4,16 +4,20 @@ import { cn } from "@/lib/utils";
 function SkeletonStatus({
   label,
   className,
+  containerClassName,
   children,
 }: {
   label: string;
   className?: string;
+  containerClassName?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div role="status" className={className}>
+    <div role="status" className={containerClassName}>
       <span className="sr-only">{label}</span>
-      <div aria-hidden="true">{children}</div>
+      <div aria-hidden="true" className={className}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -57,6 +61,208 @@ function TableShape({
         </div>
       ))}
     </div>
+  );
+}
+
+function PageHeaderShape({
+  action = false,
+  eyebrow = false,
+}: {
+  action?: boolean;
+  eyebrow?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="space-y-2">
+        {eyebrow && <Skeleton className="h-4 w-36" />}
+        <Skeleton className="h-9 w-64 max-w-full" />
+        <Skeleton className="h-4 w-96 max-w-full" />
+      </div>
+      {action && <Skeleton className="h-9 w-32" />}
+    </div>
+  );
+}
+
+export function DashboardSkeleton({
+  variant,
+}: {
+  variant: "admin" | "student";
+}) {
+  return (
+    <SkeletonStatus
+      label={
+        variant === "admin"
+          ? "Đang tải trang tổng quan"
+          : "Đang tải trang học sinh"
+      }
+      className="space-y-8"
+    >
+      {variant === "admin" ? (
+        <div className="border-border bg-background space-y-5 rounded-xl border p-6 shadow-sm">
+          <PageHeaderShape eyebrow />
+          <div className="flex flex-wrap gap-2">
+            <Skeleton className="h-9 w-36" />
+            <Skeleton className="h-9 w-32" />
+            <Skeleton className="h-9 w-28" />
+          </div>
+        </div>
+      ) : (
+        <PageHeaderShape eyebrow />
+      )}
+
+      {variant === "admin" ? (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Skeleton className="h-7 w-44" />
+            <Skeleton className="h-4 w-72 max-w-full" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {Array.from({ length: 5 }, (_, index) => (
+              <div
+                key={index}
+                className="border-border bg-background space-y-3 rounded-xl border p-4 shadow-sm"
+              >
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-9 w-16" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div
+              key={index}
+              className="border-border bg-background flex min-h-52 flex-col rounded-xl border p-5 shadow-sm"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <Skeleton className="h-6 w-2/3" />
+                <Skeleton className="h-7 w-20 rounded-full" />
+              </div>
+              <div className="mt-4 space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-4/5" />
+              </div>
+              <div className="mt-auto flex gap-2 pt-6">
+                <Skeleton className="h-9 w-32" />
+                <Skeleton className="h-9 w-28" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </SkeletonStatus>
+  );
+}
+
+export function ManagementTableSkeleton({
+  columns,
+  label,
+  filters = false,
+}: {
+  columns: number;
+  label: string;
+  filters?: boolean;
+}) {
+  return (
+    <SkeletonStatus label={label} className="space-y-6">
+      <PageHeaderShape action={!filters} eyebrow={filters} />
+      {filters && (
+        <div className="border-border bg-muted/30 grid gap-3 rounded-xl border p-4 md:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => (
+            <Skeleton key={index} className="h-10 w-full" />
+          ))}
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <div className="min-w-3xl">
+          <TableShape columns={columns} rows={6} />
+        </div>
+      </div>
+    </SkeletonStatus>
+  );
+}
+
+export function CurriculumTreeSkeleton({
+  includeHeader = false,
+}: {
+  includeHeader?: boolean;
+}) {
+  return (
+    <SkeletonStatus label="Đang tải cây kiến thức" className="space-y-6">
+      {includeHeader && <PageHeaderShape action />}
+      <div className="space-y-4">
+        {Array.from({ length: 2 }, (_, gradeIndex) => (
+          <div
+            key={gradeIndex}
+            className="border-border bg-background rounded-xl border shadow-sm"
+          >
+            <div className="border-border flex items-center justify-between gap-3 border-b px-4 py-3">
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-28" />
+                <Skeleton className="h-3 w-16" />
+              </div>
+              <Skeleton className="h-8 w-32" />
+            </div>
+            <div className="space-y-3 p-4">
+              {Array.from({ length: 2 }, (_, chapterIndex) => (
+                <div
+                  key={chapterIndex}
+                  className="border-border overflow-hidden rounded-lg border"
+                >
+                  <div className="bg-muted/30 border-border flex items-center justify-between border-b px-3 py-2">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-7 w-28" />
+                  </div>
+                  <div className="space-y-3 px-3 py-3">
+                    <Skeleton className="h-4 w-3/5" />
+                    <Skeleton className="h-4 w-2/5" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </SkeletonStatus>
+  );
+}
+
+export function TopicSelectorSkeleton() {
+  return (
+    <SkeletonStatus
+      label="Đang tải danh sách chủ đề"
+      className="space-y-2 px-1"
+    >
+      {Array.from({ length: 3 }, (_, index) => (
+        <div key={index} className="flex items-start gap-2 py-1">
+          <Skeleton className="size-4 shrink-0" />
+          <div className="flex-1 space-y-1.5">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
+        </div>
+      ))}
+    </SkeletonStatus>
+  );
+}
+
+export function StudentPickerSkeleton() {
+  return (
+    <SkeletonStatus label="Đang tải danh sách học sinh" className="space-y-3">
+      <Skeleton className="h-9 w-full" />
+      <div className="border-border space-y-3 rounded-md border p-3">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={index} className="flex items-start gap-3">
+            <Skeleton className="size-4 shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-3 w-1/3" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </SkeletonStatus>
   );
 }
 
@@ -209,9 +415,14 @@ export function ResultDetailSkeleton({ label }: { label: string }) {
   );
 }
 
-export function ExamFormSkeleton() {
+export function ExamFormSkeleton({
+  includeHeader = false,
+}: {
+  includeHeader?: boolean;
+} = {}) {
   return (
     <SkeletonStatus label="Đang tải đề thi" className="space-y-8">
+      {includeHeader && <PageHeaderShape />}
       {Array.from({ length: 3 }, (_, sectionIndex) => (
         <div
           key={sectionIndex}
@@ -234,7 +445,11 @@ export function ExamFormSkeleton() {
 
 export function ExamWorkspaceSkeleton() {
   return (
-    <SkeletonStatus label="Đang tải không gian làm bài" className="h-full">
+    <SkeletonStatus
+      label="Đang tải không gian làm bài"
+      className="h-full"
+      containerClassName="h-full"
+    >
       <div className="flex h-full min-h-[calc(100dvh-1rem)] flex-col gap-2 lg:min-h-0">
         <div className="border-border bg-background flex min-h-14 items-center justify-between rounded-lg border px-3 shadow-sm">
           <Skeleton className="hidden h-5 w-64 lg:block" />

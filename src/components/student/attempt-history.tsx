@@ -80,6 +80,8 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
             variant="outline"
             onClick={() => {
               setIsLoading(true);
+              setError(null);
+              setHistory(null);
               setRefreshVersion((version) => version + 1);
             }}
           >

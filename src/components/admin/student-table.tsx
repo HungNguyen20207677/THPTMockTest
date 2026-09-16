@@ -21,6 +21,7 @@ const dateFormatter = new Intl.DateTimeFormat("vi-VN", {
 interface StudentTableProps {
   students: StudentAccount[];
   isBusy: boolean;
+  pendingStatusStudentId?: string | null;
   onEdit: (student: StudentAccount, trigger: HTMLButtonElement) => void;
   onResetPassword: (
     student: StudentAccount,
@@ -33,6 +34,7 @@ interface StudentTableProps {
 export function StudentTable({
   students,
   isBusy,
+  pendingStatusStudentId,
   onEdit,
   onResetPassword,
   onToggleStatus,
@@ -76,6 +78,7 @@ export function StudentTable({
       header: "Thao tác",
       cell: ({ row }) => {
         const student = row.original;
+        const isStatusPending = pendingStatusStudentId === student.id;
 
         return (
           <div className="flex min-w-72 flex-wrap items-center gap-1">
@@ -107,10 +110,16 @@ export function StudentTable({
               size="sm"
               variant="outline"
               disabled={isBusy}
-              aria-label={`${student.isActive ? "Khóa" : "Kích hoạt"} tài khoản ${student.fullName}`}
+              aria-label={`${isStatusPending ? (student.isActive ? "Đang khóa" : "Đang kích hoạt") : student.isActive ? "Khóa" : "Kích hoạt"} tài khoản ${student.fullName}`}
               onClick={() => onToggleStatus(student)}
             >
-              {student.isActive ? "Khóa" : "Kích hoạt"}
+              {isStatusPending
+                ? student.isActive
+                  ? "Đang khóa..."
+                  : "Đang kích hoạt..."
+                : student.isActive
+                  ? "Khóa"
+                  : "Kích hoạt"}
             </Button>
             <Button
               type="button"

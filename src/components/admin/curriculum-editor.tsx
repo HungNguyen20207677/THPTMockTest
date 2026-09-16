@@ -187,7 +187,7 @@ export function CurriculumEditor({
             <Label htmlFor="curriculum-grade">Khối</Label>
             <select
               id="curriculum-grade"
-              className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+              className="border-input bg-background h-9 w-full cursor-pointer rounded-md border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               value={gradeId}
               required
               disabled={isSaving}
@@ -208,7 +208,7 @@ export function CurriculumEditor({
             <Label htmlFor="curriculum-chapter">Chương</Label>
             <select
               id="curriculum-chapter"
-              className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+              className="border-input bg-background h-9 w-full cursor-pointer rounded-md border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               value={chapterId}
               required
               disabled={isSaving}

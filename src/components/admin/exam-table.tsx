@@ -60,7 +60,7 @@ export function ExamTable({
       header: "Trạng thái",
       cell: ({ row, getValue }) => (
         <select
-          className="border-input bg-background h-8 rounded-md border px-2 text-xs"
+          className="border-input bg-background h-8 cursor-pointer rounded-md border px-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
           value={getValue()}
           disabled={isBusy}
           aria-label={`Trạng thái của ${row.original.title}`}

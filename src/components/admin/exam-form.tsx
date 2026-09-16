@@ -9,7 +9,10 @@ import { Controller, useForm, useWatch } from "react-hook-form";
 import { QuestionTopicSelector } from "@/components/admin/question-topic-selector";
 import { ShortAnswerBubbleInput } from "@/components/exam/short-answer-bubble-input";
 import { ShortAnswerTextInput } from "@/components/exam/short-answer-text-input";
-import { ExamFormSkeleton } from "@/components/shared/loading-skeletons";
+import {
+  ExamFormSkeleton,
+  StudentPickerSkeleton,
+} from "@/components/shared/loading-skeletons";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -80,7 +83,7 @@ import type { StudentAccount } from "@/types/user";
 import type { Topic } from "@/types/topic";
 
 const selectClassName =
-  "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50";
+  "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full cursor-pointer rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50";
 
 const statusLabels = {
   DRAFT: "Bản nháp",
@@ -95,6 +98,23 @@ const part3InputModeLabels = {
 
 type ExamFormProps =
   { mode: "create"; examId?: never } | { mode: "edit"; examId: string };
+
+class SaveLock {
+  #isLocked = false;
+
+  acquire(): boolean {
+    if (this.#isLocked) {
+      return false;
+    }
+
+    this.#isLocked = true;
+    return true;
+  }
+
+  release() {
+    this.#isLocked = false;
+  }
+}
 
 type DynamicEditorAnswer =
   | ""
@@ -308,6 +328,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [pendingAnswerKeyCorrection, setPendingAnswerKeyCorrection] =
     useState<ExamEditorOutput | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveLock] = useState(() => new SaveLock());
   const [isLoading, setIsLoading] = useState(mode === "edit");
   const [partThreeTextValidity, setPartThreeTextValidity] = useState(() =>
     Array.from({ length: EXAM_STRUCTURE.partThreeQuestions }, () => true),
@@ -673,8 +694,14 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     input: ExamEditorOutput,
     confirmAnswerKeyCorrection: boolean,
   ) {
+    if (!saveLock.acquire()) {
+      return;
+    }
+
     setIsSaving(true);
     setSubmissionError(null);
+    let navigationStarted = false;
+
     try {
       if (mode === "create" && pdfFile) {
         await createExamRecord(input, pdfFile);
@@ -698,6 +725,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
 
       router.push("/admin/exams");
       router.refresh();
+      navigationStarted = true;
     } catch (error) {
       if (
         error instanceof ApiClientError &&
@@ -731,7 +759,10 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           : "exam-submission-error";
       requestAnimationFrame(() => document.getElementById(errorId)?.focus());
     } finally {
-      setIsSaving(false);
+      if (!navigationStarted) {
+        saveLock.release();
+        setIsSaving(false);
+      }
     }
   }
 
@@ -1312,6 +1343,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               <Input
                 id="exam-pdf"
                 type="file"
+                className="cursor-pointer disabled:cursor-not-allowed"
                 accept="application/pdf,.pdf"
                 required={mode === "create"}
                 disabled={isContentLocked}
@@ -1357,7 +1389,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           <fieldset className="max-w-2xl space-y-3">
             <legend className="text-sm font-medium">Phạm vi học sinh</legend>
             <div className="grid gap-2 sm:grid-cols-2">
-              <label className="border-border flex items-center gap-3 rounded-lg border p-3 text-sm">
+              <label
+                className={`border-border flex items-center gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+              >
                 <input
                   type="radio"
                   value={EXAM_VISIBILITY_MODE.ALL_STUDENTS}
@@ -1365,7 +1399,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 />
                 <span>Tất cả học sinh</span>
               </label>
-              <label className="border-border flex items-center gap-3 rounded-lg border p-3 text-sm">
+              <label
+                className={`border-border flex items-center gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+              >
                 <input
                   type="radio"
                   value={EXAM_VISIBILITY_MODE.SELECTED_STUDENTS}
@@ -1386,9 +1422,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                   </p>
                 </div>
                 {isLoadingStudents ? (
-                  <p role="status" className="text-muted-foreground text-sm">
-                    Đang tải danh sách học sinh...
-                  </p>
+                  <StudentPickerSkeleton />
                 ) : studentLoadError ? (
                   <div className="space-y-2">
                     <p role="alert" className="text-destructive text-sm">
@@ -1424,7 +1458,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                           {filteredStudents.map((student, index) => (
                             <label
                               key={student.id}
-                              className="border-border flex items-start gap-3 border-b px-3 py-2.5 text-sm last:border-b-0"
+                              className={`border-border flex items-start gap-3 border-b px-3 py-2.5 text-sm last:border-b-0 ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
                             >
                               <input
                                 ref={index === 0 ? field.ref : undefined}
@@ -1529,7 +1563,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             </p>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="border-border flex items-start gap-3 rounded-lg border p-3 text-sm">
+            <label
+              className={`border-border flex items-start gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+            >
               <input
                 type="checkbox"
                 className="mt-0.5 size-4"
@@ -1537,7 +1573,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               />
               <span>Cho phép làm lại</span>
             </label>
-            <label className="border-border flex items-start gap-3 rounded-lg border p-3 text-sm">
+            <label
+              className={`border-border flex items-start gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+            >
               <input
                 type="checkbox"
                 className="mt-0.5 size-4"
@@ -1545,7 +1583,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               />
               <span>Hiện điểm sau khi nộp</span>
             </label>
-            <label className="border-border flex items-start gap-3 rounded-lg border p-3 text-sm">
+            <label
+              className={`border-border flex items-start gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+            >
               <input
                 type="checkbox"
                 className="mt-0.5 size-4"

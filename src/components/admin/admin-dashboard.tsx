@@ -57,7 +57,10 @@ export function AdminDashboard() {
         <Button
           type="button"
           variant="outline"
-          onClick={() => setRefreshVersion((version) => version + 1)}
+          onClick={() => {
+            setError(null);
+            setRefreshVersion((version) => version + 1);
+          }}
         >
           Thử lại
         </Button>

@@ -3,6 +3,7 @@
 import { useDeferredValue, useEffect, useId, useRef, useState } from "react";
 
 import { TopicCreateDialog } from "@/components/admin/topic-create-dialog";
+import { TopicSelectorSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiClientError } from "@/lib/api/client";
@@ -130,7 +131,7 @@ export function QuestionTopicSelector({
                 </span>
                 <button
                   type="button"
-                  className="hover:bg-foreground/10 focus-visible:ring-ring/50 rounded px-0.5 font-semibold outline-none focus-visible:ring-2"
+                  className="hover:bg-foreground/10 focus-visible:ring-ring/50 cursor-pointer rounded px-0.5 font-semibold outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={disabled || isCreating}
                   aria-label={`Bỏ chủ đề ${topic?.name ?? topicId}`}
                   onClick={() =>
@@ -200,12 +201,7 @@ export function QuestionTopicSelector({
           />
 
           {isLoading ? (
-            <p
-              role="status"
-              className="text-muted-foreground px-2 py-3 text-sm"
-            >
-              Đang tải chủ đề...
-            </p>
+            <TopicSelectorSkeleton />
           ) : loadError ? (
             <div className="space-y-2 px-2 py-1">
               <p role="alert" className="text-destructive text-sm">
@@ -225,13 +221,13 @@ export function QuestionTopicSelector({
               {filteredTopics.map((topic) => (
                 <label
                   key={topic.id}
-                  className="border-border flex cursor-pointer items-start gap-2 border-b px-2.5 py-2 text-sm last:border-b-0"
+                  className={`border-border flex items-start gap-2 border-b px-2.5 py-2 text-sm last:border-b-0 ${disabled || isCreating ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
                 >
                   <input
                     type="checkbox"
                     className="size-4"
                     checked={value.includes(topic.id)}
-                    disabled={isCreating}
+                    disabled={disabled || isCreating}
                     onChange={(event) =>
                       onChange(
                         event.target.checked

@@ -114,18 +114,21 @@ export function ShortAnswerBubbleInput({
                         slotIndex === value.length - 1 ||
                         optionAlreadyUsed)) ||
                     (option === "-" && optionAlreadyUsed);
+                  const choiceDisabled =
+                    disabled || precedingSlotIsEmpty || optionDisabled;
 
                   return (
                     <label
                       key={option}
                       className={cn(
-                        "relative flex size-8 cursor-pointer items-center justify-center rounded-full border text-xs font-semibold transition-colors",
+                        "relative flex size-8 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
                         selectedOption === option
                           ? "border-primary bg-primary text-primary-foreground"
                           : "border-input bg-background hover:border-primary",
                         "focus-within:border-ring focus-within:ring-ring/50 focus-within:ring-3",
-                        optionDisabled &&
-                          "cursor-not-allowed opacity-35 hover:border-input",
+                        choiceDisabled
+                          ? "cursor-not-allowed opacity-35 hover:border-input"
+                          : "cursor-pointer",
                       )}
                     >
                       <input
@@ -139,7 +142,7 @@ export function ShortAnswerBubbleInput({
                         name={`${generatedId}-${slotIndex}`}
                         value={option}
                         checked={selectedOption === option}
-                        disabled={disabled || optionDisabled}
+                        disabled={choiceDisabled}
                         aria-label={`Ô ${slotIndex + 1}: ${getOptionLabel(option)}`}
                         onBlur={onBlur}
                         onChange={() => updateSlot(slotIndex, option)}

@@ -40,7 +40,7 @@ import type {
 } from "@/types/exam-structure-template";
 
 const selectClassName =
-  "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50";
+  "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full cursor-pointer rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50";
 
 const questionTypeLabels: Record<ExamStructureQuestionType, string> = {
   SINGLE_CHOICE: "Trắc nghiệm một đáp án",

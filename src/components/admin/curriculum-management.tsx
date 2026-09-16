@@ -6,6 +6,7 @@ import {
   CurriculumEditor,
   type CurriculumEditorTarget,
 } from "@/components/admin/curriculum-editor";
+import { CurriculumTreeSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import {
@@ -39,10 +40,12 @@ function ActionButtons({
   onEdit,
   onDelete,
   disabled,
+  deletePending = false,
 }: {
   onEdit: () => void;
   onDelete: () => void;
   disabled: boolean;
+  deletePending?: boolean;
 }) {
   return (
     <div className="flex shrink-0 gap-1">
@@ -63,7 +66,7 @@ function ActionButtons({
         disabled={disabled}
         onClick={onDelete}
       >
-        Xóa
+        {deletePending ? "Đang xóa..." : "Xóa"}
       </Button>
     </div>
   );
@@ -114,6 +117,7 @@ export function CurriculumManagement() {
   function refreshCatalog() {
     setEditor(null);
     setActionError(null);
+    setLoadError(null);
     setIsLoading(true);
     setRefreshVersion((version) => version + 1);
   }
@@ -226,9 +230,7 @@ export function CurriculumManagement() {
           </Button>
         </div>
       ) : isLoading ? (
-        <div className="border-border text-muted-foreground rounded-xl border p-8 text-center text-sm">
-          Đang tải cây kiến thức...
-        </div>
+        <CurriculumTreeSkeleton />
       ) : (
         <div className="space-y-4">
           {grades.map((grade) => {
@@ -261,6 +263,10 @@ export function CurriculumManagement() {
                     </Button>
                     <ActionButtons
                       disabled={isBusy}
+                      deletePending={
+                        deleteTarget?.kind === "grade" &&
+                        deleteTarget.value.id === grade.id
+                      }
                       onEdit={() => setEditor({ kind: "edit-grade", grade })}
                       onDelete={() =>
                         void handleDelete({ kind: "grade", value: grade })
@@ -300,6 +306,10 @@ export function CurriculumManagement() {
                             </Button>
                             <ActionButtons
                               disabled={isBusy}
+                              deletePending={
+                                deleteTarget?.kind === "chapter" &&
+                                deleteTarget.value.id === chapter.id
+                              }
                               onEdit={() =>
                                 setEditor({ kind: "edit-chapter", chapter })
                               }
@@ -322,6 +332,10 @@ export function CurriculumManagement() {
                                 <span>{topic.name}</span>
                                 <ActionButtons
                                   disabled={isBusy}
+                                  deletePending={
+                                    deleteTarget?.kind === "topic" &&
+                                    deleteTarget.value.id === topic.id
+                                  }
                                   onEdit={() =>
                                     setEditor({ kind: "edit-topic", topic })
                                   }
@@ -376,6 +390,10 @@ export function CurriculumManagement() {
                     <span>{topic.name}</span>
                     <ActionButtons
                       disabled={isBusy}
+                      deletePending={
+                        deleteTarget?.kind === "topic" &&
+                        deleteTarget.value.id === topic.id
+                      }
                       onEdit={() => setEditor({ kind: "edit-topic", topic })}
                       onDelete={() =>
                         void handleDelete({ kind: "topic", value: topic })
