@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useEffect, useState } from "react";
 
+import { AdminEssayImageViewer } from "@/components/admin/admin-essay-image-viewer";
 import {
   AnswerReview,
   ScoreSummary,
@@ -280,25 +280,7 @@ function ManualEssayGradingSection({
               </div>
 
               {review.studentAnswer.images.length > 0 ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {review.studentAnswer.images.map((image, imageIndex) => (
-                    <figure
-                      key={image.publicId}
-                      className="border-border overflow-hidden rounded-lg border"
-                    >
-                      <Image
-                        src={image.secureUrl}
-                        alt={`Ảnh bài làm ${imageIndex + 1}`}
-                        width={image.width}
-                        height={image.height}
-                        className="h-72 w-full object-contain lg:h-96"
-                      />
-                      <figcaption className="text-muted-foreground truncate px-3 py-2 text-xs">
-                        {image.originalFilename}
-                      </figcaption>
-                    </figure>
-                  ))}
-                </div>
+                <AdminEssayImageViewer images={review.studentAnswer.images} />
               ) : (
                 <p className="bg-muted rounded-lg px-4 py-3 text-sm font-medium">
                   Học sinh không tải lên bài làm
