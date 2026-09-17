@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireApiRole: vi.fn(),
   getAdminStudentDetail: vi.fn(),
+  deleteStudent: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/authorization", () => ({
@@ -14,11 +15,11 @@ vi.mock("@/lib/services/reporting.service", () => ({
 }));
 
 vi.mock("@/lib/services/student.service", () => ({
-  deleteStudent: vi.fn(),
+  deleteStudent: mocks.deleteStudent,
   editStudent: vi.fn(),
 }));
 
-import { GET } from "@/app/api/admin/students/[studentId]/route";
+import { DELETE, GET } from "@/app/api/admin/students/[studentId]/route";
 import { USER_ROLE } from "@/lib/constants/roles";
 import { ForbiddenError } from "@/lib/errors/app-error";
 
@@ -26,6 +27,7 @@ describe("ADMIN student detail route", () => {
   beforeEach(() => {
     mocks.requireApiRole.mockReset();
     mocks.getAdminStudentDetail.mockReset();
+    mocks.deleteStudent.mockReset();
   });
 
   it("rejects STUDENT access before returning topic analytics", async () => {
@@ -40,5 +42,32 @@ describe("ADMIN student detail route", () => {
     expect(response.status).toBe(403);
     expect(mocks.requireApiRole).toHaveBeenCalledWith(USER_ROLE.ADMIN);
     expect(mocks.getAdminStudentDetail).not.toHaveBeenCalled();
+  });
+
+  it("returns a post-commit Cloudinary cleanup warning to ADMIN", async () => {
+    const admin = {
+      id: "admin-id",
+      username: "admin",
+      fullName: "Quan Tri Vien",
+      role: USER_ROLE.ADMIN,
+    };
+    const studentId = "507f1f77bcf86cd799439011";
+    const cleanupWarning = "Dữ liệu đã được xóa nhưng một số tệp chưa thể xóa.";
+    mocks.requireApiRole.mockResolvedValue(admin);
+    mocks.deleteStudent.mockResolvedValue({ cleanupWarning });
+
+    const response = await DELETE(
+      new Request(`http://localhost/api/admin/students/${studentId}`, {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ studentId }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      data: { cleanupWarning },
+    });
+    expect(mocks.requireApiRole).toHaveBeenCalledWith(USER_ROLE.ADMIN);
+    expect(mocks.deleteStudent).toHaveBeenCalledWith(admin, studentId);
   });
 });

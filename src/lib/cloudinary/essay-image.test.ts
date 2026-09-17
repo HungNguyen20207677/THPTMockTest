@@ -200,4 +200,12 @@ describe("essay image Cloudinary flow", () => {
       invalidate: true,
     });
   });
+
+  it("treats an already-missing image as successfully deleted", async () => {
+    mocks.destroy.mockResolvedValue({ result: "not found" });
+
+    await expect(
+      deleteEssayImage(createReference().publicId),
+    ).resolves.toBeUndefined();
+  });
 });

@@ -100,6 +100,13 @@ export interface ExamAttemptRegradeSource {
   gradingStatus?: ExamAttemptGradingStatus;
 }
 
+export interface ExamAttemptDeletionSource {
+  id: string;
+  examId: string;
+  studentId: string;
+  answers?: ExamAttemptAnswers;
+}
+
 export interface ExamAttemptGradingReplacement {
   attemptId: string;
   grading: ExamAttemptGradingSnapshot;
@@ -135,6 +142,11 @@ interface ExamAttemptDocumentData {
   createdAt: Date;
   updatedAt: Date;
 }
+
+type ExamAttemptDeletionDocumentData = Pick<
+  ExamAttemptDocumentData,
+  "_id" | "examId" | "studentId" | "answers"
+>;
 
 let examAttemptIndexesPromise: Promise<void> | null = null;
 
@@ -770,6 +782,30 @@ export async function replaceTerminalExamAttemptGradings(
 export async function hasExamAttemptRecords(examId: string): Promise<boolean> {
   await prepareExamAttemptModel();
   return Boolean(await ExamAttemptModel.exists({ examId }));
+}
+
+export async function listExamAttemptDeletionSources(
+  filter: { examId: string } | { studentId: string },
+  session: ClientSession,
+): Promise<ExamAttemptDeletionSource[]> {
+  await prepareExamAttemptModel();
+  const attempts = await ExamAttemptModel.find(
+    filter,
+    { _id: 1, examId: 1, studentId: 1, answers: 1 },
+    { session },
+  )
+    .lean<ExamAttemptDeletionDocumentData[]>()
+    .exec();
+
+  return attempts.map((attempt) => ({
+    id: attempt._id.toString(),
+    examId: attempt.examId.toString(),
+    studentId: attempt.studentId.toString(),
+    answers:
+      attempt.answers === undefined
+        ? undefined
+        : examAttemptAnswersSchema.parse(attempt.answers),
+  }));
 }
 
 export async function deleteExamAttemptRecordsByExamId(

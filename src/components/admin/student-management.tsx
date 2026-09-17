@@ -151,9 +151,10 @@ export function StudentManagement() {
     setActionError(null);
 
     try {
-      await deleteStudentAccount(deleteTarget.id);
+      const response = await deleteStudentAccount(deleteTarget.id);
       setDeleteTarget(null);
       setActivePanel(null);
+      setActionError(response.data.cleanupWarning);
       refreshStudents();
     } catch (error) {
       setActionError(getActionError(error));
@@ -233,10 +234,10 @@ export function StudentManagement() {
               <AlertDialogTitle>Xác nhận xóa tài khoản</AlertDialogTitle>
               <AlertDialogDescription>
                 Xóa vĩnh viễn tài khoản {deleteTarget.fullName} (@
-                {deleteTarget.username}) cùng toàn bộ lượt làm bài, lịch sử và
-                kết quả của học sinh này? Tài khoản và tất cả dữ liệu liên quan
-                sẽ bị xóa vĩnh viễn, không thể khôi phục. Nếu chỉ muốn ngăn đăng
-                nhập và giữ lại dữ liệu, hãy khóa tài khoản.
+                {deleteTarget.username}) cùng toàn bộ lượt làm bài, kết quả và
+                ảnh bài tự luận đã tải lên của học sinh này? Tài khoản và tất cả
+                dữ liệu liên quan sẽ bị xóa vĩnh viễn, không thể khôi phục. Nếu
+                chỉ muốn ngăn đăng nhập và giữ lại dữ liệu, hãy khóa tài khoản.
               </AlertDialogDescription>
             </AlertDialogHeader>
             {actionError && (

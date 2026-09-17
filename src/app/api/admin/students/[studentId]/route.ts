@@ -10,6 +10,7 @@ import { studentIdSchema, updateStudentSchema } from "@/lib/validations/user";
 import type { ApiSuccessResponse } from "@/types/api";
 import type { StudentAccount } from "@/types/user";
 import type { AdminStudentDetail } from "@/types/reporting";
+import type { HardDeleteResult } from "@/types/deletion";
 
 export const runtime = "nodejs";
 
@@ -52,9 +53,12 @@ export async function DELETE(_request: Request, context: StudentRouteContext) {
   try {
     const admin = await requireApiRole(USER_ROLE.ADMIN);
     const studentId = studentIdSchema.parse((await context.params).studentId);
-    await deleteStudent(admin, studentId);
+    const result = await deleteStudent(admin, studentId);
+    const response = {
+      data: result,
+    } satisfies ApiSuccessResponse<HardDeleteResult>;
 
-    return new NextResponse(null, { status: 204 });
+    return NextResponse.json(response);
   } catch (error) {
     return toErrorResponse(error);
   }

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   connectToDatabase: vi.fn(),
   bulkWrite: vi.fn(),
   deleteMany: vi.fn(),
+  find: vi.fn(),
   findOneAndUpdate: vi.fn(),
   init: vi.fn(),
 }));
@@ -16,6 +17,7 @@ vi.mock("@/lib/db/models/exam-attempt.model", () => ({
   ExamAttemptModel: {
     bulkWrite: mocks.bulkWrite,
     deleteMany: mocks.deleteMany,
+    find: mocks.find,
     findOneAndUpdate: mocks.findOneAndUpdate,
     init: mocks.init,
   },
@@ -26,6 +28,7 @@ import {
   autoSubmitExpiredExamAttemptRecord,
   deleteExamAttemptRecordsByExamId,
   deleteExamAttemptRecordsByStudentId,
+  listExamAttemptDeletionSources,
   removeEssayImageFromOwnedActiveExamAttempt,
   replaceTerminalExamAttemptGradings,
   saveOwnedActiveExamAttemptAnswers,
@@ -47,6 +50,7 @@ describe("ExamAttempt cascade DAO", () => {
     mocks.connectToDatabase.mockResolvedValue(undefined);
     mocks.bulkWrite.mockReset();
     mocks.deleteMany.mockReset();
+    mocks.find.mockReset();
     mocks.findOneAndUpdate.mockReset();
     mocks.findOneAndUpdate.mockReturnValue({
       lean: () => ({ exec: () => Promise.resolve(null) }),
@@ -103,6 +107,59 @@ describe("ExamAttempt cascade DAO", () => {
     ).resolves.toBe(2);
     expect(mocks.deleteMany).toHaveBeenCalledWith(
       { studentId: "student-id" },
+      { session },
+    );
+  });
+
+  it("reads stored answers for only the cascade owner before deletion", async () => {
+    const session = { id: "cascade-session" };
+    const answers = {
+      answersByQuestionId: {
+        essay: {
+          type: "ESSAY_IMAGE",
+          images: [
+            {
+              publicId: "essay-image",
+              secureUrl:
+                "https://res.cloudinary.com/test/image/upload/essay-image.jpg",
+              originalFilename: "essay-image.jpg",
+              bytes: 1024,
+              format: "jpg",
+              width: 1200,
+              height: 800,
+            },
+          ],
+        },
+      },
+    };
+    const documents = [
+      {
+        _id: { toString: () => "attempt-id" },
+        examId: { toString: () => "exam-id" },
+        studentId: { toString: () => "student-id" },
+        answers,
+      },
+    ];
+    mocks.find.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve(documents) }),
+    });
+
+    await expect(
+      listExamAttemptDeletionSources(
+        { studentId: "student-id" },
+        session as never,
+      ),
+    ).resolves.toEqual([
+      {
+        id: "attempt-id",
+        examId: "exam-id",
+        studentId: "student-id",
+        answers,
+      },
+    ]);
+    expect(mocks.find).toHaveBeenCalledWith(
+      { studentId: "student-id" },
+      { _id: 1, examId: 1, studentId: 1, answers: 1 },
       { session },
     );
   });

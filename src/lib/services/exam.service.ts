@@ -10,6 +10,7 @@ import {
   discardExamPdfUpload,
   verifyExamPdfAsset,
 } from "@/lib/cloudinary/exam-pdf";
+import { cleanupCloudinaryAfterHardDelete } from "@/lib/cloudinary/hard-delete-cleanup";
 import { EXAM_STATUS, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
 import { EXAM_ATTEMPT_GRADING_STATUS } from "@/lib/constants/exam-attempt";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
@@ -21,6 +22,7 @@ import {
   hasExamAttemptRecords,
   listTerminalExamAttemptRegradeSources,
   replaceTerminalExamAttemptGradings,
+  listExamAttemptDeletionSources,
 } from "@/lib/db/dao/exam-attempt.dao";
 import {
   acquireExamPdfOperationLease,
@@ -42,6 +44,7 @@ import { reserveTopicRecordsByIds } from "@/lib/db/dao/topic.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { reserveStudentsForExamAssignment } from "@/lib/db/dao/user.dao";
+import { collectEssayImagePublicIds } from "@/lib/exam/essay-image-resources";
 import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
 import {
   hasFinalTotalScore,
@@ -90,6 +93,7 @@ import type {
 } from "@/types/exam";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { AppUser } from "@/types/user";
+import type { HardDeleteResult } from "@/types/deletion";
 import type { ExamPdfUploadIntent } from "@/lib/validations/exam-pdf";
 import { examStructureSnapshotSchema } from "@/lib/validations/exam-structure-template";
 
@@ -806,7 +810,7 @@ export async function deleteExam(
   actor: AppUser,
   examId: string,
   expectedUpdatedAt: string,
-): Promise<void> {
+): Promise<HardDeleteResult> {
   assertAdmin(actor);
   const currentExam = await findExamRecordById(examId);
 
@@ -821,22 +825,35 @@ export async function deleteExam(
   const leases = await acquirePdfOperationLeases([currentExam.pdf.publicId]);
 
   try {
-    const deletedExam = await withMongoTransaction(async (session) => {
-      await deleteExamAttemptRecordsByExamId(examId, session);
-      const deleted = await deleteExamRecord(
-        examId,
-        currentExam.updatedAt,
-        session,
-      );
+    const { deletedExam, essayImagePublicIds } = await withMongoTransaction(
+      async (session) => {
+        const attempts = await listExamAttemptDeletionSources(
+          { examId },
+          session,
+        );
+        const publicIds = collectEssayImagePublicIds(attempts);
+        await deleteExamAttemptRecordsByExamId(examId, session);
+        const deleted = await deleteExamRecord(
+          examId,
+          currentExam.updatedAt,
+          session,
+        );
 
-      if (!deleted) {
-        throw new ExamConflictError();
-      }
+        if (!deleted) {
+          throw new ExamConflictError();
+        }
 
-      return deleted;
+        return {
+          deletedExam: deleted,
+          essayImagePublicIds: publicIds,
+        };
+      },
+    );
+
+    return await cleanupCloudinaryAfterHardDelete({
+      essayImagePublicIds,
+      examPdfPublicId: deletedExam.pdf.publicId,
     });
-
-    await deletePdfBestEffort(deletedExam.pdf.publicId);
   } finally {
     await releasePdfOperationLeasesBestEffort(leases);
   }

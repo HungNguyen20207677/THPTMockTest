@@ -7,6 +7,7 @@ import type {
 } from "@/lib/validations/user";
 import type { ApiSuccessResponse } from "@/types/api";
 import type { StudentAccount } from "@/types/user";
+import type { HardDeleteResult } from "@/types/deletion";
 
 const STUDENTS_ENDPOINT = "/api/admin/students";
 
@@ -62,7 +63,9 @@ export function updateStudentAccountStatus(
   );
 }
 
-export function deleteStudentAccount(studentId: string): Promise<void> {
+export function deleteStudentAccount(
+  studentId: string,
+): Promise<ApiSuccessResponse<HardDeleteResult>> {
   return apiRequest(`${STUDENTS_ENDPOINT}/${studentId}`, {
     method: "DELETE",
   });

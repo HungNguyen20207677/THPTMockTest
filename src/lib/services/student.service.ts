@@ -4,7 +4,11 @@ import { hash } from "bcryptjs";
 
 import { USER_ROLE } from "@/lib/constants/roles";
 import { PASSWORD_HASH_ROUNDS } from "@/lib/constants/user";
-import { deleteExamAttemptRecordsByStudentId } from "@/lib/db/dao/exam-attempt.dao";
+import { cleanupCloudinaryAfterHardDelete } from "@/lib/cloudinary/hard-delete-cleanup";
+import {
+  deleteExamAttemptRecordsByStudentId,
+  listExamAttemptDeletionSources,
+} from "@/lib/db/dao/exam-attempt.dao";
 import { removeStudentFromExamAssignments } from "@/lib/db/dao/exam.dao";
 import {
   createUser,
@@ -19,6 +23,7 @@ import {
 } from "@/lib/db/dao/user.dao";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { withMongoTransaction } from "@/lib/db/mongoose";
+import { collectEssayImagePublicIds } from "@/lib/exam/essay-image-resources";
 import {
   DuplicateUsernameError,
   ForbiddenError,
@@ -30,6 +35,7 @@ import type {
   UpdateStudentInput,
 } from "@/lib/validations/user";
 import type { AppUser, StudentAccount } from "@/types/user";
+import type { HardDeleteResult } from "@/types/deletion";
 
 function assertAdmin(actor: AppUser): void {
   if (actor.role !== USER_ROLE.ADMIN) {
@@ -175,10 +181,15 @@ export async function setStudentActiveStatus(
 export async function deleteStudent(
   actor: AppUser,
   studentId: string,
-): Promise<void> {
+): Promise<HardDeleteResult> {
   await requireStudentTarget(actor, studentId);
 
-  await withMongoTransaction(async (session) => {
+  const essayImagePublicIds = await withMongoTransaction(async (session) => {
+    const attempts = await listExamAttemptDeletionSources(
+      { studentId },
+      session,
+    );
+    const publicIds = collectEssayImagePublicIds(attempts);
     await deleteExamAttemptRecordsByStudentId(studentId, session);
     await removeStudentFromExamAssignments(studentId, session);
     const deleted = await deleteStudentUser(studentId, session);
@@ -186,5 +197,9 @@ export async function deleteStudent(
     if (!deleted) {
       throw new StudentNotFoundError();
     }
+
+    return publicIds;
   });
+
+  return cleanupCloudinaryAfterHardDelete({ essayImagePublicIds });
 }

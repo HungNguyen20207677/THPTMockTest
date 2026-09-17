@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   hash: vi.fn(),
+  cleanupCloudinaryAfterHardDelete: vi.fn(),
   createUser: vi.fn(),
   deleteExamAttemptRecordsByStudentId: vi.fn(),
+  listExamAttemptDeletionSources: vi.fn(),
   deleteExamRecord: vi.fn(),
   removeStudentFromExamAssignments: vi.fn(),
   deleteStudentUser: vi.fn(),
@@ -21,9 +23,14 @@ vi.mock("bcryptjs", () => ({
   hash: mocks.hash,
 }));
 
+vi.mock("@/lib/cloudinary/hard-delete-cleanup", () => ({
+  cleanupCloudinaryAfterHardDelete: mocks.cleanupCloudinaryAfterHardDelete,
+}));
+
 vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   deleteExamAttemptRecordsByStudentId:
     mocks.deleteExamAttemptRecordsByStudentId,
+  listExamAttemptDeletionSources: mocks.listExamAttemptDeletionSources,
 }));
 
 vi.mock("@/lib/db/dao/user.dao", () => ({
@@ -74,9 +81,15 @@ const studentActor: AppUser = {
 describe("student service", () => {
   beforeEach(() => {
     mocks.hash.mockReset();
+    mocks.cleanupCloudinaryAfterHardDelete.mockReset();
+    mocks.cleanupCloudinaryAfterHardDelete.mockResolvedValue({
+      cleanupWarning: null,
+    });
     mocks.createUser.mockReset();
     mocks.deleteExamAttemptRecordsByStudentId.mockReset();
     mocks.deleteExamAttemptRecordsByStudentId.mockResolvedValue(0);
+    mocks.listExamAttemptDeletionSources.mockReset();
+    mocks.listExamAttemptDeletionSources.mockResolvedValue([]);
     mocks.deleteExamRecord.mockReset();
     mocks.removeStudentFromExamAssignments.mockReset();
     mocks.removeStudentFromExamAssignments.mockResolvedValue(0);
@@ -216,6 +229,117 @@ describe("student service", () => {
     expect(
       mocks.removeStudentFromExamAssignments.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.deleteStudentUser.mock.invocationCallOrder[0]);
+    expect(mocks.cleanupCloudinaryAfterHardDelete).toHaveBeenCalledWith({
+      essayImagePublicIds: [],
+    });
+  });
+
+  it("collects all of only the Student's essay images before the transaction deletes attempts", async () => {
+    mocks.findUserById.mockResolvedValue({
+      id: "student-id",
+      username: "student-one",
+      fullName: "Nguyen Van An",
+      role: USER_ROLE.STUDENT,
+      isActive: true,
+      createdAt,
+      updatedAt,
+    });
+    mocks.listExamAttemptDeletionSources.mockResolvedValue([
+      {
+        id: "pending-attempt",
+        examId: "exam-one",
+        studentId: "student-id",
+        answers: {
+          answersByQuestionId: {
+            "essay-one": {
+              type: "ESSAY_IMAGE",
+              images: [
+                {
+                  publicId: "student-image-1",
+                  secureUrl:
+                    "https://res.cloudinary.com/test/image/upload/student-image-1.jpg",
+                  originalFilename: "one.jpg",
+                  bytes: 1024,
+                  format: "jpg",
+                  width: 1200,
+                  height: 800,
+                },
+                {
+                  publicId: "student-image-2",
+                  secureUrl:
+                    "https://res.cloudinary.com/test/image/upload/student-image-2.png",
+                  originalFilename: "two.png",
+                  bytes: 2048,
+                  format: "png",
+                  width: 800,
+                  height: 1200,
+                },
+              ],
+            },
+            "essay-two": {
+              type: "ESSAY_IMAGE",
+              images: [
+                {
+                  publicId: "student-image-3",
+                  secureUrl:
+                    "https://res.cloudinary.com/test/image/upload/student-image-3.webp",
+                  originalFilename: "three.webp",
+                  bytes: 3072,
+                  format: "webp",
+                  width: 1600,
+                  height: 900,
+                },
+              ],
+            },
+          },
+        },
+      },
+      {
+        id: "completed-attempt",
+        examId: "exam-two",
+        studentId: "student-id",
+        answers: {
+          answersByQuestionId: {
+            essay: {
+              type: "ESSAY_IMAGE",
+              images: [
+                {
+                  publicId: "student-image-2",
+                  secureUrl:
+                    "https://res.cloudinary.com/test/image/upload/student-image-2.png",
+                  originalFilename: "two.png",
+                  bytes: 2048,
+                  format: "png",
+                  width: 800,
+                  height: 1200,
+                },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+    mocks.deleteStudentUser.mockResolvedValue(true);
+
+    await deleteStudent(admin, "student-id");
+
+    expect(mocks.listExamAttemptDeletionSources).toHaveBeenCalledWith(
+      { studentId: "student-id" },
+      mocks.transactionSession,
+    );
+    expect(
+      mocks.listExamAttemptDeletionSources.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      mocks.deleteExamAttemptRecordsByStudentId.mock.invocationCallOrder[0],
+    );
+    expect(mocks.cleanupCloudinaryAfterHardDelete).toHaveBeenCalledWith({
+      essayImagePublicIds: [
+        "student-image-1",
+        "student-image-2",
+        "student-image-3",
+      ],
+    });
+    expect(mocks.deleteExamRecord).not.toHaveBeenCalled();
   });
 
   it("removes assignment references without deleting Exams", async () => {
@@ -290,5 +414,6 @@ describe("student service", () => {
       attemptIds: ["in-progress-attempt", "submitted-attempt"],
       assignedStudentIds: ["student-id", "another-student-id"],
     });
+    expect(mocks.cleanupCloudinaryAfterHardDelete).not.toHaveBeenCalled();
   });
 });

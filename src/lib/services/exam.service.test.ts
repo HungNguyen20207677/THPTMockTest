@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  cleanupCloudinaryAfterHardDelete: vi.fn(),
   assertAuthenticExamPdfUploadReference: vi.fn(),
   assertValidExamPdfUploadReference: vi.fn(),
   createExamPdfUploadTicket: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   createExamRecord: vi.fn(),
   findExamStructureTemplateRecordById: vi.fn(),
   deleteExamAttemptRecordsByExamId: vi.fn(),
+  listExamAttemptDeletionSources: vi.fn(),
   listTerminalExamAttemptRegradeSources: vi.fn(),
   replaceTerminalExamAttemptGradings: vi.fn(),
   deleteExamRecord: vi.fn(),
@@ -28,6 +30,10 @@ const mocks = vi.hoisted(() => ({
   reserveTopicRecordsByIds: vi.fn(),
   transactionSession: { id: "transaction-session" },
   withMongoTransaction: vi.fn(),
+}));
+
+vi.mock("@/lib/cloudinary/hard-delete-cleanup", () => ({
+  cleanupCloudinaryAfterHardDelete: mocks.cleanupCloudinaryAfterHardDelete,
 }));
 
 vi.mock("@/lib/cloudinary/exam-pdf", () => ({
@@ -61,6 +67,7 @@ vi.mock("@/lib/db/dao/exam-structure-template.dao", () => ({
 
 vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   deleteExamAttemptRecordsByExamId: mocks.deleteExamAttemptRecordsByExamId,
+  listExamAttemptDeletionSources: mocks.listExamAttemptDeletionSources,
   findExamIdsWithAttemptRecords: mocks.findExamIdsWithAttemptRecords,
   hasExamAttemptRecords: mocks.hasExamAttemptRecords,
   listTerminalExamAttemptRegradeSources:
@@ -353,6 +360,10 @@ function createStoredExam(
 
 describe("exam service", () => {
   beforeEach(() => {
+    mocks.cleanupCloudinaryAfterHardDelete.mockReset();
+    mocks.cleanupCloudinaryAfterHardDelete.mockResolvedValue({
+      cleanupWarning: null,
+    });
     mocks.assertAuthenticExamPdfUploadReference.mockReset();
     mocks.assertValidExamPdfUploadReference.mockReset();
     mocks.createExamPdfUploadTicket.mockReset();
@@ -368,6 +379,8 @@ describe("exam service", () => {
     mocks.findExamStructureTemplateRecordById.mockResolvedValue(null);
     mocks.deleteExamAttemptRecordsByExamId.mockReset();
     mocks.deleteExamAttemptRecordsByExamId.mockResolvedValue(0);
+    mocks.listExamAttemptDeletionSources.mockReset();
+    mocks.listExamAttemptDeletionSources.mockResolvedValue([]);
     mocks.listTerminalExamAttemptRegradeSources.mockReset();
     mocks.listTerminalExamAttemptRegradeSources.mockResolvedValue([]);
     mocks.replaceTerminalExamAttemptGradings.mockReset();
@@ -848,9 +861,59 @@ describe("exam service", () => {
   it("cascades ExamAttempts before deleting an Exam in one transaction", async () => {
     const currentExam = createStoredExam({ attemptsStarted: true });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.listExamAttemptDeletionSources.mockResolvedValue([
+      {
+        id: "attempt-one",
+        examId: currentExam.id,
+        studentId: "student-one",
+        answers: {
+          answersByQuestionId: {
+            "essay-one": {
+              type: "ESSAY_IMAGE",
+              images: [
+                {
+                  publicId: "exam-image-1",
+                  secureUrl:
+                    "https://res.cloudinary.com/test/image/upload/exam-image-1.jpg",
+                  originalFilename: "one.jpg",
+                  bytes: 1024,
+                  format: "jpg",
+                  width: 1200,
+                  height: 800,
+                },
+                {
+                  publicId: "exam-image-2",
+                  secureUrl:
+                    "https://res.cloudinary.com/test/image/upload/exam-image-2.jpg",
+                  originalFilename: "two.jpg",
+                  bytes: 2048,
+                  format: "jpg",
+                  width: 1200,
+                  height: 800,
+                },
+              ],
+            },
+            "essay-two": {
+              type: "ESSAY_IMAGE",
+              images: [
+                {
+                  publicId: "exam-image-1",
+                  secureUrl:
+                    "https://res.cloudinary.com/test/image/upload/exam-image-1.jpg",
+                  originalFilename: "one.jpg",
+                  bytes: 1024,
+                  format: "jpg",
+                  width: 1200,
+                  height: 800,
+                },
+              ],
+            },
+          },
+        },
+      },
+    ]);
     mocks.deleteExamAttemptRecordsByExamId.mockResolvedValue(3);
     mocks.deleteExamRecord.mockResolvedValue(currentExam);
-    mocks.deleteExamPdf.mockResolvedValue(undefined);
 
     await deleteExam(
       admin,
@@ -860,6 +923,10 @@ describe("exam service", () => {
 
     expect(mocks.acquireExamPdfOperationLease).toHaveBeenCalledWith(
       oldPdf.publicId,
+    );
+    expect(mocks.listExamAttemptDeletionSources).toHaveBeenCalledWith(
+      { examId: currentExam.id },
+      mocks.transactionSession,
     );
     expect(mocks.deleteExamAttemptRecordsByExamId).toHaveBeenCalledWith(
       currentExam.id,
@@ -874,10 +941,15 @@ describe("exam service", () => {
       mocks.deleteExamAttemptRecordsByExamId.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.deleteExamRecord.mock.invocationCallOrder[0]);
     expect(mocks.deleteExamRecord.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.deleteExamPdf.mock.invocationCallOrder[0],
+      mocks.cleanupCloudinaryAfterHardDelete.mock.invocationCallOrder[0],
     );
-    expect(mocks.deleteExamPdf).toHaveBeenCalledWith(oldPdf.publicId);
-    expect(mocks.deleteExamPdf.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.cleanupCloudinaryAfterHardDelete).toHaveBeenCalledWith({
+      essayImagePublicIds: ["exam-image-1", "exam-image-2"],
+      examPdfPublicId: oldPdf.publicId,
+    });
+    expect(
+      mocks.cleanupCloudinaryAfterHardDelete.mock.invocationCallOrder[0],
+    ).toBeLessThan(
       mocks.releaseExamPdfOperationLease.mock.invocationCallOrder[0],
     );
   });
@@ -1566,7 +1638,7 @@ describe("exam service", () => {
       examExists: true,
       attemptIds: ["in-progress-attempt", "submitted-attempt"],
     });
-    expect(mocks.deleteExamPdf).not.toHaveBeenCalled();
+    expect(mocks.cleanupCloudinaryAfterHardDelete).not.toHaveBeenCalled();
   });
 
   it("cleans up the Exam PDF only after the database transaction commits", async () => {
@@ -1577,7 +1649,6 @@ describe("exam service", () => {
     });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
     mocks.deleteExamRecord.mockResolvedValue(currentExam);
-    mocks.deleteExamPdf.mockResolvedValue(undefined);
     mocks.withMongoTransaction.mockImplementation(
       async (operation: (session: unknown) => Promise<unknown>) => {
         const result = await operation(mocks.transactionSession);
@@ -1593,30 +1664,27 @@ describe("exam service", () => {
     );
 
     await vi.waitFor(() => expect(mocks.deleteExamRecord).toHaveBeenCalled());
-    expect(mocks.deleteExamPdf).not.toHaveBeenCalled();
+    expect(mocks.cleanupCloudinaryAfterHardDelete).not.toHaveBeenCalled();
     finishCommit?.();
     await deletion;
-    expect(mocks.deleteExamPdf).toHaveBeenCalledWith(oldPdf.publicId);
+    expect(mocks.cleanupCloudinaryAfterHardDelete).toHaveBeenCalledWith({
+      essayImagePublicIds: [],
+      examPdfPublicId: oldPdf.publicId,
+    });
   });
 
-  it("keeps the committed Exam deletion when Cloudinary cleanup fails", async () => {
+  it("keeps the committed Exam deletion and surfaces a cleanup warning", async () => {
     const currentExam = createStoredExam();
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
     mocks.findExamRecordById.mockResolvedValue(currentExam);
     mocks.deleteExamRecord.mockResolvedValue(currentExam);
-    mocks.deleteExamPdf.mockRejectedValue(new Error("Cloudinary unavailable"));
+    mocks.cleanupCloudinaryAfterHardDelete.mockResolvedValue({
+      cleanupWarning: "Cloudinary cleanup warning",
+    });
 
     await expect(
       deleteExam(admin, currentExam.id, currentExam.updatedAt.toISOString()),
-    ).resolves.toBeUndefined();
-    expect(consoleError).toHaveBeenCalledWith(
-      "Could not delete a Cloudinary PDF.",
-      { publicId: oldPdf.publicId, errorName: "Error" },
-    );
+    ).resolves.toEqual({ cleanupWarning: "Cloudinary cleanup warning" });
     expect(mocks.releaseExamPdfOperationLease).toHaveBeenCalled();
-    consoleError.mockRestore();
   });
 
   it("updates question topics as metadata after attempts without touching grading", async () => {

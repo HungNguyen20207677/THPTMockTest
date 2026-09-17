@@ -10,6 +10,7 @@ import type {
 } from "@/lib/validations/exam";
 import { getExamPdfValidationError } from "@/lib/validations/exam-pdf";
 import type { ApiSuccessResponse } from "@/types/api";
+import type { HardDeleteResult } from "@/types/deletion";
 import type {
   ExamDetail,
   ExamPdfUploadReference,
@@ -261,7 +262,7 @@ export function updateExamRecordStatus(
 export function deleteExamRecord(
   examId: string,
   input: DeleteExamInput,
-): Promise<void> {
+): Promise<ApiSuccessResponse<HardDeleteResult>> {
   return apiRequest(
     `${EXAMS_ENDPOINT}/${examId}`,
     jsonRequest("DELETE", input),

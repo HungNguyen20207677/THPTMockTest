@@ -134,13 +134,14 @@ export function ExamManagement() {
     setActionError(null);
 
     try {
-      await deleteExamRecord(deleteTarget.id, {
+      const response = await deleteExamRecord(deleteTarget.id, {
         expectedUpdatedAt: deleteTarget.updatedAt,
       });
       setExams((currentExams) =>
         currentExams.filter((exam) => exam.id !== deleteTarget.id),
       );
       setDeleteTarget(null);
+      setActionError(response.data.cleanupWarning);
     } catch (error) {
       setActionError(getRequestError(error));
       requestAnimationFrame(() => deleteButtonRef.current?.focus());
@@ -192,9 +193,9 @@ export function ExamManagement() {
               <AlertDialogDescription>
                 Xóa vĩnh viễn “{deleteTarget.title}”, toàn bộ lượt làm bài, câu
                 trả lời, điểm số, dữ liệu chấm bài, lịch sử, thống kê liên quan
-                và tệp PDF đính kèm? Tất cả dữ liệu này sẽ bị xóa vĩnh viễn và
-                không thể khôi phục. Nếu chỉ muốn ngừng hiển thị đề, hãy chuyển
-                đề sang trạng thái Đã ẩn.
+                cùng tệp PDF đính kèm và tất cả ảnh bài tự luận đã tải lên? Tất
+                cả dữ liệu này sẽ bị xóa vĩnh viễn và không thể khôi phục. Nếu
+                chỉ muốn ngừng hiển thị đề, hãy chuyển đề sang trạng thái Đã ẩn.
               </AlertDialogDescription>
             </AlertDialogHeader>
             {actionError && (

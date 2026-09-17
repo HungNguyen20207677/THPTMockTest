@@ -12,6 +12,7 @@ import {
 } from "@/lib/validations/exam";
 import type { ApiSuccessResponse } from "@/types/api";
 import type { ExamDetail } from "@/types/exam";
+import type { HardDeleteResult } from "@/types/deletion";
 
 export const runtime = "nodejs";
 
@@ -61,9 +62,12 @@ export async function DELETE(request: Request, context: ExamRouteContext) {
     const admin = await requireApiRole(USER_ROLE.ADMIN);
     const examId = examIdSchema.parse((await context.params).examId);
     const input = await parseJsonRequest(request, deleteExamSchema);
-    await deleteExam(admin, examId, input.expectedUpdatedAt);
+    const result = await deleteExam(admin, examId, input.expectedUpdatedAt);
+    const response = {
+      data: result,
+    } satisfies ApiSuccessResponse<HardDeleteResult>;
 
-    return new NextResponse(null, { status: 204 });
+    return NextResponse.json(response);
   } catch (error) {
     return toErrorResponse(error);
   }
