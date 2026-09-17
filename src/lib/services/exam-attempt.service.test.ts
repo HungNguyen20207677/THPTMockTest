@@ -944,6 +944,7 @@ describe("ExamAttempt service", () => {
     const activeAttempt = createAttempt();
     const savedAttempt = createAttempt({
       answers: partialAnswers,
+      answerRevision: 1,
       lastSavedAt: serverNow,
     });
     mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
@@ -954,6 +955,7 @@ describe("ExamAttempt service", () => {
       "exam-id",
       activeAttempt.id,
       partialAnswers,
+      activeAttempt.answerRevision,
     );
 
     expect(mocks.saveOwnedActiveExamAttemptAnswers).toHaveBeenCalledWith({
@@ -961,10 +963,113 @@ describe("ExamAttempt service", () => {
       examId: "exam-id",
       studentId: student.id,
       answers: partialAnswers,
+      expectedAnswerRevision: activeAttempt.answerRevision,
       now: serverNow,
     });
     expect(result.attempt.answers).toEqual(partialAnswers);
+    expect(result.attempt.answerRevision).toBe(1);
     expect(result.attempt.lastSavedAt).toBe(serverNow.toISOString());
+  });
+
+  it("uses the confirmed revision for consecutive autosaves and submission", async () => {
+    const firstAnswers = createEmptyAttemptAnswers();
+    firstAnswers.partOne[0] = "B";
+    const latestAnswers = createEmptyAttemptAnswers();
+    latestAnswers.partOne[0] = "C";
+    const activeAttempt = createAttempt({ answerRevision: 2 });
+    const firstSavedAttempt = createAttempt({
+      answers: firstAnswers,
+      answerRevision: 3,
+      lastSavedAt: serverNow,
+    });
+    const latestSavedAttempt = createAttempt({
+      answers: latestAnswers,
+      answerRevision: 4,
+      lastSavedAt: serverNow,
+    });
+    const grading = gradeAttemptAnswers(latestAnswers, createAnswerKey());
+    const submittedAttempt = createAttempt({
+      answers: latestAnswers,
+      answerRevision: 5,
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+      submittedAt: serverNow,
+      lastSavedAt: serverNow,
+      grading,
+      gradedAt: serverNow,
+    });
+    mocks.findOwnedExamAttemptRecord
+      .mockResolvedValueOnce(activeAttempt)
+      .mockResolvedValueOnce(firstSavedAttempt)
+      .mockResolvedValueOnce(latestSavedAttempt);
+    mocks.saveOwnedActiveExamAttemptAnswers
+      .mockResolvedValueOnce(firstSavedAttempt)
+      .mockResolvedValueOnce(latestSavedAttempt);
+    mocks.submitOwnedActiveExamAttempt.mockResolvedValue(submittedAttempt);
+
+    const firstSave = await saveExamAttemptAnswers(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      firstAnswers,
+      activeAttempt.answerRevision,
+    );
+    const secondSave = await saveExamAttemptAnswers(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      latestAnswers,
+      firstSave.attempt.answerRevision,
+    );
+    const submission = await submitExamAttempt(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      latestAnswers,
+      secondSave.attempt.answerRevision,
+    );
+
+    expect(
+      mocks.saveOwnedActiveExamAttemptAnswers.mock.calls.map(
+        ([input]) => input.expectedAnswerRevision,
+      ),
+    ).toEqual([2, 3]);
+    expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        answers: latestAnswers,
+        expectedAnswerRevision: 4,
+        grading,
+      }),
+      mocks.transactionSession,
+    );
+    expect(submission.attempt.answerRevision).toBe(5);
+  });
+
+  it("rejects a stale autosave revision instead of overwriting newer answers", async () => {
+    const staleAnswers = createEmptyAttemptAnswers();
+    staleAnswers.partOne[0] = "B";
+    const activeAttempt = createAttempt({ answerRevision: 3 });
+    const currentAttempt = createAttempt({ answerRevision: 4 });
+    mocks.findOwnedExamAttemptRecord
+      .mockResolvedValueOnce(activeAttempt)
+      .mockResolvedValueOnce(currentAttempt);
+    mocks.saveOwnedActiveExamAttemptAnswers.mockResolvedValue(null);
+
+    await expect(
+      saveExamAttemptAnswers(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        staleAnswers,
+        activeAttempt.answerRevision,
+      ),
+    ).rejects.toMatchObject({
+      code: "EXAM_ATTEMPT_STATE_CONFLICT",
+      statusCode: 409,
+    });
+    expect(mocks.saveOwnedActiveExamAttemptAnswers).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedAnswerRevision: 3 }),
+    );
   });
 
   it("does not allow a student to save another student's attempt", async () => {
@@ -976,6 +1081,7 @@ describe("ExamAttempt service", () => {
         "exam-id",
         "other-attempt",
         createEmptyAttemptAnswers(),
+        0,
       ),
     ).rejects.toMatchObject({
       code: "EXAM_ATTEMPT_NOT_FOUND",
@@ -1002,6 +1108,7 @@ describe("ExamAttempt service", () => {
         "exam-id",
         submittedAttempt.id,
         laterAnswers,
+        submittedAttempt.answerRevision,
       ),
     ).rejects.toMatchObject({
       code: "EXAM_ATTEMPT_LOCKED",
@@ -1029,6 +1136,7 @@ describe("ExamAttempt service", () => {
         "exam-id",
         expiredAttempt.id,
         createEmptyAttemptAnswers(),
+        expiredAttempt.answerRevision,
       ),
     ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_LOCKED" });
     expect(mocks.autoSubmitExpiredExamAttemptRecord).toHaveBeenCalledWith(
@@ -1335,6 +1443,7 @@ describe("ExamAttempt service", () => {
       "exam-id",
       activeAttempt.id,
       staleAnswers,
+      activeAttempt.answerRevision,
     );
 
     expect(mocks.saveOwnedActiveExamAttemptAnswers).toHaveBeenCalledWith({
@@ -1342,6 +1451,7 @@ describe("ExamAttempt service", () => {
       examId: "exam-id",
       studentId: student.id,
       answers: savedAnswers,
+      expectedAnswerRevision: activeAttempt.answerRevision,
       now: serverNow,
       essayQuestionIds: ["essay-question"],
     });
@@ -1389,6 +1499,7 @@ describe("ExamAttempt service", () => {
       "exam-id",
       activeAttempt.id,
       incomingAnswers,
+      activeAttempt.answerRevision,
     );
 
     expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledWith(
@@ -1397,6 +1508,7 @@ describe("ExamAttempt service", () => {
         examId: "exam-id",
         studentId: student.id,
         answers: submittedAnswers,
+        expectedAnswerRevision: activeAttempt.answerRevision,
         grading,
         gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
         essayQuestionIds: ["essay-question"],
@@ -1709,6 +1821,7 @@ describe("ExamAttempt service", () => {
       "exam-id",
       activeAttempt.id,
       submittedAnswers,
+      activeAttempt.answerRevision,
     );
 
     expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledWith(
@@ -1717,6 +1830,7 @@ describe("ExamAttempt service", () => {
         examId: "exam-id",
         studentId: student.id,
         answers: submittedAnswers,
+        expectedAnswerRevision: activeAttempt.answerRevision,
         grading,
         gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
         now: serverNow,
@@ -1735,6 +1849,84 @@ describe("ExamAttempt service", () => {
     });
     expect(result.canEditAnswers).toBe(false);
     expect(submittedAttempt.grading).toEqual(grading);
+  });
+
+  it("retries submission when an older in-flight autosave wins the first CAS", async () => {
+    const latestAnswers = createEmptyAttemptAnswers();
+    latestAnswers.partOne[0] = "D";
+    const olderAnswers = createEmptyAttemptAnswers();
+    olderAnswers.partOne[0] = "B";
+    const activeAttempt = createAttempt({ answerRevision: 2 });
+    const autosavedAttempt = createAttempt({
+      answers: olderAnswers,
+      answerRevision: 3,
+      lastSavedAt: serverNow,
+    });
+    const grading = gradeAttemptAnswers(latestAnswers, createAnswerKey());
+    const submittedAttempt = createAttempt({
+      answers: latestAnswers,
+      answerRevision: 4,
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+      submittedAt: serverNow,
+      lastSavedAt: serverNow,
+      grading,
+      gradedAt: serverNow,
+    });
+    mocks.findOwnedExamAttemptRecord
+      .mockResolvedValueOnce(activeAttempt)
+      .mockResolvedValueOnce(autosavedAttempt);
+    mocks.submitOwnedActiveExamAttempt
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(submittedAttempt);
+
+    const result = await submitExamAttempt(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      latestAnswers,
+      activeAttempt.answerRevision,
+    );
+
+    expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledTimes(2);
+    expect(
+      mocks.submitOwnedActiveExamAttempt.mock.calls.map(
+        ([input]) => input.expectedAnswerRevision,
+      ),
+    ).toEqual([2, 3]);
+    expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        answers: latestAnswers,
+        expectedAnswerRevision: 3,
+        grading,
+      }),
+      mocks.transactionSession,
+    );
+    expect(result.attempt).toMatchObject({
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      answerRevision: 4,
+      answers: latestAnswers,
+    });
+  });
+
+  it("rejects a submission that was already stale when received", async () => {
+    const activeAttempt = createAttempt({ answerRevision: 4 });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+
+    await expect(
+      submitExamAttempt(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        createEmptyAttemptAnswers(),
+        3,
+      ),
+    ).rejects.toMatchObject({
+      code: "EXAM_ATTEMPT_STATE_CONFLICT",
+      statusCode: 409,
+    });
+    expect(mocks.reserveExamForAttemptGrading).not.toHaveBeenCalled();
+    expect(mocks.submitOwnedActiveExamAttempt).not.toHaveBeenCalled();
   });
 
   it("ignores a late manual payload and preserves saved answers on auto-submission", async () => {
@@ -1765,6 +1957,7 @@ describe("ExamAttempt service", () => {
       "exam-id",
       expiredAttempt.id,
       lateAnswers,
+      expiredAttempt.answerRevision,
     );
 
     expect(mocks.submitOwnedActiveExamAttempt).not.toHaveBeenCalled();
@@ -1902,6 +2095,7 @@ describe("ExamAttempt service", () => {
       "exam-id",
       submittedAttempt.id,
       createEmptyAttemptAnswers(),
+      submittedAttempt.answerRevision,
     );
     const repeatedFinalize = await finalizeExpiredExamAttempt(
       student,
@@ -2279,6 +2473,7 @@ describe("ExamAttempt service", () => {
         "exam-id",
         activeAttempt.id,
         savedAnswers,
+        activeAttempt.answerRevision,
       );
       const resumeResult = await startOrResumeExamAttempt(
         student,
@@ -2291,6 +2486,7 @@ describe("ExamAttempt service", () => {
         examId: "exam-id",
         studentId: student.id,
         answers: savedAnswers,
+        expectedAnswerRevision: activeAttempt.answerRevision,
         now: serverNow,
       });
       expect(saveResult.attempt.answers).toEqual(savedAnswers);
@@ -2330,6 +2526,7 @@ describe("ExamAttempt service", () => {
         "exam-id",
         activeAttempt.id,
         answers,
+        activeAttempt.answerRevision,
       );
 
       expect(grading).toEqual({
@@ -2369,6 +2566,7 @@ describe("ExamAttempt service", () => {
           examId: "exam-id",
           studentId: student.id,
           answers,
+          expectedAnswerRevision: activeAttempt.answerRevision,
           grading,
           gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
           now: serverNow,

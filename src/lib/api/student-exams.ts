@@ -95,12 +95,14 @@ export function saveStudentExamAttemptAnswers(
   examId: string,
   attemptId: string,
   answers: ExamAttemptAnswers,
+  answerRevision: number,
   structure?: ExamStructureSnapshot,
 ): Promise<ApiSuccessResponse<StudentExamAttemptMutationResult>> {
   return apiRequest(
     `${getAttemptEndpoint(examId, attemptId)}/answers`,
     jsonRequest("PATCH", {
       answers: getObjectiveAutosaveAnswers(answers, structure),
+      answerRevision,
     }),
   );
 }
@@ -193,10 +195,11 @@ export function submitStudentExamAttempt(
   examId: string,
   attemptId: string,
   answers: ExamAttemptAnswers,
+  answerRevision: number,
 ): Promise<ApiSuccessResponse<StudentExamAttemptMutationResult>> {
   return apiRequest(
     `${getAttemptEndpoint(examId, attemptId)}/submit`,
-    jsonRequest("POST", { answers }),
+    jsonRequest("POST", { answers, answerRevision }),
   );
 }
 

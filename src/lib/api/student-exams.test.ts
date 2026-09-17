@@ -4,6 +4,7 @@ import {
   getObjectiveAutosaveAnswers,
   removeStudentEssayImage,
   saveStudentExamAttemptAnswers,
+  submitStudentExamAttempt,
   uploadStudentEssayImage,
 } from "@/lib/api/student-exams";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
@@ -175,10 +176,29 @@ describe("student essay image API client", () => {
       "exam-id",
       "attempt-id",
       answers,
+      6,
       structure,
     );
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
       answers: { answersByQuestionId: { choice: "A" } },
+      answerRevision: 6,
+    });
+  });
+
+  it("submits the full current answer representation with its revision", async () => {
+    const answers = {
+      answersByQuestionId: {
+        choice: "A" as const,
+        [questionId]: { type: "ESSAY_IMAGE" as const, images: [image] },
+      },
+    };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: {} }));
+
+    await submitStudentExamAttempt("exam-id", "attempt-id", answers, 7);
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      answers,
+      answerRevision: 7,
     });
   });
 });

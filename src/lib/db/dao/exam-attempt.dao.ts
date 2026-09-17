@@ -62,6 +62,7 @@ export interface MutateOwnedExamAttemptInput {
   examId: string;
   studentId: string;
   answers: ExamAttemptAnswers;
+  expectedAnswerRevision: number;
   now: Date;
   essayQuestionIds?: string[];
 }
@@ -428,11 +429,14 @@ export async function saveOwnedActiveExamAttemptAnswers(
       studentId: input.studentId,
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
       expiresAt: { $gt: input.now },
+      ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
     },
     update,
     {
       returnDocument: "after",
-      ...(shouldMergeObjectiveAnswers ? {} : { runValidators: true }),
+      ...(shouldMergeObjectiveAnswers
+        ? { updatePipeline: true }
+        : { runValidators: true }),
     },
   )
     .lean<ExamAttemptDocumentData>()
@@ -521,6 +525,9 @@ export async function submitOwnedActiveExamAttempt(
             gradingStatus: input.gradingStatus,
             submittedAt: input.now,
             lastSavedAt: input.now,
+            answerRevision: {
+              $add: [{ $ifNull: ["$answerRevision", 0] }, 1],
+            },
             grading: { $literal: input.grading },
             manualGradingRevision: 0,
             gradedAt: input.now,
@@ -539,6 +546,7 @@ export async function submitOwnedActiveExamAttempt(
           manualGradingRevision: 0,
           gradedAt: input.now,
         },
+        $inc: { answerRevision: 1 },
       };
 
   const attempt = await ExamAttemptModel.findOneAndUpdate(
@@ -548,11 +556,14 @@ export async function submitOwnedActiveExamAttempt(
       studentId: input.studentId,
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
       expiresAt: { $gt: input.now },
+      ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
     },
     update,
     {
       returnDocument: "after",
-      ...(shouldMergeObjectiveAnswers ? {} : { runValidators: true }),
+      ...(shouldMergeObjectiveAnswers
+        ? { updatePipeline: true }
+        : { runValidators: true }),
       session,
     },
   )
@@ -584,7 +595,7 @@ export async function autoSubmitExpiredExamAttemptRecord(
       expiresAt: { $lte: now },
     },
     getAutoSubmitUpdate(now, grading, gradingStatus),
-    { returnDocument: "after", session },
+    { returnDocument: "after", updatePipeline: true, session },
   )
     .lean<ExamAttemptDocumentData>()
     .exec();

@@ -66,6 +66,7 @@ export function useAttemptAutosave({
   const payloadValidRef = useRef(isPayloadValid);
   const isMountedRef = useRef(true);
   const isSavingRef = useRef(false);
+  const isPausedRef = useRef(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushWaitersRef = useRef<FlushWaiter[]>([]);
@@ -103,6 +104,7 @@ export function useAttemptAutosave({
     if (
       !enabledRef.current ||
       !payloadValidRef.current ||
+      isPausedRef.current ||
       isSavingRef.current ||
       !pendingSnapshotRef.current
     ) {
@@ -167,6 +169,7 @@ export function useAttemptAutosave({
         if (
           isMountedRef.current &&
           enabledRef.current &&
+          !isPausedRef.current &&
           pendingSnapshotRef.current &&
           !retryTimerRef.current
         ) {
@@ -309,6 +312,19 @@ export function useAttemptAutosave({
     return completion;
   }
 
+  function pause(): void {
+    isPausedRef.current = true;
+    clearRetryTimer();
+  }
+
+  function resume(): void {
+    isPausedRef.current = false;
+
+    if (pendingSnapshotRef.current) {
+      drainRef.current();
+    }
+  }
+
   return {
     status:
       enabled && (!isPayloadValid || hasLocalDraft)
@@ -316,5 +332,7 @@ export function useAttemptAutosave({
         : status,
     lastSavedAt,
     flush,
+    pause,
+    resume,
   };
 }

@@ -144,6 +144,7 @@ export function createAttemptAnswersSchemaForStructure(
 
 export const attemptAnswersRequestSchema = z.strictObject({
   answers: examAttemptAnswersSchema,
+  answerRevision: z.number().int().nonnegative(),
 });
 
 export type AttemptAnswersRequest = z.infer<typeof attemptAnswersRequestSchema>;

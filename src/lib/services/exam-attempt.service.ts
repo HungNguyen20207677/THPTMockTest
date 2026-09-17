@@ -119,6 +119,7 @@ import type { ManualEssayGradingRequest } from "@/lib/validations/attempt-gradin
 const ATTEMPT_DURATION_MS = EXAM_STRUCTURE.durationMinutes * 60 * 1000;
 const START_ATTEMPT_MAX_RETRIES = 3;
 const ESSAY_IMAGE_MUTATION_MAX_RETRIES = 3;
+const SUBMIT_ATTEMPT_MAX_RETRIES = 3;
 
 class AttemptFinalizationRaceError extends Error {}
 const EXAM_STATE_ORDER: Record<StudentExamState, number> = {
@@ -236,6 +237,7 @@ function toExamAttempt(
     examId: attempt.examId,
     attemptNumber: attempt.attemptNumber,
     status: attempt.status,
+    answerRevision: attempt.answerRevision,
     startedAt: attempt.startedAt.toISOString(),
     expiresAt: attempt.expiresAt.toISOString(),
     submittedAt: attempt.submittedAt?.toISOString(),
@@ -694,6 +696,7 @@ export async function saveExamAttemptAnswers(
   examId: string,
   attemptId: string,
   answers: ExamAttemptAnswers,
+  answerRevision: number,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
   const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
@@ -726,6 +729,7 @@ export async function saveExamAttemptAnswers(
     examId,
     studentId: actor.id,
     answers: validatedAnswers,
+    expectedAnswerRevision: answerRevision,
     now: serverNow,
     ...(essayQuestionIds.length > 0 ? { essayQuestionIds } : {}),
   });
@@ -1057,6 +1061,7 @@ export async function submitExamAttempt(
   examId: string,
   attemptId: string,
   answers: ExamAttemptAnswers,
+  answerRevision: number,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
   const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
@@ -1067,65 +1072,86 @@ export async function submitExamAttempt(
     return toAttemptMutationResult(resolvedAttempt, serverNow);
   }
 
-  let submittedAttempt: ExamAttemptPersistenceRecord | null = null;
+  if (resolvedAttempt.answerRevision !== answerRevision) {
+    throw new ExamAttemptStateConflictError();
+  }
 
-  try {
-    submittedAttempt = await withMongoTransaction(async (session) => {
-      const exam = await reserveExamForAttemptGrading(examId, session);
+  let currentAttempt = resolvedAttempt;
 
-      if (!exam) {
-        throw new ExamNotFoundError();
-      }
+  for (let retry = 0; retry < SUBMIT_ATTEMPT_MAX_RETRIES; retry += 1) {
+    const mutationNow = new Date();
+    currentAttempt = await resolveAttemptExpiration(
+      currentAttempt,
+      mutationNow,
+    );
 
-      const validatedAnswers = validateAnswersPreservingEssayImages(
-        answers,
-        getAttemptAnswers(resolvedAttempt, exam.structureSnapshot),
-        exam.structureSnapshot,
-      );
-      const essayQuestionIds = getEssayImageQuestionIds(exam.structureSnapshot);
-      const grading = gradeExamAttemptAnswers(
-        validatedAnswers,
-        exam.answerKey,
-        exam.answerKeyRevision,
-        exam.structureSnapshot,
-      );
-      const gradingStatus = getGradingStatusForStructure(
-        exam.structureSnapshot,
-      );
-      const finalizedAttempt = await submitOwnedActiveExamAttempt(
-        {
-          attemptId,
-          examId,
-          studentId: actor.id,
-          answers: validatedAnswers,
-          grading,
-          gradingStatus,
-          ...(essayQuestionIds.length > 0 ? { essayQuestionIds } : {}),
-          now: serverNow,
-        },
-        session,
-      );
-
-      if (!finalizedAttempt) {
-        throw new AttemptFinalizationRaceError();
-      }
-
-      return finalizedAttempt;
-    });
-  } catch (error) {
-    if (!(error instanceof AttemptFinalizationRaceError)) {
-      throw error;
+    if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
+      return toAttemptMutationResult(currentAttempt, mutationNow);
     }
-  }
 
-  if (submittedAttempt) {
-    return toAttemptMutationResult(submittedAttempt, serverNow);
-  }
+    let submittedAttempt: ExamAttemptPersistenceRecord | null = null;
 
-  const currentAttempt = await resolveMutationRace(actor, examId, attemptId);
+    try {
+      submittedAttempt = await withMongoTransaction(async (session) => {
+        const exam = await reserveExamForAttemptGrading(examId, session);
 
-  if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
-    return toAttemptMutationResult(currentAttempt, new Date());
+        if (!exam) {
+          throw new ExamNotFoundError();
+        }
+
+        const validatedAnswers = validateAnswersPreservingEssayImages(
+          answers,
+          getAttemptAnswers(currentAttempt, exam.structureSnapshot),
+          exam.structureSnapshot,
+        );
+        const essayQuestionIds = getEssayImageQuestionIds(
+          exam.structureSnapshot,
+        );
+        const grading = gradeExamAttemptAnswers(
+          validatedAnswers,
+          exam.answerKey,
+          exam.answerKeyRevision,
+          exam.structureSnapshot,
+        );
+        const gradingStatus = getGradingStatusForStructure(
+          exam.structureSnapshot,
+        );
+        const finalizedAttempt = await submitOwnedActiveExamAttempt(
+          {
+            attemptId,
+            examId,
+            studentId: actor.id,
+            answers: validatedAnswers,
+            expectedAnswerRevision: currentAttempt.answerRevision,
+            grading,
+            gradingStatus,
+            ...(essayQuestionIds.length > 0 ? { essayQuestionIds } : {}),
+            now: mutationNow,
+          },
+          session,
+        );
+
+        if (!finalizedAttempt) {
+          throw new AttemptFinalizationRaceError();
+        }
+
+        return finalizedAttempt;
+      });
+    } catch (error) {
+      if (!(error instanceof AttemptFinalizationRaceError)) {
+        throw error;
+      }
+    }
+
+    if (submittedAttempt) {
+      return toAttemptMutationResult(submittedAttempt, mutationNow);
+    }
+
+    currentAttempt = await resolveMutationRace(actor, examId, attemptId);
+
+    if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
+      return toAttemptMutationResult(currentAttempt, new Date());
+    }
   }
 
   throw new ExamAttemptStateConflictError();

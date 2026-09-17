@@ -125,6 +125,7 @@ describe("ExamAttempt cascade DAO", () => {
       examId: "exam-id",
       studentId: "student-id",
       answers,
+      expectedAnswerRevision: 0,
       now,
     };
     const session = { id: "submission-session" };
@@ -172,6 +173,7 @@ describe("ExamAttempt cascade DAO", () => {
           essay: { type: "ESSAY_IMAGE", images: [staleImage] },
         },
       },
+      expectedAnswerRevision: 4,
       essayQuestionIds: ["essay"],
       now,
     });
@@ -183,6 +185,7 @@ describe("ExamAttempt cascade DAO", () => {
       studentId: "student-id",
       status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
       expiresAt: { $gt: now },
+      answerRevision: 4,
     });
     expect(update).toEqual([
       {
@@ -208,7 +211,10 @@ describe("ExamAttempt cascade DAO", () => {
         },
       },
     ]);
-    expect(options).toEqual({ returnDocument: "after" });
+    expect(options).toEqual({
+      returnDocument: "after",
+      updatePipeline: true,
+    });
     expect(JSON.stringify(update)).not.toContain("stale-public-id");
   });
 
@@ -272,6 +278,7 @@ describe("ExamAttempt cascade DAO", () => {
         examId: "exam-id",
         studentId: "student-id",
         answers,
+        expectedAnswerRevision: 6,
         grading,
         gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
         essayQuestionIds: ["essay"],
@@ -311,6 +318,9 @@ describe("ExamAttempt cascade DAO", () => {
           gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
           submittedAt: now,
           lastSavedAt: now,
+          answerRevision: {
+            $add: [{ $ifNull: ["$answerRevision", 0] }, 1],
+          },
           grading: { $literal: grading },
           manualGradingRevision: 0,
           gradedAt: now,
@@ -320,7 +330,12 @@ describe("ExamAttempt cascade DAO", () => {
     ]);
     expect(mocks.findOneAndUpdate.mock.calls[0][2]).toEqual({
       returnDocument: "after",
+      updatePipeline: true,
       session,
+    });
+    expect(mocks.findOneAndUpdate.mock.calls[0][0]).toMatchObject({
+      answerRevision: 6,
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
     });
 
     const autoSubmissionUpdate = mocks.findOneAndUpdate.mock.calls[1][1];
@@ -341,6 +356,11 @@ describe("ExamAttempt cascade DAO", () => {
       _id: "expired-attempt-id",
       answerRevision: 2,
       expiresAt: { $lte: now },
+    });
+    expect(mocks.findOneAndUpdate.mock.calls[1][2]).toEqual({
+      returnDocument: "after",
+      updatePipeline: true,
+      session,
     });
     expect(expiresAt.getTime()).toBeLessThan(now.getTime());
   });

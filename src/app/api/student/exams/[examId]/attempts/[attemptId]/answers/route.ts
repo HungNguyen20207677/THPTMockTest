@@ -32,6 +32,7 @@ export async function PATCH(
       examId,
       attemptId,
       input.answers,
+      input.answerRevision,
     );
     const response = {
       data: result,

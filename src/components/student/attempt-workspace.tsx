@@ -990,6 +990,7 @@ function ActiveAttemptWorkspace({
   const answerSheetHeaderRef = useRef<HTMLDivElement>(null);
   const fullscreenTrackingRef = useRef(createExamFullscreenTrackingState());
   const fullscreenExitAnswersRef = useRef<ExamAttemptAnswers | null>(null);
+  const answerRevisionRef = useRef(initialAttempt.answerRevision);
   const leftExamScreenRef = useRef(false);
   const intentionalFilePickerRef = useRef({
     active: false,
@@ -1001,8 +1002,7 @@ function ActiveAttemptWorkspace({
   const autosaveEnabled =
     context.attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
     context.canEditAnswers &&
-    !hasCountdownExpired &&
-    !isSubmitting;
+    !hasCountdownExpired;
   const answerPayloadIsValid = createAttemptAnswersSchemaForStructure(
     exam.structureSnapshot,
   ).safeParse(answers).success;
@@ -1022,18 +1022,32 @@ function ActiveAttemptWorkspace({
     isPayloadValid: answerPayloadIsValid,
     hasLocalDraft: hasInvalidPartThreeText,
     saveAnswers: async (latestAnswers) => {
-      if (finalSubmissionInFlightRef.current) {
-        return {};
-      }
-
       try {
         const response = await saveStudentExamAttemptAnswers(
           exam.id,
           initialAttempt.id,
           latestAnswers,
+          answerRevisionRef.current,
           exam.structureSnapshot,
         );
-        return { lastSavedAt: response.data.attempt.lastSavedAt };
+        const result = response.data;
+        answerRevisionRef.current = Math.max(
+          answerRevisionRef.current,
+          result.attempt.answerRevision,
+        );
+        setContext((currentContext) => ({
+          ...currentContext,
+          serverNow: result.serverNow,
+          canEditAnswers: result.canEditAnswers,
+          attempt: {
+            ...currentContext.attempt,
+            status: result.attempt.status,
+            answerRevision: answerRevisionRef.current,
+            submittedAt: result.attempt.submittedAt,
+            lastSavedAt: result.attempt.lastSavedAt,
+          },
+        }));
+        return { lastSavedAt: result.attempt.lastSavedAt };
       } catch (error) {
         if (
           error instanceof ApiClientError &&
@@ -1094,6 +1108,10 @@ function ActiveAttemptWorkspace({
     questionId: string,
     result: Awaited<ReturnType<typeof uploadStudentEssayImage>>["data"],
   ) {
+    answerRevisionRef.current = Math.max(
+      answerRevisionRef.current,
+      result.attempt.answerRevision,
+    );
     setAnswers((currentAnswers) =>
       mergePersistedEssayImageAnswer(
         currentAnswers,
@@ -1108,6 +1126,7 @@ function ActiveAttemptWorkspace({
       attempt: {
         ...currentContext.attempt,
         status: result.attempt.status,
+        answerRevision: answerRevisionRef.current,
         submittedAt: result.attempt.submittedAt,
         lastSavedAt: result.attempt.lastSavedAt,
       },
@@ -1279,10 +1298,13 @@ function ActiveAttemptWorkspace({
     setFullscreenSubmissionError(null);
 
     try {
+      await autosave.flush().catch(() => undefined);
+      autosave.pause();
       const response = await submitStudentExamAttempt(
         exam.id,
         initialAttempt.id,
         answerSnapshot,
+        answerRevisionRef.current,
       );
       const result = response.data;
 
@@ -1311,6 +1333,7 @@ function ActiveAttemptWorkspace({
 
       finalSubmissionInFlightRef.current = false;
       setFullscreenSubmissionError(errorMessage);
+      autosave.resume();
     }
   }
 
@@ -1554,10 +1577,13 @@ function ActiveAttemptWorkspace({
     setSubmissionError(null);
 
     try {
+      await autosave.flush().catch(() => undefined);
+      autosave.pause();
       const response = await submitStudentExamAttempt(
         exam.id,
         initialAttempt.id,
         answers,
+        answerRevisionRef.current,
       );
       const result = response.data;
 
@@ -1601,6 +1627,7 @@ function ActiveAttemptWorkspace({
       } else {
         setSubmissionError(errorMessage);
         setIsSubmitting(false);
+        autosave.resume();
 
         if (expirationStartedRef.current) {
           void finalizeAfterExpiration();

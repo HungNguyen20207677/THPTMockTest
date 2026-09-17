@@ -39,8 +39,24 @@ export function toErrorResponse(error: unknown): NextResponse {
     });
   }
 
+  const errorCode =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (typeof error.code === "string" || typeof error.code === "number")
+      ? error.code
+      : undefined;
+  const reason =
+    error instanceof Error &&
+    error.name === "MongooseError" &&
+    error.message.includes("updatePipeline")
+      ? "MONGOOSE_UPDATE_PIPELINE_OPTION_REQUIRED"
+      : undefined;
+
   console.error("Unhandled API error.", {
     name: error instanceof Error ? error.name : "UnknownError",
+    code: errorCode,
+    reason,
   });
 
   const response = {

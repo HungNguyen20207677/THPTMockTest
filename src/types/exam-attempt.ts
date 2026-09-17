@@ -170,6 +170,7 @@ export interface ExamAttempt {
   examId: string;
   attemptNumber: number;
   status: ExamAttemptStatus;
+  answerRevision: number;
   startedAt: string;
   expiresAt: string;
   submittedAt?: string;

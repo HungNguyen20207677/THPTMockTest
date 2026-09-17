@@ -227,15 +227,27 @@ describe("attempt answers", () => {
 
     expect(
       attemptAnswersRequestSchema.safeParse({
+        answers,
+        answerRevision: 0,
+      }).success,
+    ).toBe(true);
+    expect(attemptAnswersRequestSchema.safeParse({ answers }).success).toBe(
+      false,
+    );
+
+    expect(
+      attemptAnswersRequestSchema.safeParse({
         answers: {
           ...answers,
           partOne: answers.partOne.slice(1),
         },
+        answerRevision: 0,
       }).success,
     ).toBe(false);
     expect(
       attemptAnswersRequestSchema.safeParse({
         answers,
+        answerRevision: 0,
         studentId: "client-controlled-student",
       }).success,
     ).toBe(false);
