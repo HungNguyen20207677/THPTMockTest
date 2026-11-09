@@ -86,7 +86,7 @@ export function CountdownTimer({
       role="timer"
       dateTime={expiresAt}
       aria-label={`Thời gian còn lại ${displayTime}`}
-      className="font-mono text-xl font-bold tracking-tight tabular-nums"
+      className="font-mono text-lg font-bold tracking-tight tabular-nums sm:text-xl"
     >
       {displayTime}
     </time>

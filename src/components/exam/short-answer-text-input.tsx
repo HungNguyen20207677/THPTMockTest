@@ -7,6 +7,7 @@ import {
   parseShortAnswerText,
   shortAnswerSlotsToDisplayValue,
 } from "@/lib/exam/short-answer";
+import { cn } from "@/lib/utils";
 import type { ShortAnswerSlots } from "@/types/exam";
 
 interface ShortAnswerTextInputProps {
@@ -57,7 +58,14 @@ export function ShortAnswerTextInput({
       : "Chưa trả lời";
 
   return (
-    <fieldset className="border-border space-y-3 rounded-lg border p-3">
+    <fieldset
+      className={cn(
+        "space-y-3 rounded-xl border bg-card p-3.5 shadow-xs",
+        text && !validationError
+          ? "border-emerald-600/40"
+          : "border-border border-dashed",
+      )}
+    >
       <legend className="px-1 font-medium">{label}</legend>
       <div className="flex items-center justify-between gap-3">
         <label htmlFor={inputId} className="text-sm font-medium">
@@ -80,6 +88,7 @@ export function ShortAnswerTextInput({
         placeholder="Ví dụ: -0,5"
         aria-invalid={Boolean(validationError)}
         aria-describedby={`${helpId} ${statusId}${validationError ? ` ${errorId}` : ""}`}
+        className="h-11 text-base font-medium"
         onBlur={onBlur}
         onChange={(event) => {
           const nextText = event.target.value;

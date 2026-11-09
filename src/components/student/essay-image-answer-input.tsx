@@ -163,11 +163,12 @@ export function EssayImageAnswerInput({
         }}
       />
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="border-border bg-muted/25 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
         <Button
           type="button"
           size="sm"
           variant="outline"
+          className="h-10 bg-background"
           disabled={
             disabled || Boolean(uploadingFilename) || availableSlots <= 0
           }
@@ -175,18 +176,29 @@ export function EssayImageAnswerInput({
         >
           {uploadingFilename ? "Đang tải ảnh..." : "Tải ảnh bài làm"}
         </Button>
-        <span className="text-muted-foreground text-xs">
-          Tối đa {ESSAY_IMAGE_MAX_COUNT} ảnh · JPEG, PNG hoặc WebP · 10 MB/ảnh
-        </span>
+        <div className="text-muted-foreground text-xs leading-5">
+          <p className="text-foreground font-medium">
+            {answer.images.length}/{ESSAY_IMAGE_MAX_COUNT} ảnh đã tải
+          </p>
+          <p>
+            Tối đa {ESSAY_IMAGE_MAX_COUNT} ảnh · JPEG, PNG hoặc WebP · 10 MB/ảnh
+          </p>
+        </div>
       </div>
 
       {uploadingFilename && (
-        <p role="status" className="text-muted-foreground text-xs">
+        <p
+          role="status"
+          className="border-primary/20 bg-primary/5 text-primary rounded-lg border px-3 py-2 text-xs"
+        >
           Đang tải và xác minh {uploadingFilename}...
         </p>
       )}
       {uploadError && (
-        <p role="alert" className="text-destructive text-xs">
+        <p
+          role="alert"
+          className="border-destructive/30 bg-destructive/5 text-destructive rounded-lg border px-3 py-2 text-xs"
+        >
           {uploadError}
         </p>
       )}
@@ -198,15 +210,15 @@ export function EssayImageAnswerInput({
             return (
               <li
                 key={image.publicId}
-                className="border-border bg-background overflow-hidden rounded-lg border"
+                className="border-border bg-background overflow-hidden rounded-xl border shadow-xs"
               >
-                <div className="bg-muted relative aspect-[4/3]">
+                <div className="bg-muted/50 relative aspect-[4/3]">
                   <Image
                     src={image.secureUrl}
                     alt={`Ảnh bài làm ${index + 1}`}
                     fill
                     sizes="(max-width: 640px) 50vw, 12rem"
-                    className="object-contain"
+                    className="object-contain p-1"
                   />
                 </div>
                 <div className="space-y-2 p-2">
@@ -220,7 +232,7 @@ export function EssayImageAnswerInput({
                     type="button"
                     size="sm"
                     variant="ghost"
-                    className="text-destructive w-full"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive w-full"
                     disabled={disabled || isRemoving}
                     onClick={() => void removeImage(image.publicId)}
                   >
@@ -243,7 +255,7 @@ export function EssayImageAnswerInput({
           {failedUploads.map((failedUpload) => (
             <div
               key={failedUpload.id}
-              className="border-destructive/30 bg-destructive/5 rounded-md border p-2 text-xs"
+              className="border-destructive/30 bg-destructive/5 rounded-lg border p-3 text-xs"
             >
               <p className="font-medium">{failedUpload.file.name}</p>
               <p role="alert" className="text-destructive mt-1">

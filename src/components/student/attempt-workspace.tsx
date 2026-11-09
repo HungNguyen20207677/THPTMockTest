@@ -166,10 +166,10 @@ function QuestionStatusLink({
         onSelect(targetId);
       }}
       className={cn(
-        "focus-visible:border-ring focus-visible:ring-ring/50 flex size-8 items-center justify-center rounded-md border text-xs font-semibold outline-none focus-visible:ring-3",
+        "focus-visible:border-ring focus-visible:ring-ring/50 flex size-9 items-center justify-center rounded-lg border text-xs font-semibold outline-none transition-colors focus-visible:ring-3",
         answered
-          ? "border-emerald-600 bg-emerald-600 text-white"
-          : "border-input bg-background text-muted-foreground hover:border-primary hover:text-foreground",
+          ? "border-emerald-600 bg-emerald-600 text-white shadow-xs"
+          : "border-input bg-background text-muted-foreground border-dashed hover:border-primary hover:text-foreground",
       )}
     >
       {questionNumber}
@@ -203,10 +203,10 @@ function QuestionOverview({
   ];
 
   return (
-    <nav aria-label="Tổng quan câu trả lời" className="space-y-3">
+    <nav aria-label="Tổng quan câu trả lời" className="space-y-2.5">
       {sections.map((section) => (
-        <div key={section.label} className="flex items-start gap-3">
-          <p className="w-16 shrink-0 pt-1.5 text-xs font-semibold">
+        <div key={section.label} className="flex items-start gap-2.5">
+          <p className="w-14 shrink-0 pt-2.5 text-xs font-semibold">
             {section.label}
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -244,10 +244,10 @@ function DynamicQuestionOverview({
   onQuestionSelect: (targetId: string) => void;
 }) {
   return (
-    <nav aria-label="Tổng quan câu trả lời" className="space-y-3">
+    <nav aria-label="Tổng quan câu trả lời" className="space-y-2.5">
       {structure.sections.map((section, sectionIndex) => (
-        <div key={section.id} className="flex items-start gap-3">
-          <p className="w-20 shrink-0 pt-1.5 text-xs font-semibold">
+        <div key={section.id} className="flex items-start gap-2.5">
+          <p className="w-20 shrink-0 pt-2.5 text-xs font-semibold leading-4">
             {section.title}
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -304,7 +304,7 @@ function PartOneSection({
             id={`part-one-question-${questionIndex + 1}`}
             disabled={disabled}
             className={cn(
-              "scroll-mt-40 rounded-lg border p-3",
+              "scroll-mt-40 rounded-xl border bg-card p-3.5 shadow-xs",
               progress.partOne[questionIndex]
                 ? "border-emerald-600/40"
                 : "border-border border-dashed",
@@ -318,7 +318,7 @@ function PartOneSection({
                 <label
                   key={choice}
                   className={cn(
-                    "focus-within:border-ring focus-within:ring-ring/50 relative flex h-9 cursor-pointer items-center justify-center rounded-md border text-sm font-semibold transition-colors focus-within:ring-3",
+                    "focus-within:border-ring focus-within:ring-ring/50 relative flex h-10 cursor-pointer items-center justify-center rounded-lg border text-sm font-semibold transition-colors focus-within:ring-3",
                     selectedAnswer === choice
                       ? "border-primary bg-primary text-primary-foreground"
                       : "border-input bg-background hover:border-primary",
@@ -385,7 +385,7 @@ function PartTwoSection({
               id={`part-two-question-${questionIndex + 1}`}
               disabled={disabled}
               className={cn(
-                "scroll-mt-40 rounded-lg border p-3",
+                "scroll-mt-40 rounded-xl border bg-card p-3.5 shadow-xs",
                 progress.partTwo[questionIndex]
                   ? "border-emerald-600/40"
                   : "border-border border-dashed",
@@ -422,7 +422,7 @@ function PartTwoSection({
                         <label
                           key={option.label}
                           className={cn(
-                            "focus-within:border-ring focus-within:ring-ring/50 relative flex h-8 min-w-16 cursor-pointer items-center justify-center rounded-md border px-2 text-xs font-medium focus-within:ring-3",
+                            "focus-within:border-ring focus-within:ring-ring/50 relative flex h-9 min-w-16 cursor-pointer items-center justify-center rounded-lg border px-2 text-xs font-medium transition-colors focus-within:ring-3",
                             answer[statement] === option.value
                               ? "border-primary bg-primary text-primary-foreground"
                               : "border-input bg-background hover:border-primary",
@@ -522,7 +522,7 @@ function PartThreeSection({
 
 function AnswerSheet(props: AnswerSheetProps) {
   return (
-    <div className="space-y-8 p-4 sm:p-5">
+    <div className="space-y-8 p-3 sm:p-4">
       <PartOneSection {...props} />
       <PartTwoSection {...props} />
       <PartThreeSection {...props} />
@@ -568,7 +568,7 @@ export function DynamicAnswerSheet({
   onFilePickerReturn,
 }: DynamicAnswerSheetProps) {
   return (
-    <div className="space-y-8 p-4 sm:p-5">
+    <div className="space-y-8 p-3 sm:p-4">
       {structure.sections.map((section, sectionIndex) => (
         <section
           key={section.id}
@@ -613,7 +613,7 @@ export function DynamicAnswerSheet({
                     id={targetId}
                     disabled={disabled}
                     className={cn(
-                      "scroll-mt-40 rounded-lg border p-3",
+                      "scroll-mt-40 rounded-xl border bg-card p-3.5 shadow-xs",
                       answered
                         ? "border-emerald-600/40"
                         : "border-border border-dashed",
@@ -630,7 +630,7 @@ export function DynamicAnswerSheet({
                         <label
                           key={choice}
                           className={cn(
-                            "focus-within:border-ring focus-within:ring-ring/50 relative flex h-9 cursor-pointer items-center justify-center rounded-md border text-sm font-semibold transition-colors focus-within:ring-3",
+                            "focus-within:border-ring focus-within:ring-ring/50 relative flex h-10 cursor-pointer items-center justify-center rounded-lg border text-sm font-semibold transition-colors focus-within:ring-3",
                             selectedAnswer === choice
                               ? "border-primary bg-primary text-primary-foreground"
                               : "border-input bg-background hover:border-primary",
@@ -663,7 +663,7 @@ export function DynamicAnswerSheet({
                     id={targetId}
                     disabled={disabled}
                     className={cn(
-                      "scroll-mt-40 rounded-lg border p-3",
+                      "scroll-mt-40 rounded-xl border bg-card p-3.5 shadow-xs",
                       answered
                         ? "border-emerald-600/40"
                         : "border-border border-dashed",
@@ -693,7 +693,7 @@ export function DynamicAnswerSheet({
                               <label
                                 key={option.label}
                                 className={cn(
-                                  "focus-within:border-ring focus-within:ring-ring/50 relative flex h-8 min-w-16 cursor-pointer items-center justify-center rounded-md border px-2 text-xs font-medium focus-within:ring-3",
+                                  "focus-within:border-ring focus-within:ring-ring/50 relative flex h-9 min-w-16 cursor-pointer items-center justify-center rounded-lg border px-2 text-xs font-medium transition-colors focus-within:ring-3",
                                   statementAnswer[statement] === option.value
                                     ? "border-primary bg-primary text-primary-foreground"
                                     : "border-input bg-background hover:border-primary",
@@ -757,7 +757,7 @@ export function DynamicAnswerSheet({
                   key={question.id}
                   id={targetId}
                   className={cn(
-                    "scroll-mt-40 space-y-3 rounded-lg border p-3",
+                    "scroll-mt-40 space-y-3 rounded-xl border bg-card p-3.5 shadow-xs",
                     answered
                       ? "border-emerald-600/40"
                       : "border-border border-dashed",
@@ -847,34 +847,20 @@ function AutosaveIndicator({ status }: { status: AutosaveStatus }) {
     [AUTOSAVE_STATUS.SAVING]: "bg-primary animate-pulse",
     [AUTOSAVE_STATUS.ERROR]: "bg-destructive",
   };
-  const compactLabels: Record<AutosaveStatus, string> = {
-    [AUTOSAVE_STATUS.SAVED]: "✓",
-    [AUTOSAVE_STATUS.UNSAVED]: "○",
-    [AUTOSAVE_STATUS.SAVING]: "…",
-    [AUTOSAVE_STATUS.ERROR]: "Lỗi",
-  };
-
   return (
     <p
       aria-live="polite"
       title={`Tự động lưu: ${labels[status]}`}
       className={cn(
-        "flex items-center gap-1.5 text-xs font-medium",
+        "flex items-center gap-1.5 whitespace-nowrap text-xs font-medium",
         isError ? "text-destructive" : "text-muted-foreground",
       )}
     >
       <span
         aria-hidden="true"
-        className={cn(
-          "hidden size-2 rounded-full sm:block",
-          statusDotClassNames[status],
-        )}
+        className={cn("size-2 rounded-full", statusDotClassNames[status])}
       />
-      <span aria-hidden="true" className="text-xs font-bold sm:hidden">
-        {compactLabels[status]}
-      </span>
-      <span className="hidden sm:inline">{labels[status]}</span>
-      <span className="sr-only sm:hidden">{labels[status]}</span>
+      <span>{labels[status]}</span>
     </p>
   );
 }
@@ -1927,21 +1913,24 @@ function ActiveAttemptWorkspace({
       </AlertDialog>
 
       <div className="flex h-full min-h-0 flex-col gap-2">
-        <header className="border-border bg-background sticky top-0 z-20 flex min-h-14 shrink-0 items-center overflow-x-auto rounded-lg border px-2.5 py-2 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:static sm:px-3">
-          <div className="flex w-full min-w-0 items-center gap-2 sm:gap-3">
+        <header className="border-border bg-card sticky top-0 z-20 flex min-h-14 shrink-0 items-center rounded-xl border px-3 py-2 shadow-sm lg:static">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
             <h1
-              className="hidden min-w-0 flex-1 truncate text-sm font-semibold lg:block xl:text-base"
+              className="min-w-0 flex-[1_1_14rem] truncate text-sm font-semibold sm:text-base"
               title={`${context.exam.title} · Lần làm ${context.attempt.attemptNumber}`}
             >
               {context.exam.title}
-              <span className="text-muted-foreground font-normal">
+              <span className="text-muted-foreground hidden font-normal sm:inline">
                 {" "}
                 · Lần làm {context.attempt.attemptNumber}
               </span>
             </h1>
-            <div className="ml-auto flex shrink-0 items-center gap-3 sm:gap-4">
-              <div className="flex items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
+              <div className="border-border bg-muted/40 flex h-9 items-center gap-2 rounded-lg border px-2.5">
                 <ClockIcon />
+                <span className="text-muted-foreground hidden text-xs sm:inline">
+                  Còn lại
+                </span>
                 <CountdownTimer
                   expiresAt={context.attempt.expiresAt}
                   serverNow={context.serverNow}
@@ -1982,6 +1971,7 @@ function ActiveAttemptWorkspace({
                       : "Mở toàn màn hình"
                     : "Trình duyệt không hỗ trợ toàn màn hình"
                 }
+                className="size-9"
                 onClick={() => void handleFullscreenToggle()}
               >
                 <FullscreenIcon active={isFullscreen} />
@@ -2003,6 +1993,7 @@ function ActiveAttemptWorkspace({
                       : "Hãy hoàn thành hoặc xóa đáp án trả lời ngắn chưa hợp lệ."
                 }
                 onClick={() => setIsSubmitDialogOpen(true)}
+                className="h-9 px-3"
               >
                 <span className="sm:hidden">Nộp</span>
                 <span className="hidden sm:inline">Nộp bài</span>
@@ -2048,12 +2039,12 @@ function ActiveAttemptWorkspace({
           </div>
         )}
 
-        <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(24rem,2fr)]">
+        <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)] xl:grid-cols-[minmax(0,5fr)_minmax(24rem,3fr)]">
           <section
             aria-labelledby="exam-pdf-heading"
-            className="border-border bg-background flex min-h-[65dvh] flex-col overflow-hidden rounded-xl border shadow-sm lg:min-h-0"
+            className="border-border bg-card flex min-h-[65dvh] flex-col overflow-hidden rounded-xl border shadow-sm lg:min-h-0"
           >
-            <div className="border-border flex h-9 shrink-0 items-center gap-2 border-b px-3">
+            <div className="border-border bg-muted/25 flex h-9 shrink-0 items-center gap-2 border-b px-3">
               <h2
                 id="exam-pdf-heading"
                 className="shrink-0 text-xs font-semibold"
@@ -2136,24 +2127,52 @@ function ActiveAttemptWorkspace({
           <section
             ref={answerSheetRef}
             aria-labelledby="answer-sheet-heading"
-            className="border-border bg-background min-h-0 rounded-xl border shadow-sm lg:h-full lg:overflow-y-auto lg:overscroll-contain"
+            className="border-border bg-muted/20 min-h-0 rounded-xl border shadow-sm lg:h-full lg:overflow-y-auto lg:overscroll-contain"
           >
             <div
               ref={answerSheetHeaderRef}
-              className="border-border bg-background/95 z-10 space-y-3 border-b p-4 backdrop-blur-sm lg:sticky lg:top-0"
+              className="border-border bg-background/95 z-10 space-y-3 rounded-t-xl border-b p-3.5 backdrop-blur-sm lg:sticky lg:top-0"
             >
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 id="answer-sheet-heading" className="font-semibold">
                     Phiếu trả lời
                   </h2>
-                  <p className="text-muted-foreground text-xs">
-                    Màu xanh biểu thị câu đã hoàn thành.
-                  </p>
+                  <div className="text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span
+                        className="size-3 rounded-sm border border-emerald-600 bg-emerald-600"
+                        aria-hidden="true"
+                      />
+                      Đã trả lời
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span
+                        className="border-input size-3 rounded-sm border border-dashed"
+                        aria-hidden="true"
+                      />
+                      Chưa trả lời
+                    </span>
+                  </div>
                 </div>
                 <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
                   {progress.answeredQuestions}/{progress.totalQuestions}
                 </span>
+              </div>
+              <div
+                className="bg-muted h-1.5 overflow-hidden rounded-full"
+                role="progressbar"
+                aria-label="Tiến độ trả lời"
+                aria-valuemin={0}
+                aria-valuemax={progress.totalQuestions}
+                aria-valuenow={progress.answeredQuestions}
+              >
+                <div
+                  className="h-full rounded-full bg-emerald-600 transition-[width] motion-reduce:transition-none"
+                  style={{
+                    width: `${progress.totalQuestions === 0 ? 0 : (progress.answeredQuestions / progress.totalQuestions) * 100}%`,
+                  }}
+                />
               </div>
               {dynamicProgress && exam.structureSnapshot ? (
                 <DynamicQuestionOverview

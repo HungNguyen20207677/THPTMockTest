@@ -72,7 +72,10 @@ export function ShortAnswerBubbleInput({
 
   return (
     <fieldset
-      className="border-border space-y-3 rounded-lg border p-3"
+      className={cn(
+        "space-y-3 rounded-xl border bg-card p-3.5 shadow-xs",
+        displayValue ? "border-emerald-600/40" : "border-border border-dashed",
+      )}
       aria-describedby={`${statusId}${error ? ` ${errorId}` : ""}`}
       aria-invalid={Boolean(error) || isIncomplete}
     >
@@ -91,7 +94,7 @@ export function ShortAnswerBubbleInput({
           return (
             <fieldset
               key={slotIndex}
-              className="bg-muted/40 rounded-md border p-2"
+              className="border-border bg-muted/35 rounded-lg border p-2.5"
               disabled={disabled || precedingSlotIsEmpty}
             >
               <legend className="px-1 text-xs font-semibold">
@@ -121,7 +124,7 @@ export function ShortAnswerBubbleInput({
                     <label
                       key={option}
                       className={cn(
-                        "relative flex size-8 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
+                        "relative flex size-9 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
                         selectedOption === option
                           ? "border-primary bg-primary text-primary-foreground"
                           : "border-input bg-background hover:border-primary",

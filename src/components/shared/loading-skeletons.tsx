@@ -457,8 +457,8 @@ export function ExamWorkspaceSkeleton() {
       containerClassName="h-full"
     >
       <div className="flex h-full min-h-[calc(100dvh-1rem)] flex-col gap-2 lg:min-h-0">
-        <div className="border-border bg-background flex min-h-14 items-center justify-between rounded-lg border px-3 shadow-sm">
-          <Skeleton className="hidden h-5 w-64 lg:block" />
+        <div className="border-border bg-card flex min-h-14 items-center justify-between rounded-xl border px-3 shadow-sm">
+          <Skeleton className="h-5 w-40 sm:w-64" />
           <div className="ml-auto flex items-center gap-1.5 sm:gap-3">
             <Skeleton className="h-4 w-10" />
             <Skeleton className="h-7 w-20" />
@@ -467,13 +467,13 @@ export function ExamWorkspaceSkeleton() {
           </div>
         </div>
         <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(24rem,2fr)]">
-          <div className="border-border bg-background min-h-[65dvh] rounded-xl border lg:min-h-0">
+          <div className="border-border bg-card min-h-[65dvh] rounded-xl border lg:min-h-0">
             <div className="border-border flex h-9 items-center gap-3 border-b px-3">
               <Skeleton className="h-4 w-20" />
               <Skeleton className="h-3 w-48" />
             </div>
           </div>
-          <div className="border-border bg-background space-y-4 rounded-xl border p-4">
+          <div className="border-border bg-muted/20 space-y-4 rounded-xl border p-4">
             <Skeleton className="h-6 w-32" />
             <Skeleton className="h-20 w-full" />
             <Skeleton className="h-40 w-full" />
