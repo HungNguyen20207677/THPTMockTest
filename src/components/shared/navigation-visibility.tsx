@@ -17,7 +17,13 @@ export function PublicHeaderBoundary({ children }: { children: ReactNode }) {
   return isAuthenticatedRoute ? null : children;
 }
 
-export function StudentHeaderBoundary({ children }: { children: ReactNode }) {
+export function StudentHeaderBoundary({
+  children,
+  fallback = null,
+}: {
+  children: ReactNode;
+  fallback?: ReactNode;
+}) {
   const pathname = usePathname();
-  return activeAttemptPathPattern.test(pathname) ? null : children;
+  return activeAttemptPathPattern.test(pathname) ? fallback : children;
 }
