@@ -48,10 +48,10 @@ function CorrectnessBadge({ isCorrect }: { isCorrect: boolean }) {
   return (
     <span
       className={cn(
-        "rounded-full px-2 py-0.5 text-xs font-semibold",
+        "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
         isCorrect
-          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200"
-          : "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-200",
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300"
+          : "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300",
       )}
     >
       {isCorrect ? "Chính xác" : "Chưa chính xác"}
@@ -74,9 +74,15 @@ function DynamicAnswerReview({
   }
 
   return (
-    <section aria-labelledby="answer-review-heading" className="space-y-8">
-      <div>
-        <h2 id="answer-review-heading" className="text-2xl font-bold">
+    <section aria-labelledby="answer-review-heading" className="space-y-6">
+      <div className="border-border border-b pb-4">
+        <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+          Chi tiết bài làm
+        </p>
+        <h2
+          id="answer-review-heading"
+          className="mt-1 text-2xl font-bold tracking-tight"
+        >
           Đối chiếu đáp án
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
@@ -103,7 +109,7 @@ function DynamicAnswerReview({
                 return (
                   <div
                     key={question.id}
-                    className="border-border rounded-lg border p-4 lg:col-span-2"
+                    className="border-border bg-card rounded-xl border p-4 shadow-xs lg:col-span-2"
                   >
                     <p className="font-semibold">Câu {questionIndex + 1}</p>
                     {item.score === undefined ? (
@@ -123,7 +129,7 @@ function DynamicAnswerReview({
                         {item.studentAnswer.images.map((image, imageIndex) => (
                           <figure
                             key={image.publicId}
-                            className="border-border overflow-hidden rounded-lg border"
+                            className="border-border bg-muted/20 overflow-hidden rounded-lg border"
                           >
                             <Image
                               src={image.secureUrl}
@@ -151,7 +157,7 @@ function DynamicAnswerReview({
                 return (
                   <div
                     key={question.id}
-                    className="border-border rounded-lg border p-4"
+                    className="border-border bg-card rounded-xl border p-4 shadow-xs"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="font-semibold">Câu {questionIndex + 1}</p>
@@ -190,7 +196,7 @@ function DynamicAnswerReview({
               return (
                 <div
                   key={question.id}
-                  className="border-border rounded-lg border p-3"
+                  className="border-border bg-card rounded-xl border p-4 shadow-xs"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <p className="font-semibold">Câu {questionIndex + 1}</p>
@@ -231,18 +237,26 @@ export function PendingGradingSummary({
   }
 
   return (
-    <section className="border-amber-300 bg-amber-50 rounded-xl border p-6 text-center text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
-      <h2 className="text-lg font-semibold">Bài tự luận đang chờ chấm</h2>
-      {result.objectiveScore && (
-        <p className="mt-2 font-medium tabular-nums">
-          Điểm phần đã chấm tự động:{" "}
-          {scoreFormatter.format(result.objectiveScore.earned)} /{" "}
-          {scoreFormatter.format(result.objectiveScore.maximum)}
-        </p>
-      )}
-      <p className="mt-2 text-sm">
-        Điểm tổng kết chưa có cho đến khi phần tự luận được chấm.
-      </p>
+    <section className="border-amber-300 bg-amber-50/70 rounded-2xl border p-5 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100 sm:p-6">
+      <div className="flex items-start gap-3">
+        <span
+          className="mt-1 size-2.5 shrink-0 rounded-full bg-amber-500"
+          aria-hidden="true"
+        />
+        <div>
+          <h2 className="text-lg font-semibold">Bài tự luận đang chờ chấm</h2>
+          {result.objectiveScore && (
+            <p className="mt-2 font-medium tabular-nums">
+              Điểm phần đã chấm tự động:{" "}
+              {scoreFormatter.format(result.objectiveScore.earned)} /{" "}
+              {scoreFormatter.format(result.objectiveScore.maximum)}
+            </p>
+          )}
+          <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
+            Điểm tổng kết chưa có cho đến khi phần tự luận được chấm.
+          </p>
+        </div>
+      </div>
     </section>
   );
 }
@@ -288,21 +302,26 @@ export function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
         : [];
 
   return (
-    <section aria-labelledby="score-heading" className="space-y-4">
-      <div className="border-primary/20 bg-primary/5 rounded-xl border p-6 text-center">
-        <p id="score-heading" className="text-muted-foreground text-sm">
+    <section aria-labelledby="score-heading" className="space-y-3">
+      <div className="border-primary/20 from-primary/10 via-background to-background rounded-2xl border bg-linear-to-br p-6 sm:p-8">
+        <p
+          id="score-heading"
+          className="text-primary text-xs font-semibold tracking-widest uppercase"
+        >
           Tổng điểm
         </p>
-        <p className="text-primary mt-1 text-4xl font-bold tabular-nums">
+        <p className="mt-2 text-4xl font-bold tracking-tight tabular-nums sm:text-5xl">
           {scoreFormatter.format(result.score.total)} /{" "}
-          {EXAM_SCORING.totalMaximum}
+          <span className="text-muted-foreground text-2xl font-medium sm:text-3xl">
+            {EXAM_SCORING.totalMaximum}
+          </span>
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {sections.map((section) => (
           <div
             key={section.id}
-            className="border-border bg-background rounded-lg border p-4"
+            className="border-border bg-card rounded-xl border p-4 shadow-xs"
           >
             <p className="text-muted-foreground text-sm">{section.label}</p>
             <p className="mt-1 text-lg font-semibold tabular-nums">
@@ -312,7 +331,7 @@ export function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
         ))}
       </div>
       {result.essayScores && result.essayScores.length > 0 && (
-        <div className="border-border bg-background rounded-lg border p-4">
+        <div className="border-border bg-card rounded-xl border p-4 shadow-xs">
           <p className="font-semibold">Điểm tự luận</p>
           <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
             {result.essayScores.map((item) => (
@@ -358,9 +377,15 @@ export function AnswerReview({
   }
 
   return (
-    <section aria-labelledby="answer-review-heading" className="space-y-8">
-      <div>
-        <h2 id="answer-review-heading" className="text-2xl font-bold">
+    <section aria-labelledby="answer-review-heading" className="space-y-6">
+      <div className="border-border border-b pb-4">
+        <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+          Chi tiết bài làm
+        </p>
+        <h2
+          id="answer-review-heading"
+          className="mt-1 text-2xl font-bold tracking-tight"
+        >
           Đối chiếu đáp án
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
@@ -372,7 +397,10 @@ export function AnswerReview({
         <h3 className="text-lg font-semibold">Phần I</h3>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {review.partOne.map((item, index) => (
-            <div key={index} className="border-border rounded-lg border p-3">
+            <div
+              key={index}
+              className="border-border bg-card rounded-xl border p-4 shadow-xs"
+            >
               <div className="flex items-center justify-between gap-2">
                 <p className="font-semibold">Câu {index + 1}</p>
                 <CorrectnessBadge isCorrect={item.isCorrect} />
@@ -392,7 +420,7 @@ export function AnswerReview({
           {review.partTwo.map((question, questionIndex) => (
             <div
               key={questionIndex}
-              className="border-border rounded-lg border p-4"
+              className="border-border bg-card rounded-xl border p-4 shadow-xs"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-semibold">Câu {questionIndex + 1}</p>
@@ -430,7 +458,10 @@ export function AnswerReview({
         <h3 className="text-lg font-semibold">Phần III</h3>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {review.partThree.map((item, index) => (
-            <div key={index} className="border-border rounded-lg border p-3">
+            <div
+              key={index}
+              className="border-border bg-card rounded-xl border p-4 shadow-xs"
+            >
               <div className="flex items-center justify-between gap-2">
                 <p className="font-semibold">Câu {index + 1}</p>
                 <CorrectnessBadge isCorrect={item.isCorrect} />
@@ -507,56 +538,75 @@ export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
 
   return (
     <div className="space-y-8">
-      <header className="border-border bg-background rounded-xl border p-6 shadow-sm">
-        <p className="text-primary text-sm font-semibold">KẾT QUẢ BÀI LÀM</p>
-        <h1 className="mt-2 break-words text-3xl font-bold tracking-tight">
+      <header className="border-border bg-card relative overflow-hidden rounded-2xl border p-5 shadow-sm sm:p-7">
+        <div
+          className="bg-primary/80 absolute inset-y-0 left-0 w-1"
+          aria-hidden="true"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+            Kết quả bài làm
+          </p>
+          <span className="bg-muted text-muted-foreground inline-flex rounded-full px-3 py-1 text-xs font-medium">
+            Lần làm {result.attempt.attemptNumber}
+          </span>
+        </div>
+        <h1 className="mt-3 max-w-4xl break-words text-2xl font-bold tracking-tight sm:text-3xl">
           {result.exam.title}
         </h1>
-        <p className="text-muted-foreground mt-2">
-          Lần làm {result.attempt.attemptNumber} ·{" "}
-          {wasAutoSubmitted ? "Tự động nộp khi hết giờ" : "Đã nộp bài"}
+        <p className="text-muted-foreground mt-2 text-sm">
+          {wasAutoSubmitted ? "Tự động nộp khi hết giờ" : "Đã nộp bài chủ động"}
         </p>
-        <div className="text-muted-foreground mt-4 grid gap-2 text-sm sm:grid-cols-3">
-          <p>
-            Bắt đầu:{" "}
-            {dateTimeFormatter.format(new Date(result.attempt.startedAt))}
-          </p>
-          <p>
-            Nộp bài:{" "}
-            {dateTimeFormatter.format(new Date(result.attempt.submittedAt))}
-          </p>
-          <p>
-            Thời gian làm bài: {formatDuration(result.attempt.timeUsedSeconds)}
-          </p>
-        </div>
+        <dl className="border-border mt-6 grid gap-4 border-t pt-5 text-sm sm:grid-cols-3">
+          <div>
+            <dt className="text-muted-foreground text-xs">Bắt đầu</dt>
+            <dd className="mt-1 font-medium">
+              {dateTimeFormatter.format(new Date(result.attempt.startedAt))}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground text-xs">Nộp bài</dt>
+            <dd className="mt-1 font-medium">
+              {dateTimeFormatter.format(new Date(result.attempt.submittedAt))}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground text-xs">Thời gian làm bài</dt>
+            <dd className="mt-1 font-medium tabular-nums">
+              {formatDuration(result.attempt.timeUsedSeconds)}
+            </dd>
+          </div>
+        </dl>
       </header>
 
       <ScoreSummary result={result} />
       <PendingGradingSummary result={result} />
 
       {!result.visibility.score && !result.visibility.answers && (
-        <div className="bg-muted rounded-xl p-6 text-center text-sm leading-6">
+        <div className="border-border bg-muted/50 rounded-xl border p-6 text-center text-sm leading-6">
           Bài làm đã được ghi nhận. Kết quả hiện chưa được công bố.
         </div>
       )}
 
       {!result.visibility.score && result.visibility.answers && (
-        <div className="bg-muted rounded-xl p-4 text-center text-sm">
+        <div className="border-border bg-muted/50 rounded-xl border p-4 text-center text-sm">
           Điểm số hiện chưa được công bố.
         </div>
       )}
 
       {result.visibility.score && !result.visibility.answers && (
-        <div className="bg-muted rounded-xl p-4 text-center text-sm">
+        <div className="border-border bg-muted/50 rounded-xl border p-4 text-center text-sm">
           Đáp án và đối chiếu từng câu hiện chưa được công bố.
         </div>
       )}
 
       <AnswerReview result={result} />
 
-      <Button asChild variant="outline">
-        <Link href="/student">Quay lại danh sách đề thi</Link>
-      </Button>
+      <div className="border-border border-t pt-6">
+        <Button asChild variant="outline">
+          <Link href="/student">Quay lại danh sách đề thi</Link>
+        </Button>
+      </div>
     </div>
   );
 }

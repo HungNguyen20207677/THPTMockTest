@@ -67,7 +67,7 @@ function DynamicQuestionStatistics({
             {section.questions.map((question) => (
               <article
                 key={question.questionId}
-                className="border-border space-y-3 rounded-xl border p-4"
+                className="border-border bg-card space-y-3 rounded-xl border p-4 shadow-xs"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="font-medium">Câu {question.questionNumber}</h4>
@@ -391,13 +391,24 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
 
   return (
     <div className="space-y-8">
-      <header className="border-border bg-background rounded-xl border p-6 shadow-sm">
-        <p className="text-primary text-sm font-semibold">THỐNG KÊ ĐỀ THI</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight">
+      <header className="border-border bg-card relative overflow-hidden rounded-2xl border p-5 shadow-sm sm:p-7">
+        <div
+          className="bg-primary/80 absolute inset-y-0 left-0 w-1"
+          aria-hidden="true"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+            Thống kê đề thi
+          </p>
+          <span className="bg-muted rounded-full px-3 py-1 text-xs font-medium">
+            {statusLabels[report.exam.status]}
+          </span>
+        </div>
+        <h1 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
           {report.exam.title}
         </h1>
-        <p className="text-muted-foreground mt-2">
-          Trạng thái hiện tại: {statusLabels[report.exam.status]}
+        <p className="text-muted-foreground mt-2 text-sm">
+          Dữ liệu tổng hợp từ các lượt làm bài của học sinh.
         </p>
       </header>
 
@@ -409,10 +420,10 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
           {metrics.map((metric) => (
             <div
               key={metric.label}
-              className="border-border bg-background rounded-xl border p-4"
+              className="border-border bg-card rounded-xl border p-4 shadow-xs"
             >
               <p className="text-muted-foreground text-sm">{metric.label}</p>
-              <p className="mt-2 text-2xl font-bold tabular-nums">
+              <p className="mt-2 text-2xl font-bold tracking-tight tabular-nums">
                 {metric.value}
               </p>
             </div>
@@ -430,11 +441,11 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
           </p>
         </div>
         {report.topicStatistics.length === 0 ? (
-          <div className="border-border text-muted-foreground rounded-xl border px-4 py-8 text-center text-sm">
+          <div className="border-border bg-muted/20 text-muted-foreground rounded-xl border px-4 py-8 text-center text-sm">
             Đề thi chưa được gắn chủ đề cho các câu hỏi.
           </div>
         ) : (
-          <div className="border-border overflow-x-auto rounded-xl border">
+          <div className="border-border overflow-x-auto rounded-xl border shadow-xs">
             <table className="w-full min-w-[36rem] border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
               <thead className="bg-muted/70">
                 <tr>
@@ -453,7 +464,10 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
               </thead>
               <tbody>
                 {report.topicStatistics.map((topic) => (
-                  <tr key={topic.topicId} className="border-border border-t">
+                  <tr
+                    key={topic.topicId}
+                    className="border-border hover:bg-muted/30 border-t transition-colors"
+                  >
                     <th
                       scope="row"
                       className="px-4 py-2.5 text-left font-medium"
@@ -521,7 +535,7 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
             Danh sách sắp theo tên, không xếp hạng theo điểm.
           </p>
         </div>
-        <div className="border-border overflow-x-auto rounded-xl border">
+        <div className="border-border overflow-x-auto rounded-xl border shadow-xs">
           <table className="w-full min-w-3xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
             <thead className="bg-muted/70">
               <tr>
@@ -548,7 +562,7 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
               {report.students.map((item, index) => (
                 <tr
                   key={item.student?.id ?? `missing-${index}`}
-                  className="border-border border-t"
+                  className="border-border hover:bg-muted/30 border-t transition-colors"
                 >
                   <td className="px-4 py-3">
                     {item.student ? (
@@ -609,9 +623,11 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
         <AdminResultListPanel examId={examId} />
       </section>
 
-      <Button asChild variant="outline">
-        <Link href="/admin/exams">Quay lại danh sách đề thi</Link>
-      </Button>
+      <div className="border-border border-t pt-6">
+        <Button asChild variant="outline">
+          <Link href="/admin/exams">Quay lại danh sách đề thi</Link>
+        </Button>
+      </div>
     </div>
   );
 }

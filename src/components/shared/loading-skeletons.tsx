@@ -347,7 +347,7 @@ export function StatisticsSkeleton({
 }) {
   return (
     <SkeletonStatus label={label} className="space-y-8">
-      <div className="border-border bg-background space-y-3 rounded-xl border p-6 shadow-sm">
+      <div className="border-border bg-card space-y-3 rounded-2xl border p-5 shadow-sm sm:p-7">
         <Skeleton className="h-4 w-36" />
         <Skeleton className="h-9 w-2/3 max-w-xl" />
         <Skeleton className="h-4 w-48" />
@@ -359,7 +359,7 @@ export function StatisticsSkeleton({
             {Array.from({ length: metricCount }, (_, index) => (
               <div
                 key={index}
-                className="border-border bg-background space-y-3 rounded-xl border p-4"
+                className="border-border bg-card space-y-3 rounded-xl border p-4 shadow-xs"
               >
                 <Skeleton className="h-4 w-28" />
                 <Skeleton className="h-7 w-20" />
@@ -381,7 +381,7 @@ export function StatisticsSkeleton({
 export function ResultDetailSkeleton({ label }: { label: string }) {
   return (
     <SkeletonStatus label={label} className="space-y-8">
-      <div className="border-border bg-background space-y-3 rounded-xl border p-6 shadow-sm">
+      <div className="border-border bg-card space-y-3 rounded-2xl border p-5 shadow-sm sm:p-7">
         <Skeleton className="h-4 w-36" />
         <Skeleton className="h-9 w-3/4 max-w-2xl" />
         <Skeleton className="h-4 w-64" />
@@ -392,7 +392,7 @@ export function ResultDetailSkeleton({ label }: { label: string }) {
         </div>
       </div>
       <div className="space-y-3">
-        <Skeleton className="h-28 w-full rounded-xl" />
+        <Skeleton className="h-32 w-full rounded-2xl" />
         <div className="grid gap-3 sm:grid-cols-3">
           <Skeleton className="h-20 w-full rounded-lg" />
           <Skeleton className="h-20 w-full rounded-lg" />

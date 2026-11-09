@@ -92,8 +92,10 @@ export function AdminResultTable({
       cell: ({ row }) =>
         row.original.gradingStatus ===
         EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL ? (
-          <div>
-            <p className="font-semibold">Chờ chấm tự luận</p>
+          <div className="min-w-36">
+            <p className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
+              Chờ chấm tự luận
+            </p>
             {row.original.objectiveScore && (
               <p className="text-muted-foreground text-xs tabular-nums">
                 Đã chấm tự động:{" "}
@@ -103,7 +105,7 @@ export function AdminResultTable({
             )}
           </div>
         ) : (
-          <span className="font-semibold tabular-nums">
+          <span className="text-base font-bold tabular-nums">
             {row.original.score
               ? scoreFormatter.format(row.original.score.total)
               : "Chưa có"}
@@ -133,7 +135,7 @@ export function AdminResultTable({
   });
 
   return (
-    <div className="border-border overflow-x-auto rounded-xl border">
+    <div className="border-border overflow-x-auto rounded-xl border shadow-xs">
       <table className="w-full min-w-5xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
         <thead className="bg-muted/70">
           {table.getHeaderGroups().map((headerGroup) => (
@@ -142,7 +144,7 @@ export function AdminResultTable({
                 <th
                   key={header.id}
                   scope="col"
-                  className="px-4 py-3 text-left font-semibold"
+                  className="text-muted-foreground px-4 py-3 text-left text-xs font-semibold tracking-wide uppercase"
                 >
                   {header.isPlaceholder
                     ? null
@@ -157,7 +159,10 @@ export function AdminResultTable({
         </thead>
         <tbody>
           {table.getRowModel().rows.map((row) => (
-            <tr key={row.id} className="border-border border-t">
+            <tr
+              key={row.id}
+              className="border-border hover:bg-muted/30 border-t transition-colors"
+            >
               {row.getAllCells().map((cell) => (
                 <td key={cell.id} className="px-4 py-3 align-middle">
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}

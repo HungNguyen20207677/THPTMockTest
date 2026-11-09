@@ -70,14 +70,14 @@ export function AdminEssayImageViewer({ images }: { images: EssayImage[] }) {
         {images.map((image, imageIndex) => (
           <figure
             key={image.publicId}
-            className="border-border overflow-hidden rounded-lg border"
+            className="border-border bg-muted/20 overflow-hidden rounded-xl border shadow-xs"
           >
             <button
               ref={(element) => {
                 thumbnailRefs.current[imageIndex] = element;
               }}
               type="button"
-              className="group focus-visible:ring-ring relative block w-full cursor-zoom-in overflow-hidden outline-none focus-visible:ring-3 focus-visible:ring-inset"
+              className="group focus-visible:ring-ring relative block w-full cursor-zoom-in overflow-hidden bg-neutral-950/5 outline-none focus-visible:ring-3 focus-visible:ring-inset dark:bg-neutral-950/50"
               aria-label={`Phóng to ảnh bài làm ${imageIndex + 1}`}
               title={`Phóng to ảnh bài làm ${imageIndex + 1}`}
               onClick={() => openImage(imageIndex)}
@@ -90,7 +90,7 @@ export function AdminEssayImageViewer({ images }: { images: EssayImage[] }) {
                 sizes="(min-width: 768px) 50vw, 100vw"
                 className="h-72 w-full object-contain transition-[filter,transform] group-hover:scale-[1.01] group-hover:brightness-95 lg:h-96"
               />
-              <span className="bg-background/90 text-foreground pointer-events-none absolute right-2 bottom-2 rounded-md px-2 py-1 text-xs font-medium opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+              <span className="bg-background/90 text-foreground pointer-events-none absolute right-3 bottom-3 rounded-full px-3 py-1.5 text-xs font-medium opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                 Phóng to
               </span>
             </button>

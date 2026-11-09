@@ -190,7 +190,7 @@ function ManualEssayGradingSection({
   return (
     <section
       aria-labelledby="manual-grading-heading"
-      className="border-border space-y-5 rounded-xl border p-5"
+      className="border-border bg-card space-y-5 rounded-2xl border p-5 shadow-xs sm:p-6"
     >
       <AlertDialog
         open={showCorrectionConfirmation}
@@ -225,7 +225,7 @@ function ManualEssayGradingSection({
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="border-border flex flex-wrap items-start justify-between gap-3 border-b pb-5">
         <div>
           <h2 id="manual-grading-heading" className="text-xl font-bold">
             {isPending ? "Chấm bài tự luận" : "Điểm tự luận"}
@@ -266,7 +266,7 @@ function ManualEssayGradingSection({
           return (
             <article
               key={question.id}
-              className="border-border space-y-4 rounded-lg border p-4"
+              className="border-border bg-background space-y-4 rounded-xl border p-4 sm:p-5"
             >
               <div>
                 <p className="text-muted-foreground text-xs font-medium uppercase">
@@ -288,7 +288,7 @@ function ManualEssayGradingSection({
               )}
 
               {canEdit ? (
-                <div className="max-w-xs">
+                <div className="bg-muted/40 max-w-sm rounded-lg p-4">
                   <label
                     htmlFor={`essay-score-${question.id}`}
                     className="text-sm font-medium"
@@ -348,7 +348,7 @@ function ManualEssayGradingSection({
       )}
 
       {isPending && (
-        <div className="flex flex-wrap gap-2">
+        <div className="border-border flex flex-wrap gap-2 border-t pt-5">
           <Button
             type="button"
             variant="outline"
@@ -368,7 +368,7 @@ function ManualEssayGradingSection({
       )}
 
       {!isPending && isEditingCorrection && (
-        <div className="flex flex-wrap gap-2">
+        <div className="border-border flex flex-wrap gap-2 border-t pt-5">
           <Button
             type="button"
             variant="outline"
@@ -478,9 +478,20 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
 
   return (
     <div className="space-y-8">
-      <header className="border-border bg-background rounded-xl border p-6 shadow-sm">
-        <p className="text-primary text-sm font-semibold">CHI TIẾT LƯỢT LÀM</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight">
+      <header className="border-border bg-card relative overflow-hidden rounded-2xl border p-5 shadow-sm sm:p-7">
+        <div
+          className="bg-primary/80 absolute inset-y-0 left-0 w-1"
+          aria-hidden="true"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+            Chi tiết lượt làm
+          </p>
+          <span className="bg-muted text-muted-foreground rounded-full px-3 py-1 text-xs font-medium">
+            Lần làm {detail.attempt.attemptNumber}
+          </span>
+        </div>
+        <h1 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
           {detail.exam?.title ?? "Đề thi không còn tồn tại"}
         </h1>
         <p className="text-muted-foreground mt-2">
@@ -493,10 +504,9 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
             </Link>
           ) : (
             "Tài khoản học sinh đã xóa"
-          )}{" "}
-          · Lần làm {detail.attempt.attemptNumber}
+          )}
         </p>
-        <div className="text-muted-foreground mt-4 grid gap-2 text-sm sm:grid-cols-3">
+        <div className="border-border text-muted-foreground mt-5 grid gap-3 border-t pt-5 text-sm sm:grid-cols-3">
           <p>
             Bắt đầu:{" "}
             {vietnamDateTimeFormatter.format(
@@ -517,7 +527,7 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
       </header>
 
       {!isTerminal && (
-        <div className="border-primary/20 bg-primary/5 rounded-xl border p-6">
+        <div className="border-primary/20 bg-primary/5 rounded-2xl border p-6">
           <h2 className="font-semibold">Lượt làm bài đang diễn ra</h2>
           <p className="text-muted-foreground mt-2 text-sm leading-6">
             Đáp án đang làm không được hiển thị cho quản trị viên. Kết quả sẽ có
@@ -527,7 +537,7 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
       )}
 
       {detail.gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL && (
-        <div className="border-amber-300 bg-amber-50 rounded-xl border p-6 text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+        <div className="border-amber-300 bg-amber-50/70 rounded-2xl border p-6 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
           <h2 className="font-semibold">Chờ chấm tự luận</h2>
           {detail.objectiveScore && (
             <p className="mt-2 font-medium tabular-nums">
@@ -564,9 +574,11 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
         />
       )}
 
-      <Button asChild variant="outline">
-        <Link href="/admin/results">Quay lại danh sách kết quả</Link>
-      </Button>
+      <div className="border-border border-t pt-6">
+        <Button asChild variant="outline">
+          <Link href="/admin/results">Quay lại danh sách kết quả</Link>
+        </Button>
+      </div>
     </div>
   );
 }

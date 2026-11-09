@@ -103,9 +103,15 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
 
   return (
     <div className="space-y-6">
-      <header className="border-border bg-background rounded-xl border p-6 shadow-sm">
-        <p className="text-primary text-sm font-semibold">LỊCH SỬ LÀM BÀI</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight">
+      <header className="border-border bg-card relative overflow-hidden rounded-2xl border p-5 shadow-sm sm:p-7">
+        <div
+          className="bg-primary/80 absolute inset-y-0 left-0 w-1"
+          aria-hidden="true"
+        />
+        <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+          Lịch sử làm bài
+        </p>
+        <h1 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
           {history.exam.title}
         </h1>
         <p className="text-muted-foreground mt-2">
@@ -114,13 +120,13 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
       </header>
 
       {!history.visibility.score && history.attempts.length > 0 && (
-        <div className="bg-muted rounded-xl p-4 text-sm">
+        <div className="border-border bg-muted/50 rounded-xl border p-4 text-sm leading-6">
           Điểm số hiện chưa được công bố. Bạn vẫn có thể mở từng lượt để xem
           thông tin được phép hiển thị.
         </div>
       )}
 
-      <div className="border-border overflow-x-auto rounded-xl border">
+      <div className="border-border hidden overflow-x-auto rounded-xl border shadow-xs md:block">
         <table className="w-full min-w-2xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
           <thead className="bg-muted/70">
             <tr>
@@ -145,14 +151,19 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
           </thead>
           <tbody>
             {history.attempts.map((attempt) => (
-              <tr key={attempt.id} className="border-border border-t">
+              <tr
+                key={attempt.id}
+                className="border-border hover:bg-muted/30 border-t transition-colors"
+              >
                 <td className="px-4 py-3 font-medium">
                   Lần {attempt.attemptNumber}
                 </td>
                 <td className="px-4 py-3">
-                  {attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED
-                    ? "Tự động khi hết giờ"
-                    : "Chủ động"}
+                  <span className="bg-muted inline-flex rounded-full px-2.5 py-1 text-xs font-medium">
+                    {attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED
+                      ? "Tự động"
+                      : "Chủ động"}
+                  </span>
                 </td>
                 <td className="px-4 py-3">
                   {vietnamDateTimeFormatter.format(new Date(attempt.startedAt))}
@@ -201,6 +212,65 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
         </table>
       </div>
 
+      <div className="space-y-3 md:hidden">
+        {history.attempts.map((attempt) => (
+          <article
+            key={attempt.id}
+            className="border-border bg-card rounded-xl border p-4 shadow-xs"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold">Lần {attempt.attemptNumber}</p>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Nộp{" "}
+                  {vietnamDateTimeFormatter.format(
+                    new Date(attempt.submittedAt),
+                  )}
+                </p>
+              </div>
+              <span className="bg-muted rounded-full px-2.5 py-1 text-xs font-medium">
+                {attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED
+                  ? "Tự động"
+                  : "Chủ động"}
+              </span>
+            </div>
+            <dl className="border-border mt-4 grid grid-cols-2 gap-3 border-y py-3 text-sm">
+              <div>
+                <dt className="text-muted-foreground text-xs">Thời gian</dt>
+                <dd className="mt-1 font-medium">
+                  {formatDuration(attempt.timeUsedSeconds)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground text-xs">Điểm</dt>
+                <dd className="mt-1 font-semibold tabular-nums">
+                  {attempt.gradingStatus ===
+                  EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL
+                    ? attempt.objectiveScore
+                      ? `Chờ chấm · ${scoreFormatter.format(attempt.objectiveScore.earned)} / ${scoreFormatter.format(attempt.objectiveScore.maximum)}`
+                      : "Đang chờ chấm"
+                    : attempt.score === undefined
+                      ? "Chưa công bố"
+                      : scoreFormatter.format(attempt.score)}
+                </dd>
+              </div>
+            </dl>
+            <Button asChild size="sm" variant="outline" className="mt-4 w-full">
+              <Link
+                href={`/student/exams/${examId}/attempts/${attempt.id}/result`}
+              >
+                Xem kết quả
+              </Link>
+            </Button>
+          </article>
+        ))}
+        {history.attempts.length === 0 && (
+          <div className="border-border text-muted-foreground rounded-xl border px-4 py-10 text-center text-sm">
+            Bạn chưa có lượt làm bài đã hoàn thành.
+          </div>
+        )}
+      </div>
+
       <PaginationControls
         pagination={history.pagination}
         disabled={isLoading}
@@ -210,9 +280,11 @@ export function StudentAttemptHistory({ examId }: { examId: string }) {
         }}
       />
 
-      <Button asChild variant="outline">
-        <Link href="/student">Quay lại danh sách đề thi</Link>
-      </Button>
+      <div className="border-border border-t pt-6">
+        <Button asChild variant="outline">
+          <Link href="/student">Quay lại danh sách đề thi</Link>
+        </Button>
+      </div>
     </div>
   );
 }

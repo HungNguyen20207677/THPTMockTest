@@ -131,113 +131,124 @@ export function AdminResultListPanel({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {showFilters && (
-        <div className="border-border bg-muted/30 grid gap-3 rounded-xl border p-4 md:grid-cols-4">
-          {filterError && (
-            <div className="border-destructive/30 bg-destructive/5 rounded-md border p-3 md:col-span-4">
-              <p role="alert" className="text-destructive text-sm">
-                {filterError}
-              </p>
+        <section
+          aria-label="Bộ lọc kết quả"
+          className="border-border bg-card rounded-2xl border p-4 shadow-xs sm:p-5"
+        >
+          <div className="mb-4">
+            <h2 className="font-semibold">Bộ lọc</h2>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Thu hẹp danh sách theo học sinh, đề thi hoặc cách nộp.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-4">
+            {filterError && (
+              <div className="border-destructive/30 bg-destructive/5 rounded-md border p-3 md:col-span-4">
+                <p role="alert" className="text-destructive text-sm">
+                  {filterError}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  onClick={() =>
+                    setFilterRefreshVersion((version) => version + 1)
+                  }
+                >
+                  Tải lại bộ lọc
+                </Button>
+              </div>
+            )}
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Học sinh</span>
+              <select
+                className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
+                value={selectedStudentId}
+                onChange={(event) => {
+                  setSelectedStudentId(event.target.value);
+                  resetPage();
+                }}
+              >
+                <option value="">Tất cả học sinh</option>
+                {students.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.fullName} (@{student.username})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Đề thi</span>
+              <select
+                className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
+                value={selectedExamId}
+                onChange={(event) => {
+                  setSelectedExamId(event.target.value);
+                  resetPage();
+                }}
+              >
+                <option value="">Tất cả đề thi</option>
+                {exams.map((exam) => (
+                  <option key={exam.id} value={exam.id}>
+                    {exam.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Cách nộp</span>
+              <select
+                className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
+                value={selectedStatus}
+                onChange={(event) => {
+                  setSelectedStatus(
+                    event.target.value as
+                      "" | NonNullable<AdminResultFilters["status"]>,
+                  );
+                  resetPage();
+                }}
+              >
+                <option value="">Tất cả</option>
+                <option value={EXAM_ATTEMPT_STATUS.SUBMITTED}>Chủ động</option>
+                <option value={EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED}>
+                  Tự động khi hết giờ
+                </option>
+              </select>
+            </label>
+            <div className="flex items-end">
               <Button
                 type="button"
-                size="sm"
+                className="w-full"
                 variant="outline"
-                className="mt-2"
-                onClick={() =>
-                  setFilterRefreshVersion((version) => version + 1)
-                }
+                onClick={() => {
+                  if (
+                    !selectedStudentId &&
+                    !selectedExamId &&
+                    !selectedStatus &&
+                    page === 1
+                  ) {
+                    return;
+                  }
+
+                  setIsLoading(true);
+                  setSelectedStudentId("");
+                  setSelectedExamId("");
+                  setSelectedStatus("");
+                  resetPage();
+                }}
               >
-                Tải lại bộ lọc
+                Xóa bộ lọc
               </Button>
             </div>
-          )}
-          <label className="space-y-1 text-sm">
-            <span className="font-medium">Học sinh</span>
-            <select
-              className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
-              value={selectedStudentId}
-              onChange={(event) => {
-                setSelectedStudentId(event.target.value);
-                resetPage();
-              }}
-            >
-              <option value="">Tất cả học sinh</option>
-              {students.map((student) => (
-                <option key={student.id} value={student.id}>
-                  {student.fullName} (@{student.username})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium">Đề thi</span>
-            <select
-              className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
-              value={selectedExamId}
-              onChange={(event) => {
-                setSelectedExamId(event.target.value);
-                resetPage();
-              }}
-            >
-              <option value="">Tất cả đề thi</option>
-              {exams.map((exam) => (
-                <option key={exam.id} value={exam.id}>
-                  {exam.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium">Cách nộp</span>
-            <select
-              className="border-input bg-background h-10 w-full cursor-pointer rounded-md border px-3"
-              value={selectedStatus}
-              onChange={(event) => {
-                setSelectedStatus(
-                  event.target.value as
-                    "" | NonNullable<AdminResultFilters["status"]>,
-                );
-                resetPage();
-              }}
-            >
-              <option value="">Tất cả</option>
-              <option value={EXAM_ATTEMPT_STATUS.SUBMITTED}>Chủ động</option>
-              <option value={EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED}>
-                Tự động khi hết giờ
-              </option>
-            </select>
-          </label>
-          <div className="flex items-end">
-            <Button
-              type="button"
-              className="w-full"
-              variant="outline"
-              onClick={() => {
-                if (
-                  !selectedStudentId &&
-                  !selectedExamId &&
-                  !selectedStatus &&
-                  page === 1
-                ) {
-                  return;
-                }
-
-                setIsLoading(true);
-                setSelectedStudentId("");
-                setSelectedExamId("");
-                setSelectedStatus("");
-                resetPage();
-              }}
-            >
-              Xóa bộ lọc
-            </Button>
           </div>
-        </div>
+        </section>
       )}
 
       {error ? (
-        <div className="border-border space-y-3 rounded-xl border p-5">
+        <div className="border-destructive/30 bg-destructive/5 space-y-3 rounded-xl border p-5">
           <p role="alert" className="text-destructive text-sm">
             {error}
           </p>

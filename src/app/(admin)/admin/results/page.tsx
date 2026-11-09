@@ -12,16 +12,18 @@ export default async function AdminResultsPage() {
   await requirePageRole(USER_ROLE.ADMIN);
 
   return (
-    <main className="mx-auto max-w-7xl px-6 py-10">
-      <div className="mb-6">
-        <p className="text-primary text-sm font-semibold">KẾT QUẢ BÀI LÀM</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-10">
+      <header className="mb-6 max-w-3xl">
+        <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+          Kết quả bài làm
+        </p>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
           Tất cả kết quả
         </h1>
         <p className="text-muted-foreground mt-2">
           Tra cứu các lượt đã nộp theo học sinh, đề thi và cách nộp bài.
         </p>
-      </div>
+      </header>
       <AdminResultListPanel showFilters />
     </main>
   );
