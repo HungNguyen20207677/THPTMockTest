@@ -83,6 +83,35 @@ function PageHeaderShape({
   );
 }
 
+function ExamCardShapes() {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {Array.from({ length: 4 }, (_, index) => (
+        <div
+          key={index}
+          className="border-border bg-card flex min-h-56 flex-col rounded-lg border p-5 shadow-xs"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="w-2/3 space-y-2">
+              <Skeleton className="h-3 w-28" />
+              <Skeleton className="h-6 w-full" />
+            </div>
+            <Skeleton className="h-6 w-20 rounded-full" />
+          </div>
+          <div className="mt-4 space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-4/5" />
+          </div>
+          <div className="border-border mt-auto flex gap-2 border-t pt-4">
+            <Skeleton className="h-9 w-32" />
+            <Skeleton className="h-9 w-24" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function DashboardSkeleton({
   variant,
 }: {
@@ -97,18 +126,9 @@ export function DashboardSkeleton({
       }
       className="space-y-8"
     >
-      {variant === "admin" ? (
-        <div className="border-border bg-background space-y-5 rounded-xl border p-6 shadow-sm">
-          <PageHeaderShape eyebrow />
-          <div className="flex flex-wrap gap-2">
-            <Skeleton className="h-9 w-36" />
-            <Skeleton className="h-9 w-32" />
-            <Skeleton className="h-9 w-28" />
-          </div>
-        </div>
-      ) : (
-        <PageHeaderShape eyebrow />
-      )}
+      <div className="border-border border-b pb-7">
+        <PageHeaderShape action={variant === "admin"} eyebrow />
+      </div>
 
       {variant === "admin" ? (
         <div className="space-y-4">
@@ -120,8 +140,9 @@ export function DashboardSkeleton({
             {Array.from({ length: 5 }, (_, index) => (
               <div
                 key={index}
-                className="border-border bg-background space-y-3 rounded-xl border p-4 shadow-sm"
+                className="border-border bg-card space-y-3 rounded-lg border p-4 shadow-xs"
               >
+                <Skeleton className="size-8 rounded-md" />
                 <Skeleton className="h-4 w-28" />
                 <Skeleton className="h-9 w-16" />
               </div>
@@ -129,26 +150,15 @@ export function DashboardSkeleton({
           </div>
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {Array.from({ length: 4 }, (_, index) => (
-            <div
-              key={index}
-              className="border-border bg-background flex min-h-52 flex-col rounded-xl border p-5 shadow-sm"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <Skeleton className="h-6 w-2/3" />
-                <Skeleton className="h-7 w-20 rounded-full" />
-              </div>
-              <div className="mt-4 space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-4/5" />
-              </div>
-              <div className="mt-auto flex gap-2 pt-6">
-                <Skeleton className="h-9 w-32" />
-                <Skeleton className="h-9 w-28" />
-              </div>
+        <div className="space-y-4">
+          <div className="flex items-end justify-between gap-4">
+            <div className="space-y-2">
+              <Skeleton className="h-6 w-36" />
+              <Skeleton className="h-4 w-72 max-w-full" />
             </div>
-          ))}
+            <Skeleton className="hidden h-4 w-52 sm:block" />
+          </div>
+          <ExamCardShapes />
         </div>
       )}
     </SkeletonStatus>
@@ -315,27 +325,7 @@ export function TableSkeleton({
 export function ExamCardsSkeleton() {
   return (
     <SkeletonStatus label="Đang tải danh sách đề thi">
-      <div className="grid gap-4 lg:grid-cols-2">
-        {Array.from({ length: 4 }, (_, index) => (
-          <div
-            key={index}
-            className="border-border bg-background flex min-h-52 flex-col rounded-xl border p-5 shadow-sm"
-          >
-            <div className="flex items-center justify-between gap-4">
-              <Skeleton className="h-6 w-2/3" />
-              <Skeleton className="h-7 w-20 rounded-full" />
-            </div>
-            <div className="mt-4 space-y-2">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-4/5" />
-            </div>
-            <div className="mt-auto flex gap-2 pt-6">
-              <Skeleton className="h-9 w-32" />
-              <Skeleton className="h-9 w-28" />
-            </div>
-          </div>
-        ))}
-      </div>
+      <ExamCardShapes />
     </SkeletonStatus>
   );
 }

@@ -39,10 +39,17 @@ const stateLabels: Record<StudentExamState, string> = {
 };
 
 const stateClassNames: Record<StudentExamState, string> = {
-  IN_PROGRESS: "bg-primary/10 text-primary",
-  NOT_STARTED: "bg-muted text-muted-foreground",
+  IN_PROGRESS: "bg-primary/10 text-primary ring-primary/20 ring-1",
+  NOT_STARTED:
+    "bg-blue-50 text-blue-700 ring-blue-200 ring-1 dark:bg-blue-950/50 dark:text-blue-200 dark:ring-blue-800",
   COMPLETED:
-    "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200",
+    "bg-emerald-100 text-emerald-800 ring-emerald-200 ring-1 dark:bg-emerald-950/60 dark:text-emerald-200 dark:ring-emerald-800",
+};
+
+const stateCardClassNames: Record<StudentExamState, string> = {
+  IN_PROGRESS: "border-primary/40 bg-primary/[0.025]",
+  NOT_STARTED: "border-border bg-card",
+  COMPLETED: "border-border bg-card",
 };
 
 function getRequestError(error: unknown): string {
@@ -182,6 +189,18 @@ export function StudentExamList() {
     );
   }
 
+  const stateCounts = exams.reduce(
+    (counts, exam) => {
+      counts[exam.state] += 1;
+      return counts;
+    },
+    {
+      [STUDENT_EXAM_STATE.IN_PROGRESS]: 0,
+      [STUDENT_EXAM_STATE.NOT_STARTED]: 0,
+      [STUDENT_EXAM_STATE.COMPLETED]: 0,
+    },
+  );
+
   return (
     <>
       <AlertDialog
@@ -242,114 +261,185 @@ export function StudentExamList() {
         </p>
       )}
 
-      {exams.length === 0 ? (
-        <div className="border-border bg-background rounded-xl border p-8 text-center shadow-sm">
-          <p className="font-medium">Chưa có đề thi đang mở.</p>
-          <p className="text-muted-foreground mt-2 text-sm">
-            Các đề đã xuất bản dành cho bạn sẽ xuất hiện tại đây.
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {exams.map((exam) => (
-            <article
-              key={exam.id}
-              className="border-border bg-background flex flex-col rounded-xl border p-5 shadow-sm"
+      <section aria-labelledby="available-exams-heading" className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 id="available-exams-heading" className="text-lg font-semibold">
+              Đề thi của bạn
+            </h2>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Tiếp tục bài đang làm hoặc chọn một đề mới để bắt đầu.
+            </p>
+          </div>
+          {exams.length > 0 && (
+            <div
+              className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs"
+              aria-label="Tổng hợp trạng thái đề thi"
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <h2 className="text-lg font-semibold">{exam.title}</h2>
-                <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${stateClassNames[exam.state]}`}
-                >
-                  {stateLabels[exam.state]}
-                </span>
-              </div>
-              {exam.description && (
-                <p className="text-muted-foreground mt-3 line-clamp-3 text-sm leading-6">
-                  {exam.description}
-                </p>
-              )}
-              <div className="text-muted-foreground mt-4 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                <span>{exam.durationMinutes} phút</span>
-                {exam.completedAttemptCount > 0 && (
-                  <span>Đã hoàn thành {exam.completedAttemptCount} lần</span>
-                )}
-                {exam.state === STUDENT_EXAM_STATE.COMPLETED && (
-                  <span>
-                    {!exam.isAvailable
-                      ? "Đề thi đã đóng"
-                      : exam.allowRetake
-                        ? "Được phép làm lại"
-                        : "Không cho phép làm lại"}
+              <span>
+                <strong className="text-foreground tabular-nums">
+                  {stateCounts.IN_PROGRESS}
+                </strong>{" "}
+                đang làm
+              </span>
+              <span>
+                <strong className="text-foreground tabular-nums">
+                  {stateCounts.NOT_STARTED}
+                </strong>{" "}
+                chưa làm
+              </span>
+              <span>
+                <strong className="text-foreground tabular-nums">
+                  {stateCounts.COMPLETED}
+                </strong>{" "}
+                hoàn thành
+              </span>
+            </div>
+          )}
+        </div>
+
+        {exams.length === 0 ? (
+          <div className="border-border bg-card rounded-lg border border-dashed px-6 py-12 text-center">
+            <div className="bg-muted text-muted-foreground mx-auto flex size-10 items-center justify-center rounded-full">
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                className="size-5 fill-none stroke-current stroke-2"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                <path d="M14 2v6h6M8 13h8M8 17h5" />
+              </svg>
+            </div>
+            <p className="mt-4 font-medium">Chưa có đề thi đang mở.</p>
+            <p className="text-muted-foreground mx-auto mt-1 max-w-sm text-sm leading-6">
+              Các đề đã xuất bản dành cho bạn sẽ xuất hiện tại đây.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {exams.map((exam) => (
+              <article
+                key={exam.id}
+                className={`flex flex-col rounded-lg border p-5 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm ${stateCardClassNames[exam.state]}`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-muted-foreground text-xs font-medium">
+                      Đề thi Toán · {exam.durationMinutes} phút
+                    </p>
+                    <h3 className="mt-1.5 text-lg leading-6 font-semibold">
+                      {exam.title}
+                    </h3>
+                  </div>
+                  <span
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${stateClassNames[exam.state]}`}
+                  >
+                    <span className="size-1.5 rounded-full bg-current" />
+                    {stateLabels[exam.state]}
                   </span>
+                </div>
+                {exam.description && (
+                  <p className="text-muted-foreground mt-3 line-clamp-2 text-sm leading-6">
+                    {exam.description}
+                  </p>
                 )}
-              </div>
-              <div className="mt-auto flex flex-wrap gap-2 pt-5">
-                {exam.state === STUDENT_EXAM_STATE.IN_PROGRESS &&
-                  exam.activeAttemptId && (
+
+                {exam.state === STUDENT_EXAM_STATE.IN_PROGRESS && (
+                  <p className="border-primary/20 bg-primary/5 text-primary mt-4 rounded-md border px-3 py-2 text-sm font-medium">
+                    Thời gian làm bài đang tiếp tục được tính.
+                  </p>
+                )}
+
+                <div className="text-muted-foreground mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  {exam.completedAttemptCount > 0 && (
+                    <span>{exam.completedAttemptCount} lượt đã hoàn thành</span>
+                  )}
+                  {exam.completedAttemptCount > 0 &&
+                    exam.state === STUDENT_EXAM_STATE.COMPLETED && (
+                      <span aria-hidden="true">·</span>
+                    )}
+                  {exam.state === STUDENT_EXAM_STATE.COMPLETED && (
+                    <span>
+                      {!exam.isAvailable
+                        ? "Đề thi đã đóng"
+                        : exam.allowRetake
+                          ? "Có thể làm lại"
+                          : "Không cho phép làm lại"}
+                    </span>
+                  )}
+                </div>
+
+                <div className="border-border mt-auto flex flex-col gap-2 border-t pt-4 sm:flex-row sm:flex-wrap">
+                  {exam.state === STUDENT_EXAM_STATE.IN_PROGRESS &&
+                    exam.activeAttemptId && (
+                      <Button
+                        type="button"
+                        className="sm:mr-auto"
+                        onClick={(event) => {
+                          startTriggerRef.current = event.currentTarget;
+                          setStartError(null);
+                          setStartTarget(exam);
+                        }}
+                      >
+                        Tiếp tục làm bài
+                        <span aria-hidden="true">→</span>
+                      </Button>
+                    )}
+                  {exam.state === STUDENT_EXAM_STATE.NOT_STARTED && (
                     <Button
                       type="button"
+                      className="sm:mr-auto"
                       onClick={(event) => {
                         startTriggerRef.current = event.currentTarget;
                         setStartError(null);
                         setStartTarget(exam);
                       }}
                     >
-                      Tiếp tục làm bài
+                      Bắt đầu làm bài
+                      <span aria-hidden="true">→</span>
                     </Button>
                   )}
-                {exam.state === STUDENT_EXAM_STATE.NOT_STARTED && (
-                  <Button
-                    type="button"
-                    onClick={(event) => {
-                      startTriggerRef.current = event.currentTarget;
-                      setStartError(null);
-                      setStartTarget(exam);
-                    }}
-                  >
-                    Bắt đầu làm bài
-                  </Button>
-                )}
-                {exam.state === STUDENT_EXAM_STATE.COMPLETED &&
-                  exam.latestCompletedAttemptId && (
-                    <Button asChild>
-                      <Link
-                        href={getResultHref(
-                          exam.id,
-                          exam.latestCompletedAttemptId,
-                        )}
-                      >
-                        Xem kết quả
+                  {exam.state === STUDENT_EXAM_STATE.COMPLETED &&
+                    exam.latestCompletedAttemptId && (
+                      <Button asChild className="sm:mr-auto">
+                        <Link
+                          href={getResultHref(
+                            exam.id,
+                            exam.latestCompletedAttemptId,
+                          )}
+                        >
+                          Xem kết quả
+                        </Link>
+                      </Button>
+                    )}
+                  {exam.completedAttemptCount > 0 && (
+                    <Button asChild variant="outline">
+                      <Link href={`/student/exams/${exam.id}/history`}>
+                        Lịch sử
                       </Link>
                     </Button>
                   )}
-                {exam.completedAttemptCount > 0 && (
-                  <Button asChild variant="outline">
-                    <Link href={`/student/exams/${exam.id}/history`}>
-                      Lịch sử làm bài
-                    </Link>
-                  </Button>
-                )}
-                {exam.state === STUDENT_EXAM_STATE.COMPLETED &&
-                  exam.isAvailable &&
-                  exam.allowRetake && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={(event) => {
-                        startTriggerRef.current = event.currentTarget;
-                        setStartError(null);
-                        setStartTarget(exam);
-                      }}
-                    >
-                      Làm lại
-                    </Button>
-                  )}
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+                  {exam.state === STUDENT_EXAM_STATE.COMPLETED &&
+                    exam.isAvailable &&
+                    exam.allowRetake && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={(event) => {
+                          startTriggerRef.current = event.currentTarget;
+                          setStartError(null);
+                          setStartTarget(exam);
+                        }}
+                      >
+                        Làm lại
+                      </Button>
+                    )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </>
   );
 }

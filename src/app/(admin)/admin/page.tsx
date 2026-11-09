@@ -14,19 +14,21 @@ export default async function AdminDashboardPage() {
   const admin = await requirePageRole(USER_ROLE.ADMIN);
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10">
-      <section className="border-border bg-background space-y-5 rounded-xl border p-6 shadow-sm">
-        <div className="space-y-2">
-          <p className="text-primary text-sm font-semibold">KHU VỰC QUẢN TRỊ</p>
-          <h1 className="text-3xl font-bold tracking-tight">
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+      <section className="border-border flex flex-col gap-5 border-b pb-7 sm:flex-row sm:items-end sm:justify-between">
+        <div className="max-w-2xl space-y-2">
+          <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+            Khu vực quản trị
+          </p>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
             Xin chào, {admin.fullName}
           </h1>
-          <p className="text-muted-foreground leading-7">
+          <p className="text-muted-foreground text-sm leading-6 sm:text-base">
             Bạn có thể quản lý tài khoản học sinh, tệp PDF và đáp án của các đề
             thi Toán THPT.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 sm:justify-end">
           <Button asChild>
             <Link href="/admin/students">Quản lý học sinh</Link>
           </Button>
@@ -38,7 +40,7 @@ export default async function AdminDashboardPage() {
           </Button>
         </div>
       </section>
-      <div className="mt-8">
+      <div className="mt-7">
         <AdminDashboard />
       </div>
     </main>

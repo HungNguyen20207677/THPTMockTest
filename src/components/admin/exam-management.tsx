@@ -151,16 +151,28 @@ export function ExamManagement() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Quản lý đề thi</h1>
-          <p className="text-muted-foreground mt-2">
+    <div className="space-y-7">
+      <div className="border-border flex flex-col gap-4 border-b pb-7 sm:flex-row sm:items-end sm:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+            Nội dung học tập
+          </p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
+            Quản lý đề thi
+          </h1>
+          <p className="text-muted-foreground mt-2 text-sm leading-6 sm:text-base">
             Quản lý tệp PDF, đáp án và trạng thái hiển thị của đề Toán.
           </p>
         </div>
         <Button asChild>
           <Link ref={createLinkRef} href="/admin/exams/new">
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 20 20"
+              className="size-4 fill-none stroke-current stroke-2"
+            >
+              <path d="M10 4v12M4 10h12" strokeLinecap="round" />
+            </svg>
             Tạo đề thi
           </Link>
         </Button>
@@ -238,20 +250,32 @@ export function ExamManagement() {
           </Button>
         </div>
       ) : isLoading ? (
-        <TableSkeleton columns={7} label="Đang tải danh sách đề thi" />
+        <TableSkeleton columns={5} label="Đang tải danh sách đề thi" />
       ) : (
-        <ExamTable
-          exams={exams}
-          isBusy={isMutating}
-          onStatusChange={(exam, status, trigger) =>
-            void handleStatusChange(exam, status, trigger)
-          }
-          onDelete={(exam, trigger) => {
-            setActionError(null);
-            deleteTriggerRef.current = trigger;
-            setDeleteTarget(exam);
-          }}
-        />
+        <section aria-labelledby="exam-list-heading" className="space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 id="exam-list-heading" className="font-semibold">
+                Danh sách đề thi
+              </h2>
+              <p className="text-muted-foreground mt-0.5 text-sm">
+                {exams.length} đề thi
+              </p>
+            </div>
+          </div>
+          <ExamTable
+            exams={exams}
+            isBusy={isMutating}
+            onStatusChange={(exam, status, trigger) =>
+              void handleStatusChange(exam, status, trigger)
+            }
+            onDelete={(exam, trigger) => {
+              setActionError(null);
+              deleteTriggerRef.current = trigger;
+              setDeleteTarget(exam);
+            }}
+          />
+        </section>
       )}
     </div>
   );
