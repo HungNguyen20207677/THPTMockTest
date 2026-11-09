@@ -205,12 +205,15 @@ export function CurriculumTreeSkeleton({
         {Array.from({ length: 2 }, (_, gradeIndex) => (
           <div
             key={gradeIndex}
-            className="border-border bg-background rounded-xl border shadow-sm"
+            className="border-border bg-card rounded-lg border shadow-xs"
           >
-            <div className="border-border flex items-center justify-between gap-3 border-b px-4 py-3">
-              <div className="space-y-2">
-                <Skeleton className="h-5 w-28" />
-                <Skeleton className="h-3 w-16" />
+            <div className="border-border bg-primary/[0.025] flex items-center justify-between gap-3 border-b px-4 py-3">
+              <div className="flex items-center gap-3">
+                <Skeleton className="size-9 rounded-md" />
+                <div className="space-y-2">
+                  <Skeleton className="h-5 w-28" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
               </div>
               <Skeleton className="h-8 w-32" />
             </div>
@@ -218,10 +221,13 @@ export function CurriculumTreeSkeleton({
               {Array.from({ length: 2 }, (_, chapterIndex) => (
                 <div
                   key={chapterIndex}
-                  className="border-border overflow-hidden rounded-lg border"
+                  className="border-border overflow-hidden rounded-md border"
                 >
-                  <div className="bg-muted/30 border-border flex items-center justify-between border-b px-3 py-2">
-                    <Skeleton className="h-4 w-40" />
+                  <div className="bg-muted/40 border-border flex items-center justify-between border-b px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="size-7" />
+                      <Skeleton className="h-4 w-40" />
+                    </div>
                     <Skeleton className="h-7 w-28" />
                   </div>
                   <div className="space-y-3 px-3 py-3">
@@ -411,13 +417,23 @@ export function ExamFormSkeleton({
   includeHeader?: boolean;
 } = {}) {
   return (
-    <SkeletonStatus label="Đang tải đề thi" className="space-y-8">
-      {includeHeader && <PageHeaderShape />}
+    <SkeletonStatus label="Đang tải đề thi" className="space-y-7">
+      {includeHeader && (
+        <div className="border-border border-b pb-7">
+          <PageHeaderShape eyebrow />
+        </div>
+      )}
+      <div className="border-border flex gap-2 border-y py-2">
+        <Skeleton className="h-9 w-24" />
+        <Skeleton className="h-9 w-24" />
+        <Skeleton className="h-9 w-32" />
+      </div>
       {Array.from({ length: 3 }, (_, sectionIndex) => (
         <div
           key={sectionIndex}
-          className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm"
+          className="border-border bg-card space-y-5 rounded-lg border p-5 shadow-xs"
         >
+          <Skeleton className="h-3 w-28" />
           <Skeleton className="h-7 w-48" />
           <div className="grid gap-5 md:grid-cols-2">
             {Array.from({ length: sectionIndex === 2 ? 6 : 4 }, (_, index) => (

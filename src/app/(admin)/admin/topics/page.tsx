@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Chủ đề & kiến thức" };
 export default async function CurriculumPage() {
   await requirePageRole(USER_ROLE.ADMIN);
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10">
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
       <CurriculumManagement />
     </main>
   );

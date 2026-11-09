@@ -15,6 +15,13 @@ import {
 import { scoreFormatter } from "@/lib/formatting";
 import type { ExamStructureTemplate } from "@/types/exam-structure-template";
 
+const questionTypeLabels = {
+  SINGLE_CHOICE: "Trắc nghiệm",
+  TRUE_FALSE: "Đúng/Sai",
+  SHORT_ANSWER: "Trả lời ngắn",
+  ESSAY_IMAGE: "Tự luận ảnh",
+} as const;
+
 const features = tableFeatures({});
 const columnHelper = createColumnHelper<
   typeof features,
@@ -40,7 +47,19 @@ export function ExamStructureTemplateTable({
   const columns = columnHelper.columns([
     columnHelper.accessor("name", {
       header: "Tên mẫu",
-      cell: ({ getValue }) => <span className="font-medium">{getValue()}</span>,
+      cell: ({ row, getValue }) => (
+        <div className="min-w-52">
+          <p className="font-semibold">{getValue()}</p>
+          <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
+            {row.original.sections
+              .map(
+                (section) =>
+                  `${section.title} (${section.questions.length} câu)`,
+              )
+              .join(" · ")}
+          </p>
+        </div>
+      ),
     }),
     columnHelper.accessor("isBuiltIn", {
       header: "Loại",
@@ -56,14 +75,32 @@ export function ExamStructureTemplateTable({
         ),
     }),
     columnHelper.display({
-      id: "sections",
-      header: "Số phần",
-      cell: ({ row }) => row.original.sections.length,
-    }),
-    columnHelper.display({
-      id: "questions",
-      header: "Số câu",
-      cell: ({ row }) => getExamStructureQuestionCount(row.original),
+      id: "structure",
+      header: "Cấu trúc",
+      cell: ({ row }) => (
+        <div className="min-w-28 text-xs">
+          <p className="font-medium">
+            {row.original.sections.length} phần ·{" "}
+            {getExamStructureQuestionCount(row.original)} câu
+          </p>
+          <div className="mt-1.5 flex max-w-52 flex-wrap gap-1">
+            {Array.from(
+              new Set(
+                row.original.sections.flatMap((section) =>
+                  section.questions.map((question) => question.type),
+                ),
+              ),
+            ).map((type) => (
+              <span
+                key={type}
+                className="bg-muted text-muted-foreground rounded px-1.5 py-0.5"
+              >
+                {questionTypeLabels[type]}
+              </span>
+            ))}
+          </div>
+        </div>
+      ),
     }),
     columnHelper.display({
       id: "score",
@@ -84,7 +121,7 @@ export function ExamStructureTemplateTable({
         }
 
         return (
-          <div className="flex min-w-32 flex-wrap items-center gap-1">
+          <div className="flex min-w-32 flex-wrap items-center justify-end gap-1">
             <Button
               type="button"
               size="sm"
@@ -98,7 +135,8 @@ export function ExamStructureTemplateTable({
             <Button
               type="button"
               size="sm"
-              variant="destructive"
+              variant="ghost"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               disabled={isBusy}
               aria-label={`Xóa mẫu cấu trúc ${template.name}`}
               onClick={(event) => onDelete(template, event.currentTarget)}
@@ -118,16 +156,16 @@ export function ExamStructureTemplateTable({
   });
 
   return (
-    <div className="border-border overflow-x-auto rounded-xl border">
-      <table className="w-full min-w-3xl border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
-        <thead className="bg-muted/70">
+    <div className="border-border bg-card overflow-x-auto rounded-lg border shadow-xs">
+      <table className="w-full min-w-[48rem] border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
+        <thead className="bg-muted/50">
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
               {headerGroup.headers.map((header) => (
                 <th
                   key={header.id}
                   scope="col"
-                  className="text-foreground px-4 py-3 text-left font-semibold"
+                  className={`text-muted-foreground px-4 py-2.5 text-left text-xs font-semibold tracking-wide uppercase ${header.column.id === "actions" ? "text-right" : ""}`}
                 >
                   {header.isPlaceholder
                     ? null
@@ -142,9 +180,12 @@ export function ExamStructureTemplateTable({
         </thead>
         <tbody>
           {table.getRowModel().rows.map((row) => (
-            <tr key={row.id} className="border-border border-t">
+            <tr
+              key={row.id}
+              className="border-border hover:bg-muted/30 border-t transition-colors"
+            >
               {row.getAllCells().map((cell) => (
-                <td key={cell.id} className="px-4 py-3">
+                <td key={cell.id} className="px-4 py-3.5">
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
               ))}

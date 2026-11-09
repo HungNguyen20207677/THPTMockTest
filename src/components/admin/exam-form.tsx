@@ -849,7 +849,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-8" noValidate>
+    <form onSubmit={onSubmit} className="flex flex-col gap-7" noValidate>
       <AlertDialog
         open={Boolean(pendingAnswerKeyCorrection)}
         onOpenChange={(open) => {
@@ -896,6 +896,25 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
         </AlertDialogContent>
       </AlertDialog>
 
+      <nav
+        aria-label="Các phần của biểu mẫu"
+        className="border-border bg-background/95 order-0 -mx-1 flex gap-1 overflow-x-auto border-y px-1 py-2 backdrop-blur-sm [scrollbar-width:none] sm:sticky sm:top-15 sm:z-20 [&::-webkit-scrollbar]:hidden"
+      >
+        {[
+          ["exam-information", "Thông tin"],
+          ["exam-settings", "Thiết lập"],
+          ["exam-answers", "Đáp án & chủ đề"],
+        ].map(([href, label]) => (
+          <a
+            key={href}
+            href={`#${href}`}
+            className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring shrink-0 rounded-md px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2"
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+
       <fieldset disabled={isBusy} className="contents">
         {activeStructure ? (
           <Controller
@@ -919,11 +938,26 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               };
 
               return (
-                <div className="space-y-6">
+                <div
+                  id="exam-answers"
+                  className="order-3 scroll-mt-32 space-y-5"
+                >
+                  <div>
+                    <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+                      Nội dung chấm điểm
+                    </p>
+                    <h2 className="mt-1 text-xl font-semibold">
+                      Đáp án & chủ đề kiến thức
+                    </h2>
+                    <p className="text-muted-foreground mt-1 text-sm leading-6">
+                      Nhập đáp án và gắn chủ đề cho từng câu theo cấu trúc đã
+                      chọn.
+                    </p>
+                  </div>
                   {activeStructure.sections.map((section) => (
                     <section
                       key={section.id}
-                      className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm"
+                      className="border-border bg-card space-y-5 rounded-lg border p-5 shadow-xs"
                     >
                       <div>
                         <h2 className="text-xl font-semibold">
@@ -979,7 +1013,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                             return (
                               <div
                                 key={question.id}
-                                className="border-border space-y-2 rounded-lg border p-4"
+                                className="border-border bg-background/40 space-y-2 rounded-md border p-4"
                               >
                                 <div className="flex items-center justify-between gap-2">
                                   <Label htmlFor={`dynamic-${question.id}`}>
@@ -1029,7 +1063,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                             return (
                               <fieldset
                                 key={question.id}
-                                className="border-border space-y-3 rounded-lg border p-4"
+                                className="border-border bg-background/40 space-y-3 rounded-md border p-4"
                               >
                                 <legend className="px-1 font-medium">
                                   {questionLabel} · {scoreLabel}
@@ -1086,7 +1120,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                             return (
                               <div
                                 key={question.id}
-                                className="border-border space-y-4 rounded-lg border p-4"
+                                className="border-border bg-background/40 space-y-4 rounded-md border p-4"
                               >
                                 {part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
                                   <ShortAnswerBubbleInput
@@ -1123,7 +1157,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                           return (
                             <div
                               key={question.id}
-                              className="border-border bg-muted/30 space-y-3 rounded-lg border p-4 text-sm"
+                              className="border-border bg-muted/30 space-y-3 rounded-md border p-4 text-sm"
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <p className="font-medium">{questionLabel}</p>
@@ -1152,17 +1186,26 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             }}
           />
         ) : mode === "create" ? (
-          <section className="border-border bg-muted/20 rounded-xl border border-dashed p-8 text-center">
+          <section
+            id="exam-answers"
+            className="border-border bg-muted/20 order-3 scroll-mt-32 rounded-lg border border-dashed p-8 text-center"
+          >
             <p className="font-medium">Chưa chọn mẫu cấu trúc</p>
             <p className="text-muted-foreground mt-1 text-sm">
               Chọn mẫu ở phần thông tin đề thi để nhập đáp án.
             </p>
           </section>
         ) : null}
-        <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
+        <section
+          id="exam-information"
+          className="border-border bg-card order-1 scroll-mt-32 space-y-5 rounded-lg border p-5 shadow-xs sm:p-6"
+        >
           <div>
-            <h2 className="text-xl font-semibold">Thông tin đề thi</h2>
-            <p className="text-muted-foreground mt-1 text-sm">
+            <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+              Bước chuẩn bị
+            </p>
+            <h2 className="mt-1 text-xl font-semibold">Thông tin đề thi</h2>
+            <p className="text-muted-foreground mt-1 text-sm leading-6">
               {activeStructure
                 ? `${activeStructure.sections.reduce((total, section) => total + section.questions.length, 0)} câu theo mẫu cấu trúc, thời gian ${EXAM_STRUCTURE.durationMinutes} phút.`
                 : mode === "create"
@@ -1180,8 +1223,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           </div>
 
           <div className="grid gap-5 md:grid-cols-2">
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="exam-title">Tiêu đề</Label>
+            <div className="order-1 space-y-2 md:col-span-2">
+              <Label htmlFor="exam-title">Tiêu đề *</Label>
               <Input
                 id="exam-title"
                 autoFocus
@@ -1197,8 +1240,15 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               )}
             </div>
 
+            <div className="border-border order-4 border-t pt-4 md:col-span-2">
+              <h3 className="font-semibold">Cấu trúc đề thi</h3>
+              <p className="text-muted-foreground mt-1 text-xs leading-5">
+                Cấu trúc xác định thứ tự phần, loại câu hỏi và điểm tối đa.
+              </p>
+            </div>
+
             {mode === "create" ? (
-              <div className="space-y-3 md:col-span-2">
+              <div className="order-5 space-y-3 md:col-span-2">
                 <div className="space-y-2">
                   <Label htmlFor="exam-structure-template">Mẫu cấu trúc</Label>
                   <select
@@ -1262,7 +1312,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 )}
               </div>
             ) : savedStructure ? (
-              <div className="border-border bg-muted/30 space-y-1 rounded-lg border p-3 text-sm md:col-span-2">
+              <div className="border-border bg-muted/30 order-5 space-y-1 rounded-md border p-3 text-sm md:col-span-2">
                 <p className="font-medium">Cấu trúc đã lưu cùng đề thi</p>
                 <p className="text-muted-foreground">
                   Không thể đổi mẫu hoặc cấu trúc sau khi tạo đề thi.
@@ -1271,7 +1321,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             ) : null}
 
             {activeStructure && (
-              <div className="border-border grid gap-2 rounded-lg border p-3 text-sm sm:grid-cols-2 md:col-span-2 lg:grid-cols-3">
+              <div className="border-border bg-background/40 order-6 grid gap-3 rounded-md border p-3 text-sm sm:grid-cols-2 md:col-span-2 lg:grid-cols-3">
                 {activeStructure.sections.map((section) => (
                   <div key={section.id}>
                     <p className="font-medium">{section.title}</p>
@@ -1295,13 +1345,13 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             )}
 
             {structureContainsEssay && (
-              <p className="border-border bg-muted/30 text-muted-foreground rounded-lg border p-3 text-sm md:col-span-2">
+              <p className="border-border bg-muted/30 text-muted-foreground order-6 rounded-md border p-3 text-sm md:col-span-2">
                 Câu tự luận bằng hình ảnh không cần đáp án tự động. Điểm tự luận
                 sẽ chưa xuất hiện cho đến khi có chức năng chấm thủ công.
               </p>
             )}
 
-            <div className="space-y-2 md:col-span-2">
+            <div className="order-2 space-y-2 md:col-span-2">
               <Label htmlFor="exam-description">Mô tả (không bắt buộc)</Label>
               <Textarea
                 id="exam-description"
@@ -1321,7 +1371,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               )}
             </div>
 
-            <div className="space-y-2">
+            <div className="order-3 space-y-2">
               <Label htmlFor="exam-status">Trạng thái</Label>
               <select
                 id="exam-status"
@@ -1336,7 +1386,13 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               </select>
             </div>
 
-            <div className="space-y-2">
+            <div className="order-7 space-y-2 md:col-span-2 md:max-w-xl">
+              <div className="mb-3">
+                <h3 className="font-semibold">Tài nguyên đề thi</h3>
+                <p className="text-muted-foreground mt-1 text-xs leading-5">
+                  Tải lên tệp PDF học sinh sẽ sử dụng trong lúc làm bài.
+                </p>
+              </div>
               <Label htmlFor="exam-pdf">
                 {mode === "create" ? "Tệp đề thi PDF" : "Thay tệp PDF"}
               </Label>
@@ -1384,13 +1440,25 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           </div>
         </section>
 
-        <section className="border-border bg-background space-y-4 rounded-xl border p-5 shadow-sm">
-          <h2 className="text-xl font-semibold">Thiết lập</h2>
+        <section
+          id="exam-settings"
+          className="border-border bg-card order-2 scroll-mt-32 space-y-5 rounded-lg border p-5 shadow-xs sm:p-6"
+        >
+          <div>
+            <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+              Phân phối & kết quả
+            </p>
+            <h2 className="mt-1 text-xl font-semibold">Thiết lập đề thi</h2>
+            <p className="text-muted-foreground mt-1 text-sm leading-6">
+              Chọn phạm vi học sinh, cách nhập đáp án và thông tin được hiển thị
+              sau khi nộp.
+            </p>
+          </div>
           <fieldset className="max-w-2xl space-y-3">
             <legend className="text-sm font-medium">Phạm vi học sinh</legend>
             <div className="grid gap-2 sm:grid-cols-2">
               <label
-                className={`border-border flex items-center gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+                className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-center gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
               >
                 <input
                   type="radio"
@@ -1400,7 +1468,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 <span>Tất cả học sinh</span>
               </label>
               <label
-                className={`border-border flex items-center gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+                className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-center gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
               >
                 <input
                   type="radio"
@@ -1412,7 +1480,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             </div>
 
             {visibilityMode === EXAM_VISIBILITY_MODE.SELECTED_STUDENTS && (
-              <div className="border-border space-y-3 rounded-lg border p-3">
+              <div className="border-border bg-background/40 space-y-3 rounded-md border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-medium" aria-live="polite">
                     {assignedStudentIds.length} học sinh đã chọn
@@ -1564,7 +1632,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <label
-              className={`border-border flex items-start gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+              className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-start gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
             >
               <input
                 type="checkbox"
@@ -1574,7 +1642,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               <span>Cho phép làm lại</span>
             </label>
             <label
-              className={`border-border flex items-start gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+              className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-start gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
             >
               <input
                 type="checkbox"
@@ -1584,7 +1652,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               <span>Hiện điểm sau khi nộp</span>
             </label>
             <label
-              className={`border-border flex items-start gap-3 rounded-lg border p-3 text-sm ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+              className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-start gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
             >
               <input
                 type="checkbox"
@@ -1597,8 +1665,19 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
         </section>
 
         {!activeStructure && mode === "edit" && (
-          <>
-            <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
+          <div id="exam-answers" className="order-3 scroll-mt-32 space-y-6">
+            <div>
+              <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+                Nội dung chấm điểm
+              </p>
+              <h2 className="mt-1 text-xl font-semibold">
+                Đáp án & chủ đề kiến thức
+              </h2>
+              <p className="text-muted-foreground mt-1 text-sm leading-6">
+                Nhập đáp án và gắn chủ đề cho từng câu theo cấu trúc của đề.
+              </p>
+            </div>
+            <section className="border-border bg-card space-y-5 rounded-lg border p-5 shadow-xs">
               <div>
                 <h2 className="text-xl font-semibold">Phần I - Trắc nghiệm</h2>
                 <p className="text-muted-foreground mt-1 text-sm">
@@ -1671,7 +1750,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               </div>
             </section>
 
-            <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
+            <section className="border-border bg-card space-y-5 rounded-lg border p-5 shadow-xs">
               <div>
                 <h2 className="text-xl font-semibold">Phần II - Đúng/Sai</h2>
                 <p className="text-muted-foreground mt-1 text-sm">
@@ -1780,7 +1859,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               </div>
             </section>
 
-            <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
+            <section className="border-border bg-card space-y-5 rounded-lg border p-5 shadow-xs">
               <div>
                 <h2 className="text-xl font-semibold">
                   Phần III - Trả lời ngắn
@@ -1855,7 +1934,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 )}
               </div>
             </section>
-          </>
+          </div>
         )}
       </fieldset>
 
@@ -1864,13 +1943,13 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           id="exam-submission-error"
           tabIndex={-1}
           role="alert"
-          className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border px-4 py-3 text-sm"
+          className="border-destructive/30 bg-destructive/5 text-destructive order-4 rounded-md border px-4 py-3 text-sm"
         >
           {submissionError}
         </p>
       )}
 
-      <div className="bg-background border-border sticky bottom-0 flex flex-wrap justify-end gap-2 border-t py-4">
+      <div className="border-border bg-background/95 order-5 sticky bottom-0 z-20 -mx-4 flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3 shadow-[0_-8px_20px_-18px_rgba(15,23,42,0.5)] backdrop-blur-sm sm:rounded-b-lg">
         {isBusy ? (
           <Button type="button" variant="outline" disabled>
             Hủy

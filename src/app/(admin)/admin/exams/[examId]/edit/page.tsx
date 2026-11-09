@@ -23,10 +23,15 @@ export default async function EditExamPage({ params }: EditExamPageProps) {
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10">
-      <div className="mb-7">
-        <h1 className="text-3xl font-bold tracking-tight">Chỉnh sửa đề thi</h1>
-        <p className="text-muted-foreground mt-2">
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+      <div className="border-border mb-7 border-b pb-7">
+        <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+          Quản lý đề thi
+        </p>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
+          Chỉnh sửa đề thi
+        </h1>
+        <p className="text-muted-foreground mt-2 max-w-2xl text-sm leading-6 sm:text-base">
           Cập nhật thông tin, thiết lập và nội dung của đề thi khi được phép.
         </p>
       </div>

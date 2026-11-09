@@ -146,7 +146,12 @@ function SectionQuestions({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="font-medium">Câu hỏi</h4>
+        <div>
+          <h4 className="font-medium">Câu hỏi</h4>
+          <p className="text-muted-foreground text-xs">
+            {fields.length} câu trong phần này
+          </p>
+        </div>
         <Button
           type="button"
           size="sm"
@@ -172,7 +177,7 @@ function SectionQuestions({
         return (
           <div
             key={question.fieldKey}
-            className="border-border grid gap-3 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_minmax(9rem,0.4fr)_auto] md:items-end"
+            className="border-border bg-card grid gap-3 rounded-md border p-3 shadow-xs md:grid-cols-[auto_minmax(0,1fr)_minmax(8rem,0.35fr)_auto] md:items-end"
           >
             <input
               type="hidden"
@@ -180,6 +185,9 @@ function SectionQuestions({
                 `sections.${sectionIndex}.questions.${questionIndex}.id`,
               )}
             />
+            <span className="bg-muted text-muted-foreground hidden size-8 items-center justify-center rounded-full text-xs font-semibold md:flex">
+              {questionIndex + 1}
+            </span>
             <div className="space-y-2">
               <Label htmlFor={typeId}>
                 Câu {questionIndex + 1}: Loại câu hỏi
@@ -239,6 +247,7 @@ function SectionQuestions({
               type="button"
               size="sm"
               variant="ghost"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               aria-label={`Xóa câu ${questionIndex + 1} khỏi phần ${sectionIndex + 1}`}
               onClick={() => remove(questionIndex)}
             >
@@ -321,20 +330,30 @@ export function ExamStructureTemplateForm({
   });
 
   return (
-    <section className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm">
-      <div>
-        <h2 className="text-xl font-semibold">
-          {template ? "Chỉnh sửa mẫu cấu trúc" : "Tạo mẫu cấu trúc"}
-        </h2>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Thứ tự các phần và câu hỏi được lưu theo thứ tự hiển thị bên dưới.
-        </p>
+    <section className="border-border bg-card space-y-5 rounded-lg border p-5 shadow-xs sm:p-6">
+      <div className="border-border flex flex-col gap-3 border-b pb-5 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold">
+            {template ? "Chỉnh sửa mẫu cấu trúc" : "Tạo mẫu cấu trúc"}
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm leading-6">
+            Thứ tự các phần và câu hỏi được lưu theo thứ tự hiển thị bên dưới.
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-2 text-xs">
+          <span className="bg-muted rounded-md px-2.5 py-1.5 font-medium">
+            {fields.length} phần
+          </span>
+          <span className="bg-muted rounded-md px-2.5 py-1.5 font-medium">
+            {totalQuestionCount} câu
+          </span>
+        </div>
       </div>
 
       <form onSubmit={onSubmit} className="space-y-5" noValidate>
         <fieldset disabled={isSubmitting} className="contents">
-          <div className="space-y-2">
-            <Label htmlFor="template-name">Tên mẫu</Label>
+          <div className="max-w-xl space-y-2">
+            <Label htmlFor="template-name">Tên mẫu *</Label>
             <Input
               id="template-name"
               autoFocus
@@ -352,7 +371,13 @@ export function ExamStructureTemplateForm({
 
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="text-lg font-semibold">Các phần</h3>
+              <div>
+                <h3 className="text-lg font-semibold">Các phần</h3>
+                <p className="text-muted-foreground mt-0.5 text-sm">
+                  Tối đa {EXAM_STRUCTURE_MAX_SECTIONS} phần và{" "}
+                  {EXAM_STRUCTURE_MAX_TOTAL_QUESTIONS} câu.
+                </p>
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -382,13 +407,16 @@ export function ExamStructureTemplateForm({
               return (
                 <section
                   key={section.fieldKey}
-                  className="border-border bg-muted/20 space-y-4 rounded-xl border p-4"
+                  className="border-border bg-muted/20 space-y-4 rounded-lg border p-4"
                 >
                   <input
                     type="hidden"
                     {...register(`sections.${sectionIndex}.id`)}
                   />
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="border-border flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end">
+                    <span className="bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-md text-sm font-bold sm:mb-0.5">
+                      {sectionIndex + 1}
+                    </span>
                     <div className="min-w-0 flex-1 space-y-2">
                       <Label htmlFor={titleId}>Tên phần</Label>
                       <Input
@@ -418,6 +446,7 @@ export function ExamStructureTemplateForm({
                       type="button"
                       size="sm"
                       variant="ghost"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                       aria-label={`Xóa phần ${sectionIndex + 1}`}
                       onClick={() => remove(sectionIndex)}
                     >
@@ -445,17 +474,21 @@ export function ExamStructureTemplateForm({
 
           <div
             aria-live="polite"
-            className={`rounded-lg border px-4 py-3 text-sm ${
+            className={`flex flex-col gap-1 rounded-md border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${
               hasRequiredTotal
                 ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
                 : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
             }`}
           >
-            Tổng điểm hiện tại:{" "}
-            <strong>
-              {scoreFormatter.format(totalScoreHundredths / 100)} điểm
-            </strong>
-            . Yêu cầu: <strong>10,00 điểm</strong>.
+            <span>
+              Tổng điểm hiện tại:{" "}
+              <strong>
+                {scoreFormatter.format(totalScoreHundredths / 100)} điểm
+              </strong>
+            </span>
+            <span>
+              Yêu cầu: <strong>10,00 điểm</strong>
+            </span>
           </div>
 
           {submissionError && (
@@ -464,7 +497,7 @@ export function ExamStructureTemplateForm({
             </p>
           )}
 
-          <div className="flex flex-wrap gap-2">
+          <div className="border-border bg-card sticky bottom-0 z-10 -mx-5 flex flex-wrap justify-end gap-2 border-t px-5 py-3 sm:-mx-6 sm:px-6">
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting
                 ? "Đang lưu..."

@@ -85,7 +85,7 @@ export function TopicCreateDialog({
     <dialog
       ref={dialogRef}
       aria-labelledby={titleId}
-      className="backdrop:bg-foreground/40 m-auto w-[min(92vw,30rem)] rounded-xl border p-0 shadow-xl backdrop:backdrop-blur-sm"
+      className="backdrop:bg-slate-950/65 m-auto w-[min(92vw,30rem)] rounded-xl border p-0 shadow-xl backdrop:backdrop-blur-sm"
       onCancel={(event) => {
         if (isCreating) {
           event.preventDefault();
@@ -96,7 +96,7 @@ export function TopicCreateDialog({
       onClose={onClose}
     >
       <form
-        className="bg-background space-y-5 p-5"
+        className="bg-card text-card-foreground space-y-5 p-5 sm:p-6"
         onSubmit={(event) => {
           event.preventDefault();
           if (chapterId) {
@@ -117,7 +117,7 @@ export function TopicCreateDialog({
           <Label htmlFor={gradeInputId}>Khối</Label>
           <select
             id={gradeInputId}
-            className="border-input bg-background h-9 w-full cursor-pointer rounded-md border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            className="border-input bg-card focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full cursor-pointer rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50"
             value={gradeId}
             required
             disabled={isCreating}
@@ -139,7 +139,7 @@ export function TopicCreateDialog({
           <Label htmlFor={chapterInputId}>Chương</Label>
           <select
             id={chapterInputId}
-            className="border-input bg-background h-9 w-full cursor-pointer rounded-md border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            className="border-input bg-card focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full cursor-pointer rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50"
             value={chapterId}
             required
             disabled={isCreating || !gradeId}
@@ -181,7 +181,7 @@ export function TopicCreateDialog({
           </p>
         )}
 
-        <div className="flex justify-end gap-2">
+        <div className="border-border flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
           <Button
             type="button"
             variant="outline"

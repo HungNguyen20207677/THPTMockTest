@@ -37,11 +37,13 @@ function getErrorMessage(error: unknown): string {
 }
 
 function ActionButtons({
+  label,
   onEdit,
   onDelete,
   disabled,
   deletePending = false,
 }: {
+  label: string;
   onEdit: () => void;
   onDelete: () => void;
   disabled: boolean;
@@ -54,6 +56,7 @@ function ActionButtons({
         size="sm"
         variant="ghost"
         disabled={disabled}
+        aria-label={`Sửa ${label}`}
         onClick={onEdit}
       >
         Sửa
@@ -62,8 +65,9 @@ function ActionButtons({
         type="button"
         size="sm"
         variant="ghost"
-        className="text-destructive"
+        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
         disabled={disabled}
+        aria-label={`Xóa ${label}`}
         onClick={onDelete}
       >
         {deletePending ? "Đang xóa..." : "Xóa"}
@@ -172,13 +176,16 @@ export function CurriculumManagement() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
+    <div className="space-y-7">
+      <div className="border-border flex flex-col gap-4 border-b pb-7 sm:flex-row sm:items-end sm:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+            Danh mục kiến thức
+          </p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
             Chủ đề & kiến thức
           </h1>
-          <p className="text-muted-foreground mt-2">
+          <p className="text-muted-foreground mt-2 text-sm leading-6 sm:text-base">
             Quản lý cây kiến thức động theo Khối → Chương → Chủ đề.
           </p>
         </div>
@@ -187,7 +194,8 @@ export function CurriculumManagement() {
           disabled={isBusy}
           onClick={() => setEditor({ kind: "create-grade" })}
         >
-          + Thêm khối
+          <span aria-hidden="true">+</span>
+          Thêm khối
         </Button>
       </div>
 
@@ -233,6 +241,26 @@ export function CurriculumManagement() {
         <CurriculumTreeSkeleton />
       ) : (
         <div className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Cây kiến thức</h2>
+              <p className="text-muted-foreground mt-0.5 text-sm">
+                {grades.length} khối · {chapters.length} chương ·{" "}
+                {topics.length} chủ đề
+              </p>
+            </div>
+            <div className="text-muted-foreground hidden items-center gap-2 text-xs sm:flex">
+              <span className="bg-primary/10 text-primary rounded px-2 py-1">
+                Khối
+              </span>
+              <span aria-hidden="true">→</span>
+              <span className="bg-muted rounded px-2 py-1">Chương</span>
+              <span aria-hidden="true">→</span>
+              <span className="border-border rounded border px-2 py-1">
+                Chủ đề
+              </span>
+            </div>
+          </div>
           {grades.map((grade) => {
             const gradeChapters = chapters.filter(
               (chapter) => chapter.gradeId === grade.id,
@@ -240,16 +268,21 @@ export function CurriculumManagement() {
             return (
               <section
                 key={grade.id}
-                className="border-border bg-background rounded-xl border shadow-sm"
+                className="border-border bg-card rounded-lg border shadow-xs"
               >
-                <div className="border-border flex items-center justify-between gap-3 border-b px-4 py-3">
-                  <div>
-                    <h2 className="font-semibold">{grade.name}</h2>
-                    <p className="text-muted-foreground text-xs">
-                      Thứ tự {grade.sortOrder}
-                    </p>
+                <div className="border-border bg-primary/[0.025] flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-md text-xs font-bold">
+                      K
+                    </span>
+                    <div>
+                      <h3 className="font-semibold">{grade.name}</h3>
+                      <p className="text-muted-foreground text-xs">
+                        Thứ tự {grade.sortOrder} · {gradeChapters.length} chương
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap justify-end gap-1">
+                  <div className="flex flex-wrap gap-1 sm:justify-end">
                     <Button
                       type="button"
                       size="sm"
@@ -262,6 +295,7 @@ export function CurriculumManagement() {
                       + Thêm chương
                     </Button>
                     <ActionButtons
+                      label={`khối ${grade.name}`}
                       disabled={isBusy}
                       deletePending={
                         deleteTarget?.kind === "grade" &&
@@ -275,7 +309,7 @@ export function CurriculumManagement() {
                   </div>
                 </div>
 
-                <div className="space-y-3 p-4">
+                <div className="space-y-3 p-3 sm:p-4">
                   {gradeChapters.map((chapter) => {
                     const chapterTopics = topics
                       .filter((topic) => topic.chapterId === chapter.id)
@@ -285,11 +319,23 @@ export function CurriculumManagement() {
                     return (
                       <div
                         key={chapter.id}
-                        className="border-border rounded-lg border"
+                        className="border-border overflow-hidden rounded-md border"
                       >
-                        <div className="bg-muted/30 border-border flex items-center justify-between gap-3 border-b px-3 py-2">
-                          <h3 className="font-medium">{chapter.name}</h3>
-                          <div className="flex flex-wrap justify-end gap-1">
+                        <div className="bg-muted/40 border-border flex flex-col gap-2 border-b px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <span className="bg-background text-muted-foreground flex size-7 items-center justify-center rounded border text-xs font-semibold">
+                              C
+                            </span>
+                            <div>
+                              <h4 className="text-sm font-semibold">
+                                {chapter.name}
+                              </h4>
+                              <p className="text-muted-foreground text-xs">
+                                {chapterTopics.length} chủ đề
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1 sm:justify-end">
                             <Button
                               type="button"
                               size="sm"
@@ -305,6 +351,7 @@ export function CurriculumManagement() {
                               + Thêm chủ đề
                             </Button>
                             <ActionButtons
+                              label={`chương ${chapter.name}`}
                               disabled={isBusy}
                               deletePending={
                                 deleteTarget?.kind === "chapter" &&
@@ -327,10 +374,14 @@ export function CurriculumManagement() {
                             {chapterTopics.map((topic) => (
                               <li
                                 key={topic.id}
-                                className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                                className="hover:bg-muted/20 flex items-center justify-between gap-3 px-3 py-2 text-sm transition-colors"
                               >
-                                <span>{topic.name}</span>
+                                <span className="flex min-w-0 items-center gap-2.5">
+                                  <span className="bg-primary/60 size-1.5 shrink-0 rounded-full" />
+                                  <span className="truncate">{topic.name}</span>
+                                </span>
                                 <ActionButtons
+                                  label={`chủ đề ${topic.name}`}
                                   disabled={isBusy}
                                   deletePending={
                                     deleteTarget?.kind === "topic" &&
@@ -350,17 +401,17 @@ export function CurriculumManagement() {
                             ))}
                           </ul>
                         ) : (
-                          <p className="text-muted-foreground px-3 py-3 text-sm">
-                            Chưa có chủ đề.
-                          </p>
+                          <div className="text-muted-foreground px-3 py-4 text-center text-sm">
+                            Chưa có chủ đề trong chương này.
+                          </div>
                         )}
                       </div>
                     );
                   })}
                   {gradeChapters.length === 0 && (
-                    <p className="text-muted-foreground text-sm">
-                      Chưa có chương.
-                    </p>
+                    <div className="border-border text-muted-foreground rounded-md border border-dashed px-4 py-6 text-center text-sm">
+                      Chưa có chương trong khối này.
+                    </div>
                   )}
                 </div>
               </section>
@@ -368,15 +419,20 @@ export function CurriculumManagement() {
           })}
 
           {grades.length === 0 && (
-            <div className="border-border text-muted-foreground rounded-xl border border-dashed p-8 text-center text-sm">
-              Chưa có khối. Hãy tạo khối đầu tiên để bắt đầu cây kiến thức.
+            <div className="border-border bg-card rounded-lg border border-dashed p-10 text-center">
+              <p className="font-medium">Chưa có khối kiến thức</p>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Tạo khối đầu tiên để bắt đầu xây dựng cây kiến thức.
+              </p>
             </div>
           )}
 
           {unclassifiedTopics.length > 0 && (
-            <section className="border-border bg-background rounded-xl border shadow-sm">
-              <div className="border-border border-b px-4 py-3">
-                <h2 className="font-semibold">Chưa phân loại</h2>
+            <section className="border-amber-300 bg-amber-50/60 rounded-lg border shadow-xs dark:border-amber-800 dark:bg-amber-950/20">
+              <div className="border-amber-300 border-b px-4 py-3 dark:border-amber-800">
+                <h2 className="font-semibold text-amber-950 dark:text-amber-100">
+                  Chưa phân loại
+                </h2>
                 <p className="text-muted-foreground text-xs">
                   Chủ đề cũ chưa được gắn chương
                 </p>
@@ -389,6 +445,7 @@ export function CurriculumManagement() {
                   >
                     <span>{topic.name}</span>
                     <ActionButtons
+                      label={`chủ đề ${topic.name}`}
                       disabled={isBusy}
                       deletePending={
                         deleteTarget?.kind === "topic" &&

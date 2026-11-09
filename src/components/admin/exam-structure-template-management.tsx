@@ -135,13 +135,16 @@ export function ExamStructureTemplateManagement() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
+    <div className="space-y-7">
+      <div className="border-border flex flex-col gap-4 border-b pb-7 sm:flex-row sm:items-end sm:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+            Thiết kế đề thi
+          </p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
             Mẫu cấu trúc đề thi
           </h1>
-          <p className="text-muted-foreground mt-2">
+          <p className="text-muted-foreground mt-2 text-sm leading-6 sm:text-base">
             Tạo và quản lý cấu trúc phần, loại câu hỏi và điểm tối đa để tái sử
             dụng cho các đề thi.
           </p>
@@ -156,6 +159,7 @@ export function ExamStructureTemplateManagement() {
             setDeleteTarget(null);
           }}
         >
+          <span aria-hidden="true">+</span>
           Tạo mẫu cấu trúc
         </Button>
       </div>
@@ -244,23 +248,33 @@ export function ExamStructureTemplateManagement() {
           </Button>
         </div>
       ) : isLoading ? (
-        <TableSkeleton columns={6} label="Đang tải danh sách mẫu cấu trúc" />
+        <TableSkeleton columns={5} label="Đang tải danh sách mẫu cấu trúc" />
       ) : (
-        <ExamStructureTemplateTable
-          templates={templates}
-          isBusy={isMutating || activePanel !== null}
-          onEdit={(template, trigger) => {
-            formTriggerRef.current = trigger;
-            setActivePanel({ type: "edit", template });
-            setDeleteTarget(null);
-          }}
-          onDelete={(template, trigger) => {
-            setActionError(null);
-            deleteTriggerRef.current = trigger;
-            setDeleteTarget(template);
-            setActivePanel(null);
-          }}
-        />
+        <section aria-labelledby="template-list-heading" className="space-y-3">
+          <div>
+            <h2 id="template-list-heading" className="font-semibold">
+              Danh sách mẫu
+            </h2>
+            <p className="text-muted-foreground mt-0.5 text-sm">
+              {templates.length} mẫu cấu trúc
+            </p>
+          </div>
+          <ExamStructureTemplateTable
+            templates={templates}
+            isBusy={isMutating || activePanel !== null}
+            onEdit={(template, trigger) => {
+              formTriggerRef.current = trigger;
+              setActivePanel({ type: "edit", template });
+              setDeleteTarget(null);
+            }}
+            onDelete={(template, trigger) => {
+              setActionError(null);
+              deleteTriggerRef.current = trigger;
+              setDeleteTarget(template);
+              setActivePanel(null);
+            }}
+          />
+        </section>
       )}
     </div>
   );

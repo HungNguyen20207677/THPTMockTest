@@ -166,14 +166,17 @@ export function CurriculumEditor({
 
   return (
     <form
-      className="border-primary/30 bg-primary/5 space-y-4 rounded-xl border p-4"
+      className="border-primary/30 bg-card space-y-5 rounded-lg border p-5 shadow-xs"
       onSubmit={(event) => {
         event.preventDefault();
         void handleSubmit();
       }}
     >
-      <div>
-        <h2 className="font-semibold">{getTitle(target)}</h2>
+      <div className="border-border border-b pb-4">
+        <p className="text-primary text-xs font-semibold tracking-widest uppercase">
+          Biểu mẫu danh mục
+        </p>
+        <h2 className="mt-1 text-lg font-semibold">{getTitle(target)}</h2>
         {target.kind === "edit-topic" && !target.topic.chapterId && (
           <p className="text-muted-foreground mt-1 text-sm">
             Chủ đề chưa phân loại phải được gắn với một chương trước khi lưu.
@@ -187,7 +190,7 @@ export function CurriculumEditor({
             <Label htmlFor="curriculum-grade">Khối</Label>
             <select
               id="curriculum-grade"
-              className="border-input bg-background h-9 w-full cursor-pointer rounded-md border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              className="border-input bg-card focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full cursor-pointer rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50"
               value={gradeId}
               required
               disabled={isSaving}
@@ -208,7 +211,7 @@ export function CurriculumEditor({
             <Label htmlFor="curriculum-chapter">Chương</Label>
             <select
               id="curriculum-chapter"
-              className="border-input bg-background h-9 w-full cursor-pointer rounded-md border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              className="border-input bg-card focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full cursor-pointer rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50"
               value={chapterId}
               required
               disabled={isSaving}
@@ -256,6 +259,9 @@ export function CurriculumEditor({
               disabled={isSaving}
               onChange={(event) => setSortOrder(event.target.value)}
             />
+            <p className="text-muted-foreground text-xs">
+              Số nhỏ hơn sẽ được hiển thị trước.
+            </p>
           </div>
         )}
       </div>
@@ -265,7 +271,7 @@ export function CurriculumEditor({
           {error}
         </p>
       )}
-      <div className="flex justify-end gap-2">
+      <div className="border-border flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
         <Button
           type="button"
           variant="outline"
