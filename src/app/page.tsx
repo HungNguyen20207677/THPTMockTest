@@ -19,7 +19,7 @@ const fadeUp = {
 
 export default function HomePage() {
   return (
-    <main className="relative min-h-[calc(100vh-4rem)] overflow-hidden bg-white">
+    <main className="bg-background text-foreground relative min-h-[calc(100vh-4rem)] overflow-hidden">
       <div className="relative mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl items-center gap-12 px-6 py-16 lg:grid-cols-[1fr_0.95fr] lg:gap-16">
         {/* Left */}
         <motion.section
