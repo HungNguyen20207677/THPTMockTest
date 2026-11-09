@@ -2016,7 +2016,7 @@ function ActiveAttemptWorkspace({
           !isFullscreenExitDialogOpen && (
             <p
               role="alert"
-              className="border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+              className="border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
             >
               {fullscreenError}
             </p>
@@ -2151,7 +2151,7 @@ function ActiveAttemptWorkspace({
                     Màu xanh biểu thị câu đã hoàn thành.
                   </p>
                 </div>
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800">
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
                   {progress.answeredQuestions}/{progress.totalQuestions}
                 </span>
               </div>

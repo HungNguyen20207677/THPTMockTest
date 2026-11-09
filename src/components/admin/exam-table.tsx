@@ -49,7 +49,7 @@ export function ExamTable({
         <div>
           <span className="font-medium">{getValue()}</span>
           {row.original.hasAttempts && (
-            <p className="mt-1 text-xs font-medium text-amber-700">
+            <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
               Nội dung đã khóa do có lượt làm
             </p>
           )}

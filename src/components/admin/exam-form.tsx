@@ -1170,7 +1170,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                   : `Cấu trúc cố định: ${EXAM_STRUCTURE.totalQuestions} câu, thời gian ${EXAM_STRUCTURE.durationMinutes} phút.`}
             </p>
             {isContentLocked && (
-              <p className="mt-2 text-sm font-medium text-amber-700">
+              <p className="mt-2 text-sm font-medium text-amber-700 dark:text-amber-300">
                 Đề thi đã có lượt làm. Bạn vẫn có thể sửa thông tin và thiết lập
                 chung hoặc hiệu chỉnh đáp án; tệp PDF và cách nhập Phần III đã
                 được khóa. Sửa đáp án sẽ yêu cầu xác nhận và chấm lại các bài đã

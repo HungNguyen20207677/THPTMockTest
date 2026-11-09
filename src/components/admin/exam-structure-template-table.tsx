@@ -46,11 +46,11 @@ export function ExamStructureTemplateTable({
       header: "Loại",
       cell: ({ getValue }) =>
         getValue() ? (
-          <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-800">
+          <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-800 dark:bg-blue-950/60 dark:text-blue-200">
             Dựng sẵn
           </span>
         ) : (
-          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700">
+          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-100">
             Tùy chỉnh
           </span>
         ),

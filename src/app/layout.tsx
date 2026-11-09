@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { PublicHeaderBoundary } from "@/components/shared/navigation-visibility";
 import { SiteHeader } from "@/components/shared/site-header";
+import { ThemeProvider } from "@/components/shared/theme-provider";
 
 import "./globals.css";
 
@@ -19,12 +20,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi">
+    <html lang="vi" suppressHydrationWarning>
       <body className="min-h-screen antialiased">
-        <PublicHeaderBoundary>
-          <SiteHeader />
-        </PublicHeaderBoundary>
-        {children}
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <PublicHeaderBoundary>
+            <SiteHeader />
+          </PublicHeaderBoundary>
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

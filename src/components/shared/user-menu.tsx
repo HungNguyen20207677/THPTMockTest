@@ -59,7 +59,7 @@ export function UserMenu({ user }: { user: AppUser }) {
         type="button"
         aria-expanded={isOpen}
         aria-controls={menuId}
-        className="hover:bg-accent focus-visible:border-ring focus-visible:ring-ring/50 flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-1.5 outline-none transition-colors focus-visible:ring-3 sm:px-2"
+        className="hover:bg-accent focus-visible:border-ring focus-visible:ring-ring/50 flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-1 outline-none transition-colors focus-visible:ring-3 sm:px-2"
         onClick={() => setIsOpen((open) => !open)}
       >
         <span className="bg-primary/10 text-primary flex size-8 items-center justify-center rounded-full text-xs font-bold">
@@ -86,7 +86,7 @@ export function UserMenu({ user }: { user: AppUser }) {
       {isOpen && (
         <div
           id={menuId}
-          className="border-border bg-background absolute top-[calc(100%+0.5rem)] right-0 z-50 w-64 overflow-hidden rounded-xl border shadow-lg"
+          className="border-border bg-popover text-popover-foreground absolute top-[calc(100%+0.5rem)] right-0 z-50 w-64 overflow-hidden rounded-xl border shadow-lg"
         >
           <div className="border-border border-b px-4 py-3">
             <p className="truncate text-sm font-semibold">{user.fullName}</p>

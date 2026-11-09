@@ -339,7 +339,10 @@ function ManualEssayGradingSection({
         </p>
       )}
       {feedback && (
-        <p role="status" className="text-sm font-medium text-emerald-700">
+        <p
+          role="status"
+          className="text-sm font-medium text-emerald-700 dark:text-emerald-300"
+        >
           {feedback}
         </p>
       )}
@@ -524,7 +527,7 @@ export function AdminAttemptDetailView({ attemptId }: { attemptId: string }) {
       )}
 
       {detail.gradingStatus === EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL && (
-        <div className="border-amber-300 bg-amber-50 rounded-xl border p-6 text-amber-950">
+        <div className="border-amber-300 bg-amber-50 rounded-xl border p-6 text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
           <h2 className="font-semibold">Chờ chấm tự luận</h2>
           {detail.objectiveScore && (
             <p className="mt-2 font-medium tabular-nums">

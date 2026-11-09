@@ -50,8 +50,8 @@ function CorrectnessBadge({ isCorrect }: { isCorrect: boolean }) {
       className={cn(
         "rounded-full px-2 py-0.5 text-xs font-semibold",
         isCorrect
-          ? "bg-emerald-100 text-emerald-800"
-          : "bg-red-100 text-red-800",
+          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200"
+          : "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-200",
       )}
     >
       {isCorrect ? "Chính xác" : "Chưa chính xác"}
@@ -231,7 +231,7 @@ export function PendingGradingSummary({
   }
 
   return (
-    <section className="border-amber-300 bg-amber-50 rounded-xl border p-6 text-center text-amber-950">
+    <section className="border-amber-300 bg-amber-50 rounded-xl border p-6 text-center text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
       <h2 className="text-lg font-semibold">Bài tự luận đang chờ chấm</h2>
       {result.objectiveScore && (
         <p className="mt-2 font-medium tabular-nums">

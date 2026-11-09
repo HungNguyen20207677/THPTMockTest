@@ -447,8 +447,8 @@ export function ExamStructureTemplateForm({
             aria-live="polite"
             className={`rounded-lg border px-4 py-3 text-sm ${
               hasRequiredTotal
-                ? "border-emerald-300 bg-emerald-50 text-emerald-800"
-                : "border-amber-300 bg-amber-50 text-amber-800"
+                ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+                : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
             }`}
           >
             Tổng điểm hiện tại:{" "}

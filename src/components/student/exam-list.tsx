@@ -41,7 +41,8 @@ const stateLabels: Record<StudentExamState, string> = {
 const stateClassNames: Record<StudentExamState, string> = {
   IN_PROGRESS: "bg-primary/10 text-primary",
   NOT_STARTED: "bg-muted text-muted-foreground",
-  COMPLETED: "bg-emerald-100 text-emerald-800",
+  COMPLETED:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200",
 };
 
 function getRequestError(error: unknown): string {

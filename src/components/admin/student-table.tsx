@@ -60,11 +60,11 @@ export function StudentTable({
       header: "Trạng thái",
       cell: ({ getValue }) =>
         getValue() ? (
-          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
+          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
             Hoạt động
           </span>
         ) : (
-          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700">
+          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-100">
             Đã khóa
           </span>
         ),
