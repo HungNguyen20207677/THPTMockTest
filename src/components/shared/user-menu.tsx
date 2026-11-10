@@ -86,7 +86,8 @@ export function UserMenu({ user }: { user: AppUser }) {
       {isOpen && (
         <div
           id={menuId}
-          className="border-border bg-popover text-popover-foreground absolute top-[calc(100%+0.5rem)] right-0 z-50 w-64 overflow-hidden rounded-xl border shadow-lg"
+          data-slot="user-menu-content"
+          className="border-border bg-popover text-popover-foreground absolute top-[calc(100%+0.5rem)] right-0 z-50 w-64 origin-top-right overflow-hidden rounded-xl border shadow-lg motion-safe:animate-[ui-popover-in_150ms_ease-out]"
         >
           <div className="border-border border-b px-4 py-3">
             <p className="truncate text-sm font-semibold">{user.fullName}</p>

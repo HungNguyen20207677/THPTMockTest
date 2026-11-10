@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-table";
 import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
+import { IconAction } from "@/components/shared/icon-action";
 import type { StudentAccount } from "@/types/user";
 
 const features = tableFeatures({});
@@ -81,56 +81,40 @@ export function StudentTable({
         const isStatusPending = pendingStatusStudentId === student.id;
 
         return (
-          <div className="flex min-w-72 flex-wrap items-center gap-1">
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/admin/students/${student.id}`}>Kết quả</Link>
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
+          <div className="flex min-w-48 items-center justify-end gap-1">
+            <IconAction
+              href={`/admin/students/${student.id}`}
+              label={`Xem kết quả của ${student.fullName}`}
+              icon="eye"
+              variant="outline"
+            />
+            <IconAction
+              label={`Sửa tài khoản ${student.fullName}`}
+              icon="pencil"
               disabled={isBusy}
-              aria-label={`Sửa tài khoản ${student.fullName}`}
               onClick={(event) => onEdit(student, event.currentTarget)}
-            >
-              Sửa
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
+            />
+            <IconAction
+              label={`Đổi mật khẩu cho ${student.fullName}`}
+              icon="key-round"
               disabled={isBusy}
-              aria-label={`Đổi mật khẩu cho ${student.fullName}`}
               onClick={(event) => onResetPassword(student, event.currentTarget)}
-            >
-              Đổi mật khẩu
-            </Button>
-            <Button
-              type="button"
-              size="sm"
+            />
+            <IconAction
+              label={`${isStatusPending ? (student.isActive ? "Đang khóa" : "Đang kích hoạt") : student.isActive ? "Khóa" : "Kích hoạt"} tài khoản ${student.fullName}`}
+              icon={student.isActive ? "lock" : "lock-open"}
               variant="outline"
               disabled={isBusy}
-              aria-label={`${isStatusPending ? (student.isActive ? "Đang khóa" : "Đang kích hoạt") : student.isActive ? "Khóa" : "Kích hoạt"} tài khoản ${student.fullName}`}
+              aria-busy={isStatusPending}
               onClick={() => onToggleStatus(student)}
-            >
-              {isStatusPending
-                ? student.isActive
-                  ? "Đang khóa..."
-                  : "Đang kích hoạt..."
-                : student.isActive
-                  ? "Khóa"
-                  : "Kích hoạt"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
+            />
+            <IconAction
+              label={`Xóa tài khoản ${student.fullName}`}
+              icon="trash-2"
+              destructive
               disabled={isBusy}
-              aria-label={`Xóa tài khoản ${student.fullName}`}
               onClick={(event) => onDelete(student, event.currentTarget)}
-            >
-              Xóa
-            </Button>
+            />
           </div>
         );
       },

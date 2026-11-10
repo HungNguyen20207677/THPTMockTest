@@ -12,7 +12,9 @@ export default async function StudentLayout({
     <StudentHeaderBoundary fallback={children}>
       <DashboardNavigation
         user={student}
-        items={[{ href: "/student", label: "Trang chính" }]}
+        items={[
+          { href: "/student", label: "Trang chính", icon: "graduation-cap" },
+        ]}
       >
         {children}
       </DashboardNavigation>

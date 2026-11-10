@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { StudentTable } from "@/components/admin/student-table";
 import type { StudentAccount } from "@/types/user";
@@ -27,8 +30,39 @@ describe("StudentTable pending actions", () => {
       />,
     );
 
-    expect(markup).toContain("Đang khóa...");
     expect(markup).toContain('aria-label="Đang khóa tài khoản Học Sinh"');
+    expect(markup).toContain('aria-busy="true"');
     expect(markup).toContain("disabled:cursor-not-allowed");
   });
+
+  it("keeps icon action handlers and accessible labels intact", () => {
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+
+    render(
+      <StudentTable
+        students={[student]}
+        isBusy={false}
+        onEdit={onEdit}
+        onResetPassword={vi.fn()}
+        onToggleStatus={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Sửa tài khoản Học Sinh" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Xóa tài khoản Học Sinh" }),
+    );
+
+    expect(onEdit).toHaveBeenCalledWith(student, expect.any(HTMLButtonElement));
+    expect(onDelete).toHaveBeenCalledWith(
+      student,
+      expect.any(HTMLButtonElement),
+    );
+  });
 });
+
+afterEach(cleanup);

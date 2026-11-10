@@ -6,9 +6,8 @@ import {
   tableFeatures,
   useTable,
 } from "@tanstack/react-table";
-import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
+import { IconAction } from "@/components/shared/icon-action";
 import { EXAM_STATUSES, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
 import { cn } from "@/lib/utils";
 import type { ExamStatus, ExamSummary } from "@/types/exam";
@@ -134,26 +133,26 @@ export function ExamTable({
       id: "actions",
       header: "Thao tác",
       cell: ({ row }) => (
-        <div className="flex min-w-48 flex-wrap items-center justify-end gap-1">
-          <Button asChild size="sm" variant="outline">
-            <Link href={`/admin/exams/${row.original.id}/results`}>
-              Kết quả
-            </Link>
-          </Button>
-          <Button asChild size="sm" variant="outline">
-            <Link href={`/admin/exams/${row.original.id}/edit`}>Chỉnh sửa</Link>
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+        <div className="flex min-w-28 items-center justify-end gap-1">
+          <IconAction
+            href={`/admin/exams/${row.original.id}/results`}
+            label={`Xem kết quả đề thi ${row.original.title}`}
+            icon="bar-chart"
+            variant="outline"
+          />
+          <IconAction
+            href={`/admin/exams/${row.original.id}/edit`}
+            label={`Chỉnh sửa đề thi ${row.original.title}`}
+            icon="pencil"
+            variant="outline"
+          />
+          <IconAction
+            label={`Xóa đề thi ${row.original.title}`}
+            icon="trash-2"
+            destructive
             disabled={isBusy}
-            aria-label={`Xóa đề thi ${row.original.title}`}
             onClick={(event) => onDelete(row.original, event.currentTarget)}
-          >
-            Xóa
-          </Button>
+          />
         </div>
       ),
     }),

@@ -11,7 +11,7 @@ function ThemeIcon({ theme }: { theme: "light" | "dark" }) {
       <svg
         aria-hidden="true"
         viewBox="0 0 24 24"
-        className="size-4 fill-none stroke-current stroke-2"
+        className="size-4 fill-none stroke-current stroke-2 motion-safe:animate-[theme-icon-in_180ms_ease-out]"
         strokeLinecap="round"
         strokeLinejoin="round"
       >
@@ -25,7 +25,7 @@ function ThemeIcon({ theme }: { theme: "light" | "dark" }) {
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
-      className="size-4 fill-none stroke-current stroke-2"
+      className="size-4 fill-none stroke-current stroke-2 motion-safe:animate-[theme-icon-in_180ms_ease-out]"
       strokeLinecap="round"
       strokeLinejoin="round"
     >

@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-table";
 import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
+import { IconAction } from "@/components/shared/icon-action";
 import {
   EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
@@ -116,14 +116,12 @@ export function AdminResultTable({
       id: "actions",
       header: () => <span className="sr-only">Thao tác</span>,
       cell: ({ row }) => (
-        <Button asChild size="sm" variant="outline">
-          <Link
-            href={`/admin/results/${row.original.id}`}
-            aria-label={`Xem chi tiết lần làm ${row.original.attemptNumber}`}
-          >
-            Chi tiết
-          </Link>
-        </Button>
+        <IconAction
+          href={`/admin/results/${row.original.id}`}
+          label={`Xem chi tiết lần làm ${row.original.attemptNumber}`}
+          icon="eye"
+          variant="outline"
+        />
       ),
     }),
   ]);

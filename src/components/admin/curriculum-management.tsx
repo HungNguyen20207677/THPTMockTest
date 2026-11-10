@@ -6,6 +6,7 @@ import {
   CurriculumEditor,
   type CurriculumEditorTarget,
 } from "@/components/admin/curriculum-editor";
+import { IconAction } from "@/components/shared/icon-action";
 import { CurriculumTreeSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
@@ -51,27 +52,19 @@ function ActionButtons({
 }) {
   return (
     <div className="flex shrink-0 gap-1">
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
+      <IconAction
+        label={`Sửa ${label}`}
+        icon="pencil"
         disabled={disabled}
-        aria-label={`Sửa ${label}`}
         onClick={onEdit}
-      >
-        Sửa
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+      />
+      <IconAction
+        label={deletePending ? `Đang xóa ${label}` : `Xóa ${label}`}
+        icon="trash-2"
+        destructive
         disabled={disabled}
-        aria-label={`Xóa ${label}`}
         onClick={onDelete}
-      >
-        {deletePending ? "Đang xóa..." : "Xóa"}
-      </Button>
+      />
     </div>
   );
 }

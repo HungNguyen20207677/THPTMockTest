@@ -7,7 +7,7 @@ import {
   useTable,
 } from "@tanstack/react-table";
 
-import { Button } from "@/components/ui/button";
+import { IconAction } from "@/components/shared/icon-action";
 import {
   getExamStructureQuestionCount,
   getExamStructureTotalScoreHundredths,
@@ -121,28 +121,21 @@ export function ExamStructureTemplateTable({
         }
 
         return (
-          <div className="flex min-w-32 flex-wrap items-center justify-end gap-1">
-            <Button
-              type="button"
-              size="sm"
+          <div className="flex min-w-20 items-center justify-end gap-1">
+            <IconAction
+              label={`Sửa mẫu cấu trúc ${template.name}`}
+              icon="pencil"
               variant="outline"
               disabled={isBusy}
-              aria-label={`Sửa mẫu cấu trúc ${template.name}`}
               onClick={(event) => onEdit(template, event.currentTarget)}
-            >
-              Sửa
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            />
+            <IconAction
+              label={`Xóa mẫu cấu trúc ${template.name}`}
+              icon="trash-2"
+              destructive
               disabled={isBusy}
-              aria-label={`Xóa mẫu cấu trúc ${template.name}`}
               onClick={(event) => onDelete(template, event.currentTarget)}
-            >
-              Xóa
-            </Button>
+            />
           </div>
         );
       },

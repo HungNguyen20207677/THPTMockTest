@@ -44,5 +44,6 @@ describe("ADMIN pending result table", () => {
     expect(markup).not.toContain("Chấm bài");
     expect(markup).not.toContain("Nhập điểm");
     expect(markup).not.toContain("<input");
+    expect(markup).toContain('aria-label="Xem chi tiết lần làm 1"');
   });
 });
