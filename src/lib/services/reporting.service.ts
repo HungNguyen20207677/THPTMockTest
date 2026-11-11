@@ -25,6 +25,8 @@ import {
   type ExamReportingPersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
 import { findTopicRecordsByIds } from "@/lib/db/dao/topic.dao";
+import { listChapterRecords } from "@/lib/db/dao/chapter.dao";
+import { listGradeRecords } from "@/lib/db/dao/grade.dao";
 import {
   countStudentUsers,
   findStudentUsersByIds,
@@ -37,6 +39,7 @@ import {
   calculateQuestionStatistics,
   calculateScoreAggregate,
   calculateStudentTopicStatistics,
+  calculateStudentTopicPointStatistics,
   calculateTopicStatistics,
   getAttemptTimeUsedSeconds,
   toScoreStatistics,
@@ -83,6 +86,7 @@ import type {
   ReportingExamIdentity,
   ReportingStudentIdentity,
   StudentExamAttemptHistory,
+  StudentTopicPerformanceReport,
 } from "@/types/reporting";
 import type { AppUser, StudentAccount } from "@/types/user";
 
@@ -94,6 +98,7 @@ interface PreparedTerminalAttempt extends ExamAttemptPersistenceRecord {
 
 const REPORTING_WRITE_BATCH_SIZE = 20;
 const REPORTING_RECONCILIATION_MAX_RETRIES = 3;
+const STUDENT_TOPIC_MINIMUM_SAMPLE_SIZE = 3;
 
 function assertAdmin(actor: AppUser): void {
   if (actor.role !== USER_ROLE.ADMIN) {
@@ -816,5 +821,105 @@ export async function getStudentExamAttemptHistory(
       };
     }),
     pagination: toPaginationMetadata(query, page.totalItems),
+  };
+}
+
+export async function getStudentTopicPerformance(
+  actor: AppUser,
+): Promise<StudentTopicPerformanceReport> {
+  assertStudent(actor);
+  const now = new Date();
+  const filter = { studentId: actor.id };
+  await reconcileExpiredAttempts(now, filter);
+  const storedAttempts = await listTerminalExamAttemptRecords(filter);
+  const examMap = await getExamMap(
+    storedAttempts.map((attempt) => attempt.examId),
+  );
+  const eligibleStoredAttempts = storedAttempts.filter((attempt) => {
+    const settings = examMap.get(attempt.examId)?.settings;
+    return (
+      settings?.showScoreAfterSubmission === true &&
+      settings.showAnswersAfterSubmission === true
+    );
+  });
+  const eligibleAttempts = await prepareTerminalAttempts(
+    eligibleStoredAttempts,
+    examMap,
+    now,
+  );
+  const attemptsByExam = new Map<string, PreparedTerminalAttempt[]>();
+
+  for (const attempt of eligibleAttempts) {
+    const attempts = attemptsByExam.get(attempt.examId) ?? [];
+    attempts.push(attempt);
+    attemptsByExam.set(attempt.examId, attempts);
+  }
+
+  const topicExamAttempts = [...attemptsByExam.entries()].flatMap(
+    ([examId, attempts]) => {
+      const exam = examMap.get(examId);
+      return exam
+        ? [
+            {
+              questionTopicIds: exam.questionTopicIds,
+              questionTopics: exam.questionTopics,
+              structureSnapshot: exam.structureSnapshot,
+              attempts: attempts.map(toScoredAttempt),
+            },
+          ]
+        : [];
+    },
+  );
+  const topicIds = uniqueIds(
+    topicExamAttempts.flatMap((exam) => getUniqueExamTopicIds(exam)),
+  );
+  const [topics, chapters, grades] = await Promise.all([
+    findTopicRecordsByIds(topicIds),
+    listChapterRecords(),
+    listGradeRecords(),
+  ]);
+  const topicById = new Map(topics.map((topic) => [topic.id, topic]));
+  const chapterById = new Map(chapters.map((chapter) => [chapter.id, chapter]));
+  const gradeById = new Map(grades.map((grade) => [grade.id, grade]));
+  const statistics = calculateStudentTopicPointStatistics(
+    topicExamAttempts,
+    topicIds,
+  );
+  const reportTopics = statistics.flatMap((statistic) => {
+    const topic = topicById.get(statistic.topicId);
+    if (!topic) return [];
+    const chapter = topic.chapterId
+      ? chapterById.get(topic.chapterId)
+      : undefined;
+    const grade = chapter ? gradeById.get(chapter.gradeId) : undefined;
+
+    return [
+      {
+        ...statistic,
+        topicName: topic.name,
+        ...(chapter
+          ? { chapterId: chapter.id, chapterName: chapter.name }
+          : {}),
+        ...(grade ? { gradeId: grade.id, gradeName: grade.name } : {}),
+      },
+    ];
+  });
+  reportTopics.sort((left, right) => {
+    const leftGrade = left.gradeId ? gradeById.get(left.gradeId) : undefined;
+    const rightGrade = right.gradeId ? gradeById.get(right.gradeId) : undefined;
+    return (
+      (leftGrade?.sortOrder ?? Number.MAX_SAFE_INTEGER) -
+        (rightGrade?.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
+      (left.gradeName ?? "").localeCompare(right.gradeName ?? "", "vi") ||
+      (left.chapterName ?? "").localeCompare(right.chapterName ?? "", "vi") ||
+      left.topicName.localeCompare(right.topicName, "vi") ||
+      left.topicId.localeCompare(right.topicId)
+    );
+  });
+
+  return {
+    attemptPolicy: "ALL_ELIGIBLE_TERMINAL_ATTEMPTS",
+    minimumSampleSize: STUDENT_TOPIC_MINIMUM_SAMPLE_SIZE,
+    topics: reportTopics,
   };
 }

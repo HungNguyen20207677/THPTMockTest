@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   findExamReportingRecordsByIds: vi.fn(),
   isPublishedExamAvailableToStudent: vi.fn(),
   findTopicRecordsByIds: vi.fn(),
+  listChapterRecords: vi.fn(),
+  listGradeRecords: vi.fn(),
   countStudentUsers: vi.fn(),
   findStudentUsersByIds: vi.fn(),
   findUserById: vi.fn(),
@@ -41,6 +43,14 @@ vi.mock("@/lib/db/dao/exam.dao", () => ({
 
 vi.mock("@/lib/db/dao/topic.dao", () => ({
   findTopicRecordsByIds: mocks.findTopicRecordsByIds,
+}));
+
+vi.mock("@/lib/db/dao/chapter.dao", () => ({
+  listChapterRecords: mocks.listChapterRecords,
+}));
+
+vi.mock("@/lib/db/dao/grade.dao", () => ({
+  listGradeRecords: mocks.listGradeRecords,
 }));
 
 vi.mock("@/lib/db/dao/user.dao", () => ({
@@ -74,6 +84,7 @@ import {
   getAdminExamResults,
   getAdminStudentDetail,
   getStudentExamAttemptHistory,
+  getStudentTopicPerformance,
   listAdminResults,
 } from "@/lib/services/reporting.service";
 import type {
@@ -429,6 +440,8 @@ describe("reporting service", () => {
         })),
       ),
     );
+    mocks.listChapterRecords.mockResolvedValue([]);
+    mocks.listGradeRecords.mockResolvedValue([]);
     mocks.findStudentUsersByIds.mockImplementation((studentIds: string[]) =>
       Promise.resolve(studentIds.map((id) => createStudent({ id }))),
     );
@@ -1915,5 +1928,140 @@ describe("reporting service", () => {
       }),
     ).rejects.toMatchObject({ code: "EXAM_NOT_FOUND", statusCode: 404 });
     expect(mocks.listTerminalExamAttemptRecordPage).not.toHaveBeenCalled();
+  });
+
+  it("returns self-scoped Topic performance with hierarchy and all eligible retakes", async () => {
+    const topicIds = createEmptyQuestionTopicIds();
+    topicIds.partOne[0] = ["visible-topic"];
+    const hiddenScoreTopicIds = createEmptyQuestionTopicIds();
+    hiddenScoreTopicIds.partOne[0] = ["hidden-score-topic"];
+    const hiddenAnswersTopicIds = createEmptyQuestionTopicIds();
+    hiddenAnswersTopicIds.partOne[0] = ["hidden-answers-topic"];
+    const exams = new Map([
+      [
+        "visible-exam",
+        createExam({ id: "visible-exam", questionTopicIds: topicIds }),
+      ],
+      [
+        "hidden-score-exam",
+        createExam({
+          id: "hidden-score-exam",
+          questionTopicIds: hiddenScoreTopicIds,
+          settings: {
+            showScoreAfterSubmission: false,
+            showAnswersAfterSubmission: true,
+          },
+        }),
+      ],
+      [
+        "hidden-answers-exam",
+        createExam({
+          id: "hidden-answers-exam",
+          questionTopicIds: hiddenAnswersTopicIds,
+          settings: {
+            showScoreAfterSubmission: true,
+            showAnswersAfterSubmission: false,
+          },
+        }),
+      ],
+    ]);
+    const attempts = [
+      createAttempt({
+        id: "visible-attempt-1",
+        examId: "visible-exam",
+        attemptNumber: 1,
+        grading: createFirstQuestionGrading(true),
+      }),
+      createAttempt({
+        id: "visible-attempt-2",
+        examId: "visible-exam",
+        attemptNumber: 2,
+        grading: createFirstQuestionGrading(false),
+      }),
+      createAttempt({
+        id: "hidden-score-attempt",
+        examId: "hidden-score-exam",
+        grading: createFirstQuestionGrading(true),
+      }),
+      createAttempt({
+        id: "hidden-answers-attempt",
+        examId: "hidden-answers-exam",
+        grading: createFirstQuestionGrading(true),
+      }),
+    ];
+    mocks.listTerminalExamAttemptRecords.mockResolvedValue(attempts);
+    mocks.findExamReportingRecordsByIds.mockImplementation(
+      (examIds: string[]) =>
+        Promise.resolve(
+          examIds.flatMap((examId) => {
+            const exam = exams.get(examId);
+            return exam ? [exam] : [];
+          }),
+        ),
+    );
+    mocks.findTopicRecordsByIds.mockResolvedValue([
+      {
+        id: "visible-topic",
+        chapterId: "chapter-id",
+        name: "Hàm số",
+        normalizedName: "ham so",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    mocks.listChapterRecords.mockResolvedValue([
+      {
+        id: "chapter-id",
+        gradeId: "grade-id",
+        name: "Khảo sát hàm số",
+        normalizedName: "khao sat ham so",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    mocks.listGradeRecords.mockResolvedValue([
+      {
+        id: "grade-id",
+        name: "Lớp 12",
+        normalizedName: "lop 12",
+        sortOrder: 12,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    const report = await getStudentTopicPerformance(studentActor);
+
+    expect(report).toEqual({
+      attemptPolicy: "ALL_ELIGIBLE_TERMINAL_ATTEMPTS",
+      minimumSampleSize: 3,
+      topics: [
+        {
+          topicId: "visible-topic",
+          topicName: "Hàm số",
+          chapterId: "chapter-id",
+          chapterName: "Khảo sát hàm số",
+          gradeId: "grade-id",
+          gradeName: "Lớp 12",
+          evaluatedQuestionCount: 2,
+          includedAttemptCount: 2,
+          performancePercent: 50,
+        },
+      ],
+    });
+    expect(mocks.listTerminalExamAttemptRecords).toHaveBeenCalledWith({
+      studentId: studentActor.id,
+    });
+    expect(mocks.findTopicRecordsByIds).toHaveBeenCalledWith(["visible-topic"]);
+    expect(JSON.stringify(report)).not.toContain("hidden-score-topic");
+    expect(JSON.stringify(report)).not.toContain("hidden-answers-topic");
+  });
+
+  it("rejects non-STUDENT Topic performance callers before reading attempts", async () => {
+    await expect(getStudentTopicPerformance(admin)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      statusCode: 403,
+    });
+    expect(mocks.listTerminalExamAttemptRecords).not.toHaveBeenCalled();
   });
 });

@@ -11,6 +11,7 @@ import {
   calculateQuestionStatistics,
   calculateScoreAggregate,
   calculateStudentTopicStatistics,
+  calculateStudentTopicPointStatistics,
   calculateTopicStatistics,
   getAttemptTimeUsedSeconds,
   toScoreStatistics,
@@ -1137,6 +1138,150 @@ describe("attempt statistics", () => {
         topicName: "Shared",
         observationCount: 2,
         averagePerformancePercent: 75,
+      },
+    ]);
+  });
+
+  it("calculates points-based Topic performance with dynamic maximum scores", () => {
+    const structure: ExamStructureSnapshot = {
+      sections: [
+        {
+          id: "weighted-section",
+          title: "Weighted section",
+          questions: [
+            {
+              id: "small-question",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE,
+              maxScoreHundredths: 100,
+            },
+            {
+              id: "large-question",
+              type: EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE,
+              maxScoreHundredths: 300,
+            },
+          ],
+        },
+      ],
+    };
+    const attempts = [
+      createDynamicAttempt(1, {
+        "small-question": { isCorrect: true, scoreHundredths: 100 },
+        "large-question": {
+          correctStatementCount: 0,
+          scoreHundredths: 0,
+          statements: { a: false, b: false, c: false, d: false },
+        },
+      }),
+      createDynamicAttempt(2, {
+        "small-question": { isCorrect: false, scoreHundredths: 0 },
+        "large-question": {
+          correctStatementCount: 2,
+          scoreHundredths: 75,
+          statements: { a: true, b: true, c: false, d: false },
+        },
+      }),
+    ];
+
+    expect(
+      calculateStudentTopicPointStatistics(
+        [
+          {
+            questionTopicIds: createEmptyQuestionTopicIds(),
+            questionTopics: [
+              { questionId: "small-question", topicIds: ["topic"] },
+              { questionId: "large-question", topicIds: ["topic"] },
+            ],
+            structureSnapshot: structure,
+            attempts,
+          },
+        ],
+        ["topic"],
+      ),
+    ).toEqual([
+      {
+        topicId: "topic",
+        evaluatedQuestionCount: 4,
+        includedAttemptCount: 2,
+        performancePercent: 21.875,
+      },
+    ]);
+  });
+
+  it("combines legacy partial credit and short-answer points", () => {
+    const topicIds = createEmptyQuestionTopicIds();
+    topicIds.partTwo[0] = ["legacy-topic"];
+    topicIds.partThree[0] = ["legacy-topic"];
+    const attempt = {
+      ...createAttempt(0, 1, "2026-08-01T00:00:00.000Z"),
+      grading: createQuestionGrading({
+        partTwo: [
+          {
+            correctStatementCount: 2,
+            scoreHundredths: 25,
+            statements: { a: true, b: true, c: false, d: false },
+          },
+        ],
+        partThreeCorrect: [0],
+      }),
+    };
+
+    expect(
+      calculateStudentTopicPointStatistics(
+        [{ questionTopicIds: topicIds, attempts: [attempt] }],
+        ["legacy-topic"],
+      ),
+    ).toEqual([
+      {
+        topicId: "legacy-topic",
+        evaluatedQuestionCount: 2,
+        includedAttemptCount: 1,
+        performancePercent: 50,
+      },
+    ]);
+  });
+
+  it("excludes pending essays and reports a null zero-denominator result", () => {
+    const exam = {
+      questionTopicIds: createEmptyQuestionTopicIds(),
+      questionTopics: [
+        { questionId: "essay-question", topicIds: ["essay-topic"] },
+      ],
+      structureSnapshot: pendingEssayStructure,
+      attempts: [createPendingDynamicAttempt(1, {})],
+    };
+
+    expect(
+      calculateStudentTopicPointStatistics([exam], ["essay-topic"]),
+    ).toEqual([
+      {
+        topicId: "essay-topic",
+        evaluatedQuestionCount: 0,
+        includedAttemptCount: 0,
+        performancePercent: null,
+      },
+    ]);
+
+    const completedAttempt = createDynamicAttempt(2, {});
+    completedAttempt.grading = {
+      answerKeyRevision: 1,
+      totalScoreHundredths: 250,
+      sectionScoresHundredths: { "pending-section": 250 },
+      questionsById: {},
+      manualEssayScores: [
+        { questionId: "essay-question", scoreHundredths: 250 },
+      ],
+    };
+    expect(
+      calculateStudentTopicPointStatistics(
+        [{ ...exam, attempts: [completedAttempt] }],
+        ["essay-topic"],
+      ),
+    ).toEqual([
+      {
+        topicId: "essay-topic",
+        evaluatedQuestionCount: 1,
+        includedAttemptCount: 1,
+        performancePercent: 50,
       },
     ]);
   });

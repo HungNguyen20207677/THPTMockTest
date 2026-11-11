@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 
 import { StudentExamList } from "@/components/student/exam-list";
+import { StudentTopicPerformance } from "@/components/student/topic-performance";
 import { requirePageRole } from "@/lib/auth/authorization";
 import { USER_ROLE } from "@/lib/constants/roles";
+import { getStudentTopicPerformance } from "@/lib/services/reporting.service";
 
 export const metadata: Metadata = {
   title: "Trang học sinh",
@@ -10,6 +12,7 @@ export const metadata: Metadata = {
 
 export default async function StudentDashboardPage() {
   const student = await requirePageRole(USER_ROLE.STUDENT);
+  const topicPerformance = await getStudentTopicPerformance(student);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
@@ -25,6 +28,7 @@ export default async function StudentDashboardPage() {
         </p>
       </section>
       <StudentExamList />
+      <StudentTopicPerformance report={topicPerformance} />
     </main>
   );
 }

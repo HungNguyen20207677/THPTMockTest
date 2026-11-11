@@ -1,4 +1,8 @@
-import { EXAM_STRUCTURE, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
+import {
+  EXAM_SCORING_HUNDREDTHS,
+  EXAM_STRUCTURE,
+  PART_TWO_STATEMENTS,
+} from "@/lib/constants/exam";
 import {
   EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
@@ -424,6 +428,9 @@ interface TopicPerformanceAggregate {
   taggedQuestionCount: number;
   observationCount: number;
   totalPerformancePercent: number;
+  totalAwardedScoreHundredths: number;
+  totalMaxScoreHundredths: number;
+  attemptIds: Set<string>;
 }
 
 function accumulateTopicPerformance(
@@ -441,6 +448,9 @@ function accumulateTopicPerformance(
         taggedQuestionCount: 0,
         observationCount: 0,
         totalPerformancePercent: 0,
+        totalAwardedScoreHundredths: 0,
+        totalMaxScoreHundredths: 0,
+        attemptIds: new Set<string>(),
       };
       aggregate.taggedQuestionCount += 1;
       aggregateByTopicId.set(topicId, aggregate);
@@ -460,7 +470,8 @@ function accumulateTopicPerformance(
         continue;
       }
 
-      let performance: number;
+      let awardedScoreHundredths: number;
+      let maxScoreHundredths: number;
 
       if (isDynamicAttemptGradingSnapshot(attempt.grading)) {
         if (!normalizedSource.structureSnapshot) {
@@ -489,14 +500,15 @@ function accumulateTopicPerformance(
             continue;
           }
 
-          performance = (manualScore * 100) / question.maxScoreHundredths;
+          awardedScoreHundredths = manualScore;
+          maxScoreHundredths = question.maxScoreHundredths;
         } else {
           const result = attempt.grading.questionsById[question.questionId];
           if (!result) {
             continue;
           }
-          performance =
-            (result.scoreHundredths * 100) / question.maxScoreHundredths;
+          awardedScoreHundredths = result.scoreHundredths;
+          maxScoreHundredths = question.maxScoreHundredths;
         }
       } else {
         if (normalizedSource.structureSnapshot) {
@@ -504,17 +516,32 @@ function accumulateTopicPerformance(
         }
 
         const questionIndex = question.questionNumber - 1;
-        performance =
+        if (
           question.questionType === EXAM_STRUCTURE_QUESTION_TYPE.SINGLE_CHOICE
-            ? attempt.grading.partOne[questionIndex].isCorrect
-              ? 100
-              : 0
-            : question.questionType === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE
-              ? attempt.grading.partTwo[questionIndex].scoreHundredths
-              : attempt.grading.partThree[questionIndex].isCorrect
-                ? 100
-                : 0;
+        ) {
+          awardedScoreHundredths = attempt.grading.partOne[questionIndex]
+            .isCorrect
+            ? EXAM_SCORING_HUNDREDTHS.partOnePointsPerAnswer
+            : 0;
+          maxScoreHundredths = EXAM_SCORING_HUNDREDTHS.partOnePointsPerAnswer;
+        } else if (
+          question.questionType === EXAM_STRUCTURE_QUESTION_TYPE.TRUE_FALSE
+        ) {
+          awardedScoreHundredths =
+            attempt.grading.partTwo[questionIndex].scoreHundredths;
+          maxScoreHundredths =
+            EXAM_SCORING_HUNDREDTHS.partTwoMaximum /
+            EXAM_STRUCTURE.partTwoQuestions;
+        } else {
+          awardedScoreHundredths = attempt.grading.partThree[questionIndex]
+            .isCorrect
+            ? EXAM_SCORING_HUNDREDTHS.partThreePointsPerAnswer
+            : 0;
+          maxScoreHundredths = EXAM_SCORING_HUNDREDTHS.partThreePointsPerAnswer;
+        }
       }
+
+      const performance = (awardedScoreHundredths * 100) / maxScoreHundredths;
 
       for (const topicId of question.topicIds) {
         const aggregate = aggregateByTopicId.get(topicId);
@@ -522,6 +549,9 @@ function accumulateTopicPerformance(
         if (aggregate) {
           aggregate.observationCount += 1;
           aggregate.totalPerformancePercent += performance;
+          aggregate.totalAwardedScoreHundredths += awardedScoreHundredths;
+          aggregate.totalMaxScoreHundredths += maxScoreHundredths;
+          aggregate.attemptIds.add(attempt.id);
         }
       }
     }
@@ -612,6 +642,47 @@ export function calculateStudentTopicStatistics(
       left.topicId.localeCompare(right.topicId),
   );
   return statistics;
+}
+
+export interface StudentTopicPointStatistic {
+  topicId: string;
+  evaluatedQuestionCount: number;
+  includedAttemptCount: number;
+  performancePercent: number | null;
+}
+
+export function calculateStudentTopicPointStatistics(
+  exams: Array<{
+    questionTopicIds: ExamQuestionTopicIds;
+    questionTopics?: ExamQuestionTopicsSource["questionTopics"];
+    structureSnapshot?: ExamStructureSnapshot;
+    attempts: ScoredAttempt[];
+  }>,
+  topicIds: string[],
+): StudentTopicPointStatistic[] {
+  const aggregateByTopicId = new Map<string, TopicPerformanceAggregate>();
+
+  for (const exam of exams) {
+    accumulateTopicPerformance(aggregateByTopicId, exam, exam.attempts);
+  }
+
+  return [...new Set(topicIds)].flatMap((topicId) => {
+    const aggregate = aggregateByTopicId.get(topicId);
+    if (!aggregate) return [];
+
+    return [
+      {
+        topicId,
+        evaluatedQuestionCount: aggregate.observationCount,
+        includedAttemptCount: aggregate.attemptIds.size,
+        performancePercent:
+          aggregate.totalMaxScoreHundredths === 0
+            ? null
+            : (aggregate.totalAwardedScoreHundredths * 100) /
+              aggregate.totalMaxScoreHundredths,
+      },
+    ];
+  });
 }
 
 export function getAttemptTimeUsedSeconds(attempt: {

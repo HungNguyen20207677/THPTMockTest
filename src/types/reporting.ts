@@ -268,3 +268,21 @@ export interface StudentExamAttemptHistory {
   attempts: StudentExamAttemptHistoryItem[];
   pagination: PaginationMetadata;
 }
+
+export interface StudentTopicPerformanceItem {
+  topicId: string;
+  topicName: string;
+  chapterId?: string;
+  chapterName?: string;
+  gradeId?: string;
+  gradeName?: string;
+  performancePercent: number | null;
+  evaluatedQuestionCount: number;
+  includedAttemptCount: number;
+}
+
+export interface StudentTopicPerformanceReport {
+  attemptPolicy: "ALL_ELIGIBLE_TERMINAL_ATTEMPTS";
+  minimumSampleSize: number;
+  topics: StudentTopicPerformanceItem[];
+}
