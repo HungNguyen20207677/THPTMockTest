@@ -279,10 +279,7 @@ const examSchema = new Schema<ExamRecord>(
 examSchema.index({ createdAt: -1 });
 examSchema.index({ assignedStudentIds: 1 });
 examSchema.index({ "pdf.publicId": 1 }, { unique: true });
-examSchema.index(
-  { "solutionPdf.publicId": 1 },
-  { unique: true, sparse: true },
-);
+examSchema.index({ "solutionPdf.publicId": 1 }, { unique: true, sparse: true });
 examSchema.index({ "questionTopicIds.partOne": 1 });
 examSchema.index({ "questionTopicIds.partTwo": 1 });
 examSchema.index({ "questionTopicIds.partThree": 1 });

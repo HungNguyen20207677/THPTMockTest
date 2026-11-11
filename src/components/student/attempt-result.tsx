@@ -13,6 +13,15 @@ import {
   EXAM_ATTEMPT_STATUS,
 } from "@/lib/constants/exam-attempt";
 import { EXAM_SCORING, PART_TWO_STATEMENTS } from "@/lib/constants/exam";
+import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
+import {
+  ANSWER_REVIEW_FILTER,
+  classifyAnswerReviewQuestions,
+  filterAnswerReviewQuestions,
+  type AnswerReviewClassification,
+  type AnswerReviewFilter,
+  type ClassifiedAnswerReviewQuestion,
+} from "@/lib/exam/answer-review";
 import {
   formatDuration,
   scoreFormatter,
@@ -59,6 +68,118 @@ function CorrectnessBadge({ isCorrect }: { isCorrect: boolean }) {
   );
 }
 
+const reviewFilterLabels: Record<AnswerReviewFilter, string> = {
+  all: "Tất cả",
+  incorrect: "Chưa đúng",
+  partial: "Đúng một phần",
+  unanswered: "Chưa trả lời",
+  correct: "Đúng",
+};
+
+const questionTypeLabels = {
+  SINGLE_CHOICE: "Trắc nghiệm",
+  TRUE_FALSE: "Đúng / Sai",
+  SHORT_ANSWER: "Trả lời ngắn",
+  ESSAY_IMAGE: "Tự luận hình ảnh",
+} as const;
+
+function ReviewFilterControls({
+  questions,
+  value,
+  onChange,
+}: {
+  questions: ClassifiedAnswerReviewQuestion[];
+  value: AnswerReviewFilter;
+  onChange: (filter: AnswerReviewFilter) => void;
+}) {
+  const filters = Object.values(ANSWER_REVIEW_FILTER);
+
+  return (
+    <div
+      role="group"
+      aria-label="Lọc câu hỏi theo kết quả"
+      className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
+      {filters.map((filter) => {
+        const count =
+          filter === ANSWER_REVIEW_FILTER.ALL
+            ? questions.length
+            : questions.filter((item) => item.classification === filter).length;
+
+        return (
+          <Button
+            key={filter}
+            type="button"
+            size="sm"
+            variant={value === filter ? "default" : "outline"}
+            aria-pressed={value === filter}
+            className="shrink-0"
+            onClick={() => onChange(filter)}
+          >
+            {reviewFilterLabels[filter]} ({count})
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ReviewStatusBadge({
+  classification,
+  isEssay = false,
+  gradingCompleted = false,
+}: {
+  classification: AnswerReviewClassification | "pending" | null;
+  isEssay?: boolean;
+  gradingCompleted?: boolean;
+}) {
+  const presentation =
+    classification === ANSWER_REVIEW_FILTER.CORRECT
+      ? {
+          label: isEssay ? "Đạt điểm tối đa" : "Đúng",
+          className:
+            "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300",
+        }
+      : classification === ANSWER_REVIEW_FILTER.PARTIAL
+        ? {
+            label: isEssay ? "Có điểm một phần" : "Đúng một phần",
+            className:
+              "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300",
+          }
+        : classification === ANSWER_REVIEW_FILTER.INCORRECT
+          ? {
+              label: isEssay ? "Chưa có điểm" : "Chưa đúng",
+              className:
+                "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300",
+            }
+          : classification === ANSWER_REVIEW_FILTER.UNANSWERED
+            ? {
+                label: "Chưa trả lời",
+                className: "border-border bg-muted text-muted-foreground",
+              }
+            : classification === "pending"
+              ? {
+                  label: "Đang chờ chấm",
+                  className:
+                    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300",
+                }
+              : {
+                  label: gradingCompleted ? "Đã chấm" : "Chưa phân loại",
+                  className: "border-border bg-muted text-muted-foreground",
+                };
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
+        presentation.className,
+      )}
+    >
+      {presentation.label}
+    </span>
+  );
+}
+
 function DynamicAnswerReview({
   result,
   hideEssayImages,
@@ -66,12 +187,40 @@ function DynamicAnswerReview({
   result: StudentExamAttemptResult;
   hideEssayImages: boolean;
 }) {
+  const [filter, setFilter] = useState<AnswerReviewFilter>(
+    ANSWER_REVIEW_FILTER.ALL,
+  );
   const review = result.dynamicAnswerReview;
   const structure = result.exam.structureSnapshot;
 
   if (!review || !structure) {
     return null;
   }
+
+  const classifiedQuestions = classifyAnswerReviewQuestions(result).filter(
+    (question) =>
+      !hideEssayImages ||
+      !structure.sections.some((section) =>
+        section.questions.some(
+          (candidate) =>
+            candidate.id === question.id &&
+            candidate.type === EXAM_STRUCTURE_QUESTION_TYPE.ESSAY_IMAGE,
+        ),
+      ),
+  );
+  const filteredQuestions = filterAnswerReviewQuestions(
+    classifiedQuestions,
+    filter,
+  );
+  const visibleQuestionIds = new Set(
+    filteredQuestions.map((question) => question.id),
+  );
+  const classifications = new Map(
+    classifiedQuestions.map((question) => [
+      question.id,
+      question.classification,
+    ]),
+  );
 
   return (
     <section aria-labelledby="answer-review-heading" className="space-y-6">
@@ -86,143 +235,202 @@ function DynamicAnswerReview({
           Đối chiếu đáp án
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          Câu hỏi được hiển thị trong tệp đề thi PDF.
+          Dùng phần và số câu để đối chiếu với tệp đề thi PDF.
         </p>
       </div>
 
-      {structure.sections.map((section) => (
-        <div key={section.id} className="space-y-3">
-          <h3 className="text-lg font-semibold">{section.title}</h3>
-          <div className="grid gap-3 lg:grid-cols-2">
-            {section.questions.map((question, questionIndex) => {
-              const item = review.questionsById[question.id];
+      <ReviewFilterControls
+        questions={classifiedQuestions}
+        value={filter}
+        onChange={setFilter}
+      />
 
-              if (!item) {
-                return null;
-              }
+      {structure.sections.map((section) => {
+        const visibleQuestions = section.questions.filter((question) =>
+          visibleQuestionIds.has(question.id),
+        );
 
-              if (item.type === "ESSAY_IMAGE") {
-                if (hideEssayImages) {
+        if (visibleQuestions.length === 0) return null;
+
+        return (
+          <div key={section.id} className="space-y-3">
+            <h3 className="text-lg font-semibold">{section.title}</h3>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {visibleQuestions.map((question) => {
+                const questionIndex = section.questions.findIndex(
+                  (candidate) => candidate.id === question.id,
+                );
+                const item = review.questionsById[question.id];
+                const classification = classifications.get(question.id) ?? null;
+
+                if (!item) {
                   return null;
+                }
+
+                if (item.type === "ESSAY_IMAGE") {
+                  if (hideEssayImages) {
+                    return null;
+                  }
+
+                  return (
+                    <div
+                      key={question.id}
+                      className="border-border bg-card rounded-xl border p-4 shadow-xs lg:col-span-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-semibold">
+                            Câu {questionIndex + 1}
+                          </p>
+                          <p className="text-muted-foreground text-xs">
+                            {questionTypeLabels[question.type]}
+                          </p>
+                        </div>
+                        <ReviewStatusBadge
+                          classification={classification}
+                          isEssay
+                          gradingCompleted={
+                            result.gradingStatus ===
+                            EXAM_ATTEMPT_GRADING_STATUS.COMPLETED
+                          }
+                        />
+                      </div>
+                      {item.score === undefined ? (
+                        <p className="text-muted-foreground mt-1 text-sm">
+                          {result.gradingStatus ===
+                          EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL
+                            ? "Bài tự luận chưa được chấm."
+                            : "Bài tự luận đã được chấm; điểm hiện chưa được công bố."}
+                        </p>
+                      ) : (
+                        <p className="text-primary mt-1 font-medium tabular-nums">
+                          Điểm: {scoreFormatter.format(item.score)} /{" "}
+                          {scoreFormatter.format(
+                            question.maxScoreHundredths / 100,
+                          )}
+                        </p>
+                      )}
+                      {item.studentAnswer.images.length > 0 ? (
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          {item.studentAnswer.images.map(
+                            (image, imageIndex) => (
+                              <figure
+                                key={image.publicId}
+                                className="border-border bg-muted/20 overflow-hidden rounded-lg border"
+                              >
+                                <Image
+                                  src={image.secureUrl}
+                                  alt={`Ảnh bài làm ${imageIndex + 1}`}
+                                  width={image.width}
+                                  height={image.height}
+                                  className="h-48 w-full object-contain"
+                                />
+                                <figcaption className="text-muted-foreground truncate px-3 py-2 text-xs">
+                                  {image.originalFilename}
+                                </figcaption>
+                              </figure>
+                            ),
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground mt-3 text-sm">
+                          Không có ảnh bài làm đã nộp.
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (item.type === "TRUE_FALSE") {
+                  return (
+                    <div
+                      key={question.id}
+                      className="border-border bg-card rounded-xl border p-4 shadow-xs"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-semibold">
+                            Câu {questionIndex + 1}
+                          </p>
+                          <p className="text-muted-foreground text-xs">
+                            {questionTypeLabels[question.type]}
+                          </p>
+                        </div>
+                        <ReviewStatusBadge classification={classification} />
+                        <p className="text-muted-foreground text-sm">
+                          {item.correctStatementCount}/4 ý đúng
+                          {item.score !== undefined
+                            ? ` · ${scoreFormatter.format(item.score)} / ${scoreFormatter.format(question.maxScoreHundredths / 100)} điểm`
+                            : ""}
+                        </p>
+                      </div>
+                      <div className="divide-border mt-3 divide-y">
+                        {PART_TWO_STATEMENTS.map((statement) => {
+                          const statementReview = item.statements[statement];
+                          const comparison = `${formatBooleanAnswer(statementReview.studentAnswer)} -> ${formatBooleanAnswer(statementReview.correctAnswer)}`;
+
+                          return (
+                            <div
+                              key={statement}
+                              className="grid grid-cols-[2rem_1fr_auto] items-center gap-2 py-2 text-sm"
+                            >
+                              <span className="font-semibold">{statement}</span>
+                              <span className="text-muted-foreground">
+                                {comparison}
+                              </span>
+                              <CorrectnessBadge
+                                isCorrect={statementReview.isCorrect}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
                 }
 
                 return (
                   <div
                     key={question.id}
-                    className="border-border bg-card rounded-xl border p-4 shadow-xs lg:col-span-2"
-                  >
-                    <p className="font-semibold">Câu {questionIndex + 1}</p>
-                    {item.score === undefined ? (
-                      <p className="text-muted-foreground mt-1 text-sm">
-                        Bài tự luận chưa được chấm.
-                      </p>
-                    ) : (
-                      <p className="text-primary mt-1 font-medium tabular-nums">
-                        Điểm: {scoreFormatter.format(item.score)} /{" "}
-                        {scoreFormatter.format(
-                          question.maxScoreHundredths / 100,
-                        )}
-                      </p>
-                    )}
-                    {item.studentAnswer.images.length > 0 ? (
-                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {item.studentAnswer.images.map((image, imageIndex) => (
-                          <figure
-                            key={image.publicId}
-                            className="border-border bg-muted/20 overflow-hidden rounded-lg border"
-                          >
-                            <Image
-                              src={image.secureUrl}
-                              alt={`Ảnh bài làm ${imageIndex + 1}`}
-                              width={image.width}
-                              height={image.height}
-                              className="h-48 w-full object-contain"
-                            />
-                            <figcaption className="text-muted-foreground truncate px-3 py-2 text-xs">
-                              {image.originalFilename}
-                            </figcaption>
-                          </figure>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground mt-3 text-sm">
-                        Không có ảnh bài làm đã nộp.
-                      </p>
-                    )}
-                  </div>
-                );
-              }
-
-              if (item.type === "TRUE_FALSE") {
-                return (
-                  <div
-                    key={question.id}
                     className="border-border bg-card rounded-xl border p-4 shadow-xs"
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-semibold">Câu {questionIndex + 1}</p>
-                      <p className="text-muted-foreground text-sm">
-                        {item.correctStatementCount}/4 ý đúng
-                        {item.score !== undefined
-                          ? ` · ${scoreFormatter.format(item.score)} điểm`
-                          : ""}
-                      </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="font-semibold">Câu {questionIndex + 1}</p>
+                        <p className="text-muted-foreground text-xs">
+                          {questionTypeLabels[question.type]}
+                        </p>
+                      </div>
+                      <ReviewStatusBadge classification={classification} />
                     </div>
-                    <div className="divide-border mt-3 divide-y">
-                      {PART_TWO_STATEMENTS.map((statement) => {
-                        const statementReview = item.statements[statement];
-                        const comparison = `${formatBooleanAnswer(statementReview.studentAnswer)} -> ${formatBooleanAnswer(statementReview.correctAnswer)}`;
-
-                        return (
-                          <div
-                            key={statement}
-                            className="grid grid-cols-[2rem_1fr_auto] items-center gap-2 py-2 text-sm"
-                          >
-                            <span className="font-semibold">{statement}</span>
-                            <span className="text-muted-foreground">
-                              {comparison}
-                            </span>
-                            <CorrectnessBadge
-                              isCorrect={statementReview.isCorrect}
-                            />
-                          </div>
-                        );
-                      })}
+                    <div className="text-muted-foreground mt-2 space-y-1 text-sm">
+                      {item.type === "SINGLE_CHOICE" ? (
+                        <>
+                          <p>Bài làm: {item.studentAnswer ?? "Chưa trả lời"}</p>
+                          <p>Đáp án đúng: {item.correctAnswer}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p>
+                            Bài làm:{" "}
+                            {item.studentDisplayAnswer ?? "Chưa trả lời"}
+                          </p>
+                          <p>Đáp án đúng: {item.correctDisplayAnswer}</p>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
-              }
-
-              return (
-                <div
-                  key={question.id}
-                  className="border-border bg-card rounded-xl border p-4 shadow-xs"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="font-semibold">Câu {questionIndex + 1}</p>
-                    <CorrectnessBadge isCorrect={item.isCorrect} />
-                  </div>
-                  <div className="text-muted-foreground mt-2 space-y-1 text-sm">
-                    {item.type === "SINGLE_CHOICE" ? (
-                      <>
-                        <p>Bài làm: {item.studentAnswer ?? "Chưa trả lời"}</p>
-                        <p>Đáp án đúng: {item.correctAnswer}</p>
-                      </>
-                    ) : (
-                      <>
-                        <p>
-                          Bài làm: {item.studentDisplayAnswer ?? "Chưa trả lời"}
-                        </p>
-                        <p>Đáp án đúng: {item.correctDisplayAnswer}</p>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+              })}
+            </div>
           </div>
+        );
+      })}
+      {filteredQuestions.length === 0 && (
+        <div className="border-border bg-muted/30 rounded-xl border border-dashed p-6 text-center text-sm">
+          Không có câu hỏi thuộc nhóm “{reviewFilterLabels[filter]}”.
         </div>
-      ))}
+      )}
     </section>
   );
 }
@@ -357,24 +565,38 @@ export function ScoreSummary({ result }: { result: StudentExamAttemptResult }) {
   );
 }
 
-export function AnswerReview({
-  result,
-  hideEssayImages = false,
-}: {
-  result: StudentExamAttemptResult;
-  hideEssayImages?: boolean;
-}) {
-  if (result.dynamicAnswerReview && result.exam.structureSnapshot) {
-    return (
-      <DynamicAnswerReview result={result} hideEssayImages={hideEssayImages} />
-    );
-  }
-
+function LegacyAnswerReview({ result }: { result: StudentExamAttemptResult }) {
+  const [filter, setFilter] = useState<AnswerReviewFilter>(
+    ANSWER_REVIEW_FILTER.ALL,
+  );
   const review = result.answerReview;
+  if (!review) return null;
 
-  if (!review) {
-    return null;
-  }
+  const classifiedQuestions = classifyAnswerReviewQuestions(result);
+  const filteredQuestions = filterAnswerReviewQuestions(
+    classifiedQuestions,
+    filter,
+  );
+  const visibleQuestionIds = new Set(
+    filteredQuestions.map((question) => question.id),
+  );
+  const classifications = new Map(
+    classifiedQuestions.map((question) => [
+      question.id,
+      question.classification,
+    ]),
+  );
+  const partOne = review.partOne
+    .map((item, index) => ({ item, index }))
+    .filter(({ index }) => visibleQuestionIds.has(`legacy-part-one-${index}`));
+  const partTwo = review.partTwo
+    .map((item, index) => ({ item, index }))
+    .filter(({ index }) => visibleQuestionIds.has(`legacy-part-two-${index}`));
+  const partThree = review.partThree
+    .map((item, index) => ({ item, index }))
+    .filter(({ index }) =>
+      visibleQuestionIds.has(`legacy-part-three-${index}`),
+    );
 
   return (
     <section aria-labelledby="answer-review-heading" className="space-y-6">
@@ -389,93 +611,155 @@ export function AnswerReview({
           Đối chiếu đáp án
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          Câu hỏi được hiển thị trong tệp đề thi PDF.
+          Dùng phần và số câu để đối chiếu với tệp đề thi PDF.
         </p>
       </div>
 
-      <div className="space-y-3">
-        <h3 className="text-lg font-semibold">Phần I</h3>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {review.partOne.map((item, index) => (
-            <div
-              key={index}
-              className="border-border bg-card rounded-xl border p-4 shadow-xs"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold">Câu {index + 1}</p>
-                <CorrectnessBadge isCorrect={item.isCorrect} />
-              </div>
-              <div className="text-muted-foreground mt-2 space-y-1 text-sm">
-                <p>Bài làm: {item.studentAnswer ?? "Chưa trả lời"}</p>
-                <p>Đáp án đúng: {item.correctAnswer}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <ReviewFilterControls
+        questions={classifiedQuestions}
+        value={filter}
+        onChange={setFilter}
+      />
 
-      <div className="space-y-3">
-        <h3 className="text-lg font-semibold">Phần II</h3>
-        <div className="grid gap-4 lg:grid-cols-2">
-          {review.partTwo.map((question, questionIndex) => (
-            <div
-              key={questionIndex}
-              className="border-border bg-card rounded-xl border p-4 shadow-xs"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-semibold">Câu {questionIndex + 1}</p>
-                <p className="text-muted-foreground text-sm">
-                  {question.correctStatementCount}/4 ý đúng
-                  {question.score !== undefined &&
-                    ` · ${scoreFormatter.format(question.score)} điểm`}
-                </p>
+      {partOne.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold">Phần I</h3>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {partOne.map(({ item, index }) => (
+              <div
+                key={index}
+                className="border-border bg-card rounded-xl border p-4 shadow-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="font-semibold">Câu {index + 1}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {questionTypeLabels.SINGLE_CHOICE}
+                    </p>
+                  </div>
+                  <ReviewStatusBadge
+                    classification={
+                      classifications.get(`legacy-part-one-${index}`) ?? null
+                    }
+                  />
+                </div>
+                <div className="text-muted-foreground mt-2 space-y-1 text-sm">
+                  <p>Bài làm: {item.studentAnswer ?? "Chưa trả lời"}</p>
+                  <p>Đáp án đúng: {item.correctAnswer}</p>
+                </div>
               </div>
-              <div className="divide-border mt-3 divide-y">
-                {PART_TWO_STATEMENTS.map((statement) => {
-                  const item = question.statements[statement];
-
-                  return (
-                    <div
-                      key={statement}
-                      className="grid grid-cols-[2rem_1fr_auto] items-center gap-2 py-2 text-sm"
-                    >
-                      <span className="font-semibold">{statement}</span>
-                      <span className="text-muted-foreground">
-                        {formatBooleanAnswer(item.studentAnswer)} →{" "}
-                        {formatBooleanAnswer(item.correctAnswer)}
-                      </span>
-                      <CorrectnessBadge isCorrect={item.isCorrect} />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="space-y-3">
-        <h3 className="text-lg font-semibold">Phần III</h3>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {review.partThree.map((item, index) => (
-            <div
-              key={index}
-              className="border-border bg-card rounded-xl border p-4 shadow-xs"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold">Câu {index + 1}</p>
-                <CorrectnessBadge isCorrect={item.isCorrect} />
+      {partTwo.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold">Phần II</h3>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {partTwo.map(({ item: question, index: questionIndex }) => (
+              <div
+                key={questionIndex}
+                className="border-border bg-card rounded-xl border p-4 shadow-xs"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-semibold">Câu {questionIndex + 1}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {questionTypeLabels.TRUE_FALSE}
+                    </p>
+                  </div>
+                  <ReviewStatusBadge
+                    classification={
+                      classifications.get(`legacy-part-two-${questionIndex}`) ??
+                      null
+                    }
+                  />
+                  <p className="text-muted-foreground text-sm">
+                    {question.correctStatementCount}/4 ý đúng
+                    {question.score !== undefined &&
+                      ` · ${scoreFormatter.format(question.score)} / 1,00 điểm`}
+                  </p>
+                </div>
+                <div className="divide-border mt-3 divide-y">
+                  {PART_TWO_STATEMENTS.map((statement) => {
+                    const item = question.statements[statement];
+
+                    return (
+                      <div
+                        key={statement}
+                        className="grid grid-cols-[2rem_1fr_auto] items-center gap-2 py-2 text-sm"
+                      >
+                        <span className="font-semibold">{statement}</span>
+                        <span className="text-muted-foreground">
+                          {formatBooleanAnswer(item.studentAnswer)} →{" "}
+                          {formatBooleanAnswer(item.correctAnswer)}
+                        </span>
+                        <CorrectnessBadge isCorrect={item.isCorrect} />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="text-muted-foreground mt-2 space-y-1 text-sm">
-                <p>Bài làm: {item.studentDisplayAnswer ?? "Chưa trả lời"}</p>
-                <p>Đáp án đúng: {item.correctDisplayAnswer}</p>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {partThree.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold">Phần III</h3>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {partThree.map(({ item, index }) => (
+              <div
+                key={index}
+                className="border-border bg-card rounded-xl border p-4 shadow-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="font-semibold">Câu {index + 1}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {questionTypeLabels.SHORT_ANSWER}
+                    </p>
+                  </div>
+                  <ReviewStatusBadge
+                    classification={
+                      classifications.get(`legacy-part-three-${index}`) ?? null
+                    }
+                  />
+                </div>
+                <div className="text-muted-foreground mt-2 space-y-1 text-sm">
+                  <p>Bài làm: {item.studentDisplayAnswer ?? "Chưa trả lời"}</p>
+                  <p>Đáp án đúng: {item.correctDisplayAnswer}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {filteredQuestions.length === 0 && (
+        <div className="border-border bg-muted/30 rounded-xl border border-dashed p-6 text-center text-sm">
+          Không có câu hỏi thuộc nhóm “{reviewFilterLabels[filter]}”.
+        </div>
+      )}
     </section>
   );
+}
+
+export function AnswerReview({
+  result,
+  hideEssayImages = false,
+}: {
+  result: StudentExamAttemptResult;
+  hideEssayImages?: boolean;
+}) {
+  if (result.dynamicAnswerReview && result.exam.structureSnapshot) {
+    return (
+      <DynamicAnswerReview result={result} hideEssayImages={hideEssayImages} />
+    );
+  }
+
+  return result.answerReview ? <LegacyAnswerReview result={result} /> : null;
 }
 
 export function AttemptResult({ examId, attemptId }: AttemptResultProps) {

@@ -382,21 +382,23 @@ export const updateExamSchema = z
       : exam,
   );
 
-export const updateExamRequestSchema = z.strictObject({
-  exam: updateExamSchema,
-  replacementPdfUpload: examPdfUploadReferenceSchema.optional(),
-  replacementSolutionPdfUpload: examPdfUploadReferenceSchema.optional(),
-  removeSolutionPdf: z.boolean().optional().default(false),
-  confirmAnswerKeyCorrection: z.literal(true).optional(),
-}).superRefine((input, context) => {
-  if (input.replacementSolutionPdfUpload && input.removeSolutionPdf) {
-    context.addIssue({
-      code: "custom",
-      message: "Không thể vừa thay vừa xóa tệp lời giải.",
-      path: ["removeSolutionPdf"],
-    });
-  }
-});
+export const updateExamRequestSchema = z
+  .strictObject({
+    exam: updateExamSchema,
+    replacementPdfUpload: examPdfUploadReferenceSchema.optional(),
+    replacementSolutionPdfUpload: examPdfUploadReferenceSchema.optional(),
+    removeSolutionPdf: z.boolean().optional().default(false),
+    confirmAnswerKeyCorrection: z.literal(true).optional(),
+  })
+  .superRefine((input, context) => {
+    if (input.replacementSolutionPdfUpload && input.removeSolutionPdf) {
+      context.addIssue({
+        code: "custom",
+        message: "Không thể vừa thay vừa xóa tệp lời giải.",
+        path: ["removeSolutionPdf"],
+      });
+    }
+  });
 
 export const publishableExamSchema = z.strictObject({
   title: titleSchema,

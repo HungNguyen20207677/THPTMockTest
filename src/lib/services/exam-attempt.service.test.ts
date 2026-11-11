@@ -3191,7 +3191,8 @@ describe("ExamAttempt service", () => {
   describe("solution PDF access", () => {
     const solutionPdf = {
       publicId: "thpt-mock-test/solutions/solution.pdf",
-      secureUrl: "https://res.cloudinary.com/demo/raw/authenticated/solution.pdf",
+      secureUrl:
+        "https://res.cloudinary.com/demo/raw/authenticated/solution.pdf",
       originalFilename: "loi-giai.pdf",
     };
 

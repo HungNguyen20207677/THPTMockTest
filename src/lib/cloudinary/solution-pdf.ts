@@ -79,7 +79,9 @@ export function assertAuthenticSolutionPdfUploadReference(
   reference: ExamPdfUploadReference,
 ): void {
   if (!isExpectedPublicId(reference.publicId)) {
-    throw new ExamPdfValidationError("Thông tin tải PDF lời giải không hợp lệ.");
+    throw new ExamPdfValidationError(
+      "Thông tin tải PDF lời giải không hợp lệ.",
+    );
   }
 
   const filenameError = getExamPdfValidationError({
@@ -252,7 +254,8 @@ export async function discardSolutionPdfUpload(
   assertAuthenticSolutionPdfUploadReference(reference);
   let lastError: unknown;
   for (const delayMs of DISCARD_RETRY_DELAYS_MS) {
-    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (delayMs > 0)
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     try {
       if (await destroySolutionPdf(reference.publicId)) return;
       lastError = undefined;
@@ -267,7 +270,9 @@ export async function deleteSolutionPdf(publicId: string): Promise<void> {
   await destroySolutionPdf(publicId);
 }
 
-export async function createSolutionPdfResponse(asset: ExamPdf): Promise<Response> {
+export async function createSolutionPdfResponse(
+  asset: ExamPdf,
+): Promise<Response> {
   let upstream: Response;
   try {
     upstream = await fetch(getSignedDeliveryUrl(asset.publicId), {

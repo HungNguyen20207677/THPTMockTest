@@ -37,7 +37,8 @@ const signature = "a".repeat(40);
 const publicId =
   "thpt-mock-test/solutions/123e4567-e89b-42d3-a456-426614174000.pdf";
 const secureUrl = `https://res.cloudinary.com/test-cloud/raw/authenticated/v1234567890/${publicId}`;
-const signedUrl = "https://res.cloudinary.com/test-cloud/s--signed--/raw/authenticated/solution.pdf";
+const signedUrl =
+  "https://res.cloudinary.com/test-cloud/s--signed--/raw/authenticated/solution.pdf";
 
 function createReference(): ExamPdfUploadReference {
   return {

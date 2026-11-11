@@ -107,4 +107,32 @@ describe("pending ESSAY_IMAGE result", () => {
     expect(markup).not.toContain("Xóa ảnh");
     expect(markup).not.toContain("<input");
   });
+
+  it("renders compact review filters, question references, and pending status", () => {
+    const markup = renderToStaticMarkup(
+      <AnswerReview result={pendingResult} />,
+    );
+
+    expect(markup).toContain("Lọc câu hỏi theo kết quả");
+    expect(markup).toContain("Tất cả (2)");
+    expect(markup).toContain("Đúng (1)");
+    expect(markup).toContain("Đang chờ chấm");
+    expect(markup).toContain("Phần hỗn hợp");
+    expect(markup).toContain("Câu 1");
+    expect(markup).toContain("Tự luận hình ảnh");
+  });
+
+  it("uses neutral wording when an essay score is hidden", () => {
+    const result: StudentExamAttemptResult = {
+      ...pendingResult,
+      visibility: { score: false, answers: true },
+      gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+      objectiveScore: undefined,
+    };
+    const markup = renderToStaticMarkup(<AnswerReview result={result} />);
+
+    expect(markup).toContain("Bài tự luận đã được chấm");
+    expect(markup).toContain("Đã chấm");
+    expect(markup).not.toContain("Điểm:");
+  });
 });

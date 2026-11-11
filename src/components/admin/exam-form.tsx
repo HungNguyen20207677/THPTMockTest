@@ -295,8 +295,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [currentPdf, setCurrentPdf] = useState<ExamPdf | null>(null);
   const [solutionPdfFile, setSolutionPdfFile] = useState<File | null>(null);
-  const [currentSolutionPdf, setCurrentSolutionPdf] =
-    useState<ExamPdf | null>(null);
+  const [currentSolutionPdf, setCurrentSolutionPdf] = useState<ExamPdf | null>(
+    null,
+  );
   const [removeSolutionPdf, setRemoveSolutionPdf] = useState(false);
   const [currentUpdatedAt, setCurrentUpdatedAt] = useState<string | null>(null);
   const [initialAnswerKey, setInitialAnswerKey] =
