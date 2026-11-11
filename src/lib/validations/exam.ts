@@ -23,6 +23,7 @@ import {
   createEmptyQuestionTopicIds,
   normalizeExamQuestionTopics,
 } from "@/lib/exam/question-topics";
+import { normalizeExamSettings } from "@/lib/exam/attempt-limit";
 import { examPdfUploadReferenceSchema } from "@/lib/validations/exam-pdf";
 import { examStructureTemplateIdSchema } from "@/lib/validations/exam-structure-template";
 import { topicIdSchema } from "@/lib/validations/topic";
@@ -146,12 +147,15 @@ export function createDynamicExamAnswerKeySchema(
   });
 }
 
-export const examSettingsSchema = z.strictObject({
-  allowRetake: z.boolean(),
-  showScoreAfterSubmission: z.boolean(),
-  showAnswersAfterSubmission: z.boolean(),
-  showSolutionAfterSubmission: z.boolean().optional(),
-});
+export const examSettingsSchema = z
+  .strictObject({
+    allowRetake: z.boolean().optional(),
+    maxAttempts: z.number().int().positive().nullable().optional(),
+    showScoreAfterSubmission: z.boolean(),
+    showAnswersAfterSubmission: z.boolean(),
+    showSolutionAfterSubmission: z.boolean().optional(),
+  })
+  .transform(normalizeExamSettings);
 
 const assignedStudentIdListSchema = z
   .array(studentIdSchema)

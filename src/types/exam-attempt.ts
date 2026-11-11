@@ -184,6 +184,9 @@ export interface StudentExamSummary {
   description?: string;
   durationMinutes: number;
   allowRetake: boolean;
+  maxAttempts: number | null;
+  attemptCount: number;
+  canStartNewAttempt: boolean;
   isAvailable: boolean;
   state: StudentExamState;
   activeAttemptId?: string;

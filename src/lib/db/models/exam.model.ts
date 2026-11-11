@@ -75,6 +75,15 @@ const pdfSchema = new Schema<ExamPdf>(
 const settingsSchema = new Schema<ExamSettings>(
   {
     allowRetake: { type: Boolean, required: true },
+    maxAttempts: {
+      type: Number,
+      min: 1,
+      validate: {
+        validator: (value: number | null | undefined) =>
+          value == null || Number.isInteger(value),
+        message: "Maximum attempts must be an integer.",
+      },
+    },
     showScoreAfterSubmission: { type: Boolean, required: true },
     showAnswersAfterSubmission: { type: Boolean, required: true },
     showSolutionAfterSubmission: {

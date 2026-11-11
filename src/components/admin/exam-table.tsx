@@ -9,6 +9,7 @@ import {
 
 import { IconAction } from "@/components/shared/icon-action";
 import { EXAM_STATUSES, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
+import { resolveExamMaxAttempts } from "@/lib/exam/attempt-limit";
 import { cn } from "@/lib/utils";
 import type { ExamStatus, ExamSummary } from "@/types/exam";
 
@@ -106,9 +107,9 @@ export function ExamTable({
               : `${row.original.assignedStudentCount} học sinh`}
           </p>
           <p className="text-muted-foreground">
-            {row.original.settings.allowRetake
-              ? "Cho phép làm lại"
-              : "Không cho làm lại"}
+            {resolveExamMaxAttempts(row.original.settings) === null
+              ? "Không giới hạn lượt"
+              : `Tối đa ${resolveExamMaxAttempts(row.original.settings)} lượt`}
           </p>
         </div>
       ),

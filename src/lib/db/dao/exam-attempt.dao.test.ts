@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   connectToDatabase: vi.fn(),
+  countDocuments: vi.fn(),
   bulkWrite: vi.fn(),
   deleteMany: vi.fn(),
   find: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock("@/lib/db/mongoose", () => ({
 vi.mock("@/lib/db/models/exam-attempt.model", () => ({
   ExamAttemptModel: {
     bulkWrite: mocks.bulkWrite,
+    countDocuments: mocks.countDocuments,
     deleteMany: mocks.deleteMany,
     find: mocks.find,
     findOneAndUpdate: mocks.findOneAndUpdate,
@@ -26,6 +28,7 @@ vi.mock("@/lib/db/models/exam-attempt.model", () => ({
 import {
   attachEssayImageToOwnedActiveExamAttempt,
   autoSubmitExpiredExamAttemptRecord,
+  countExamAttemptRecordsForStudentExam,
   deleteExamAttemptRecordsByExamId,
   deleteExamAttemptRecordsByStudentId,
   listExamAttemptDeletionSources,
@@ -48,6 +51,7 @@ describe("ExamAttempt cascade DAO", () => {
   beforeEach(() => {
     mocks.connectToDatabase.mockReset();
     mocks.connectToDatabase.mockResolvedValue(undefined);
+    mocks.countDocuments.mockReset();
     mocks.bulkWrite.mockReset();
     mocks.deleteMany.mockReset();
     mocks.find.mockReset();
@@ -57,6 +61,26 @@ describe("ExamAttempt cascade DAO", () => {
     });
     mocks.init.mockReset();
     mocks.init.mockResolvedValue(undefined);
+  });
+
+  it("counts every attempt status for a student and Exam in the transaction", async () => {
+    const session = { id: "attempt-limit-session" };
+    const exec = vi.fn().mockResolvedValue(3);
+    const sessionQuery = vi.fn().mockReturnValue({ exec });
+    mocks.countDocuments.mockReturnValue({ session: sessionQuery });
+
+    await expect(
+      countExamAttemptRecordsForStudentExam(
+        "student-id",
+        "exam-id",
+        session as never,
+      ),
+    ).resolves.toBe(3);
+    expect(mocks.countDocuments).toHaveBeenCalledWith({
+      studentId: "student-id",
+      examId: "exam-id",
+    });
+    expect(sessionQuery).toHaveBeenCalledWith(session);
   });
 
   it("deletes every attempt status belonging to an Exam", async () => {

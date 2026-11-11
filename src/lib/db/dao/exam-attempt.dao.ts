@@ -380,6 +380,18 @@ export async function createExamAttemptRecord(
   return toExamAttemptRecord(attempt.toObject() as ExamAttemptDocumentData);
 }
 
+export async function countExamAttemptRecordsForStudentExam(
+  studentId: string,
+  examId: string,
+  session: ClientSession,
+): Promise<number> {
+  await prepareExamAttemptModel();
+
+  return ExamAttemptModel.countDocuments({ studentId, examId })
+    .session(session)
+    .exec();
+}
+
 export async function saveOwnedActiveExamAttemptAnswers(
   input: MutateOwnedExamAttemptInput,
 ): Promise<ExamAttemptPersistenceRecord | null> {

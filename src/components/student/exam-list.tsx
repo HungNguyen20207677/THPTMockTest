@@ -351,10 +351,14 @@ export function StudentExamList() {
                 )}
 
                 <div className="text-muted-foreground mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                  {exam.completedAttemptCount > 0 && (
-                    <span>{exam.completedAttemptCount} lượt đã hoàn thành</span>
-                  )}
-                  {exam.completedAttemptCount > 0 &&
+                  <span>
+                    {exam.attemptCount}
+                    {exam.maxAttempts === null
+                      ? ""
+                      : `/${exam.maxAttempts}`}{" "}
+                    lượt đã dùng
+                  </span>
+                  {exam.attemptCount > 0 &&
                     exam.state === STUDENT_EXAM_STATE.COMPLETED && (
                       <span aria-hidden="true">·</span>
                     )}
@@ -362,9 +366,9 @@ export function StudentExamList() {
                     <span>
                       {!exam.isAvailable
                         ? "Đề thi đã đóng"
-                        : exam.allowRetake
+                        : exam.canStartNewAttempt
                           ? "Có thể làm lại"
-                          : "Không cho phép làm lại"}
+                          : "Đã dùng hết lượt làm"}
                     </span>
                   )}
                 </div>
@@ -385,20 +389,21 @@ export function StudentExamList() {
                         <span aria-hidden="true">→</span>
                       </Button>
                     )}
-                  {exam.state === STUDENT_EXAM_STATE.NOT_STARTED && (
-                    <Button
-                      type="button"
-                      className="sm:mr-auto"
-                      onClick={(event) => {
-                        startTriggerRef.current = event.currentTarget;
-                        setStartError(null);
-                        setStartTarget(exam);
-                      }}
-                    >
-                      Bắt đầu làm bài
-                      <span aria-hidden="true">→</span>
-                    </Button>
-                  )}
+                  {exam.state === STUDENT_EXAM_STATE.NOT_STARTED &&
+                    exam.canStartNewAttempt && (
+                      <Button
+                        type="button"
+                        className="sm:mr-auto"
+                        onClick={(event) => {
+                          startTriggerRef.current = event.currentTarget;
+                          setStartError(null);
+                          setStartTarget(exam);
+                        }}
+                      >
+                        Bắt đầu làm bài
+                        <span aria-hidden="true">→</span>
+                      </Button>
+                    )}
                   {exam.state === STUDENT_EXAM_STATE.COMPLETED &&
                     exam.latestCompletedAttemptId && (
                       <Button asChild className="sm:mr-auto">
@@ -420,8 +425,7 @@ export function StudentExamList() {
                     </Button>
                   )}
                   {exam.state === STUDENT_EXAM_STATE.COMPLETED &&
-                    exam.isAvailable &&
-                    exam.allowRetake && (
+                    exam.canStartNewAttempt && (
                       <Button
                         type="button"
                         variant="outline"

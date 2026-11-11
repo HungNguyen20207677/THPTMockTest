@@ -14,6 +14,7 @@ import {
   updateExamRequestSchema,
 } from "@/lib/validations/exam";
 import { createEmptyQuestionTopicIds } from "@/lib/exam/question-topics";
+import type { ExamSettings } from "@/types/exam";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 const dynamicStructure: ExamStructureSnapshot = {
@@ -49,15 +50,17 @@ const dynamicStructure: ExamStructureSnapshot = {
 };
 
 function createValidExamInput() {
+  const settings: ExamSettings = {
+    allowRetake: true,
+    showScoreAfterSubmission: true,
+    showAnswersAfterSubmission: false,
+  };
+
   return {
     title: "Đề thi thử Toán số 1",
     description: "Đề luyện tập",
     status: EXAM_STATUS.DRAFT,
-    settings: {
-      allowRetake: true,
-      showScoreAfterSubmission: true,
-      showAnswersAfterSubmission: false,
-    },
+    settings,
     answerKey: {
       partOne: Array.from(
         { length: EXAM_STRUCTURE.partOneQuestions },
@@ -78,6 +81,43 @@ function createValidExamInput() {
 }
 
 describe("exam answer-key validation", () => {
+  it("normalizes legacy and explicit attempt limits", () => {
+    const legacyUnlimited = examUpsertSchema.parse(createValidExamInput());
+    const legacySingleInput = createValidExamInput();
+    legacySingleInput.settings.allowRetake = false;
+    const legacySingle = examUpsertSchema.parse(legacySingleInput);
+    const finiteInput = createValidExamInput();
+    finiteInput.settings = {
+      ...finiteInput.settings,
+      allowRetake: false,
+      maxAttempts: 3,
+    };
+    const finite = examUpsertSchema.parse(finiteInput);
+
+    expect(legacyUnlimited.settings).toMatchObject({
+      allowRetake: true,
+      maxAttempts: null,
+    });
+    expect(legacySingle.settings).toMatchObject({
+      allowRetake: false,
+      maxAttempts: 1,
+    });
+    expect(finite.settings).toMatchObject({
+      allowRetake: true,
+      maxAttempts: 3,
+    });
+  });
+
+  it.each([0, -1, 1.5])(
+    "rejects an invalid maximum attempt count of %s",
+    (maxAttempts) => {
+      const input = createValidExamInput();
+      input.settings = { ...input.settings, maxAttempts };
+
+      expect(examUpsertSchema.safeParse(input).success).toBe(false);
+    },
+  );
+
   it("requires keys only for auto-graded dynamic questions", () => {
     const structure: ExamStructureSnapshot = {
       sections: [

@@ -249,7 +249,11 @@ export class ExamAttemptNotFoundError extends AppError {
 
 export class ExamRetakeNotAllowedError extends AppError {
   constructor() {
-    super("Đề thi này không cho phép làm lại.", "EXAM_RETAKE_NOT_ALLOWED", 409);
+    super(
+      "Bạn đã sử dụng hết số lượt làm bài cho đề thi này.",
+      "EXAM_RETAKE_NOT_ALLOWED",
+      409,
+    );
   }
 }
 

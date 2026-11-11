@@ -47,6 +47,7 @@ import {
   areExamAnswerKeysEqual,
   isDynamicExamAnswerKey,
 } from "@/lib/exam/answer-key";
+import { resolveExamMaxAttempts } from "@/lib/exam/attempt-limit";
 import {
   createEmptyQuestionTopicIds,
   createEmptyQuestionTopics,
@@ -163,6 +164,7 @@ function createEmptyEditorValues(mode: ExamFormProps["mode"]): ExamEditorInput {
     part3InputMode: PART3_INPUT_MODE.BUBBLE,
     settings: {
       allowRetake: true,
+      maxAttempts: null,
       showScoreAfterSubmission: true,
       showAnswersAfterSubmission: false,
       showSolutionAfterSubmission: false,
@@ -208,7 +210,10 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     visibilityMode: exam.visibilityMode,
     assignedStudentIds: [...exam.assignedStudentIds],
     part3InputMode: exam.part3InputMode,
-    settings: { ...exam.settings },
+    settings: {
+      ...exam.settings,
+      maxAttempts: resolveExamMaxAttempts(exam.settings),
+    },
   };
 
   if (exam.structureSnapshot && isDynamicExamAnswerKey(exam.answerKey)) {
@@ -1740,16 +1745,46 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
             </p>
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <label
-              className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-start gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
-            >
-              <input
-                type="checkbox"
-                className="mt-0.5 size-4"
-                {...register("settings.allowRetake")}
+            <div className="border-border space-y-2 rounded-md border p-3 text-sm">
+              <Label htmlFor="exam-max-attempts">Số lần làm bài tối đa</Label>
+              <Controller
+                control={control}
+                name="settings.maxAttempts"
+                render={({ field }) => (
+                  <Input
+                    ref={field.ref}
+                    id="exam-max-attempts"
+                    name={field.name}
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={field.value ?? ""}
+                    placeholder="Không giới hạn"
+                    aria-invalid={Boolean(errors.settings?.maxAttempts)}
+                    aria-describedby="exam-max-attempts-help"
+                    onBlur={field.onBlur}
+                    onChange={(event) =>
+                      field.onChange(
+                        event.target.value === ""
+                          ? null
+                          : Number(event.target.value),
+                      )
+                    }
+                  />
+                )}
               />
-              <span>Cho phép làm lại</span>
-            </label>
+              <p
+                id="exam-max-attempts-help"
+                className="text-muted-foreground text-xs leading-5"
+              >
+                Để trống nếu không giới hạn số lượt làm.
+              </p>
+              {errors.settings?.maxAttempts && (
+                <p role="alert" className="text-destructive text-xs">
+                  Số lượt tối đa phải là số nguyên dương.
+                </p>
+              )}
+            </div>
             <label
               className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-start gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
             >

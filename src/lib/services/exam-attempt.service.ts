@@ -12,10 +12,10 @@ import { USER_ROLE } from "@/lib/constants/roles";
 import {
   attachEssayImageToOwnedActiveExamAttempt,
   autoSubmitExpiredExamAttemptRecord,
+  countExamAttemptRecordsForStudentExam,
   createExamAttemptRecord,
   findActiveExamAttemptRecord,
   findExamAttemptRecordById,
-  findLatestExamAttemptRecord,
   findOwnedExamAttemptRecord,
   listAllExamAttemptRecordsForStudent,
   removeEssayImageFromOwnedActiveExamAttempt,
@@ -482,17 +482,11 @@ export async function startOrResumeExamAttempt(
       }
     }
 
-    const latestAttempt = await findLatestExamAttemptRecord(actor.id, examId);
-
-    if (latestAttempt && !exam.allowRetake) {
-      throw new ExamRetakeNotAllowedError();
-    }
-
     const startedAt = new Date();
     const expiresAt = new Date(startedAt.getTime() + ATTEMPT_DURATION_MS);
 
     try {
-      const attempt = await withMongoTransaction(async (session) => {
+      const creation = await withMongoTransaction(async (session) => {
         if (!(await reserveExamForAttemptCreation(examId, actor.id, session))) {
           throw new ExamNotPublishedError();
         }
@@ -501,25 +495,48 @@ export async function startOrResumeExamAttempt(
           throw new ForbiddenError("Tài khoản học sinh không còn hoạt động.");
         }
 
-        return createExamAttemptRecord(
+        const reservedExam = await findStudentExamRecordById(examId, session);
+
+        if (!reservedExam || reservedExam.status !== EXAM_STATUS.PUBLISHED) {
+          throw new ExamNotPublishedError();
+        }
+
+        const attemptCount = await countExamAttemptRecordsForStudentExam(
+          actor.id,
+          examId,
+          session,
+        );
+
+        if (
+          reservedExam.maxAttempts !== null &&
+          attemptCount >= reservedExam.maxAttempts
+        ) {
+          throw new ExamRetakeNotAllowedError();
+        }
+
+        const attempt = await createExamAttemptRecord(
           {
             examId,
             studentId: actor.id,
-            attemptNumber: (latestAttempt?.attemptNumber ?? 0) + 1,
+            attemptNumber: attemptCount + 1,
             status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
             startedAt,
             expiresAt,
-            ...(exam.structureSnapshot
+            ...(reservedExam.structureSnapshot
               ? {
-                  answers: createEmptyAttemptAnswers(exam.structureSnapshot),
+                  answers: createEmptyAttemptAnswers(
+                    reservedExam.structureSnapshot,
+                  ),
                 }
               : {}),
           },
           session,
         );
+
+        return { attempt, exam: reservedExam };
       });
 
-      return toFreshAttemptContext(exam, attempt);
+      return toFreshAttemptContext(creation.exam, creation.attempt);
     } catch (error) {
       if (!isMongoDuplicateKeyError(error)) {
         throw error;
@@ -602,6 +619,7 @@ export async function listStudentExams(
     const completedAttemptCount = examAttempts.filter((attempt) =>
       isTerminalExamAttemptStatus(attempt.status),
     ).length;
+    const attemptCount = examAttempts.length;
     const latestCompletedAttempt = examAttempts
       .filter((attempt) => isTerminalExamAttemptStatus(attempt.status))
       .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
@@ -617,6 +635,12 @@ export async function listStudentExams(
       description: exam.description,
       durationMinutes: EXAM_STRUCTURE.durationMinutes,
       allowRetake: exam.allowRetake,
+      maxAttempts: exam.maxAttempts,
+      attemptCount,
+      canStartNewAttempt:
+        publishedExamIds.has(exam.id) &&
+        !activeAttempt &&
+        (exam.maxAttempts === null || attemptCount < exam.maxAttempts),
       isAvailable: publishedExamIds.has(exam.id),
       state,
       activeAttemptId: activeAttempt?.id,

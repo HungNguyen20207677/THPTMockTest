@@ -115,6 +115,7 @@ describe("Exam DAO compatibility", () => {
     expect(exam?.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
     expect(exam?.answerKeyRevision).toBe(1);
     expect(exam?.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
+    expect(exam?.settings.maxAttempts).toBeNull();
     expect(exam?.assignedStudentIds).toEqual([]);
     expect(exam?.questionTopicIds).toEqual(createEmptyQuestionTopicIds());
     expect(exam).not.toHaveProperty("structureTemplateId");
@@ -220,8 +221,26 @@ describe("Exam DAO compatibility", () => {
       expect.objectContaining({ part3InputMode: 1 }),
     );
     expect(exam?.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
+    expect(exam?.maxAttempts).toBeNull();
     expect(exam).not.toHaveProperty("answerKey");
     expect(exam).not.toHaveProperty("questionTopicIds");
+  });
+
+  it("maps a legacy non-retake Exam to one maximum attempt", async () => {
+    const select = vi.fn().mockReturnValue({
+      lean: () => ({
+        exec: () =>
+          Promise.resolve({
+            ...legacyExam,
+            settings: { ...legacyExam.settings, allowRetake: false },
+          }),
+      }),
+    });
+    mocks.findById.mockReturnValue({ select });
+
+    await expect(
+      findStudentExamRecordById("legacy-exam-id"),
+    ).resolves.toMatchObject({ allowRetake: false, maxAttempts: 1 });
   });
 
   it("scopes published Exams to legacy, all-student, or selected assignments", async () => {

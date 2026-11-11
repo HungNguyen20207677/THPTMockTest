@@ -18,6 +18,10 @@ import {
 } from "@/lib/db/models/exam.model";
 import { isMongoDuplicateKeyError } from "@/lib/db/errors";
 import { cloneExamAnswerKey } from "@/lib/exam/answer-key";
+import {
+  normalizeExamSettings,
+  resolveExamMaxAttempts,
+} from "@/lib/exam/attempt-limit";
 import { normalizeExamQuestionTopics } from "@/lib/exam/question-topics";
 import { cloneExamStructureSnapshot } from "@/lib/exam/structure";
 import type {
@@ -99,6 +103,7 @@ export interface StudentExamPersistenceRecord {
   description?: string;
   status: ExamStatus;
   allowRetake: boolean;
+  maxAttempts: number | null;
   attemptsStarted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -175,7 +180,7 @@ interface StudentExamDocumentData {
   title: string;
   description?: string;
   status: ExamStatus;
-  settings: { allowRetake: boolean };
+  settings: { allowRetake?: boolean; maxAttempts?: number | null };
   attemptsStarted?: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -362,11 +367,11 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
       : {}),
     pdf: exam.pdf,
     ...(exam.solutionPdf ? { solutionPdf: exam.solutionPdf } : {}),
-    settings: {
+    settings: normalizeExamSettings({
       ...exam.settings,
       showSolutionAfterSubmission:
         exam.settings.showSolutionAfterSubmission === true,
-    },
+    }),
     answerKey: cloneExamAnswerKey(exam.answerKey),
     questionTopicIds: toQuestionTopicIds(exam.questionTopicIds),
     ...(exam.structureSnapshot
@@ -420,12 +425,15 @@ function isStudentAssignedToExam(
 function toStudentExamRecord(
   exam: StudentExamDocumentData,
 ): StudentExamPersistenceRecord {
+  const settings = normalizeExamSettings(exam.settings);
+
   return {
     id: exam._id.toString(),
     title: exam.title,
     description: exam.description,
     status: exam.status,
-    allowRetake: exam.settings.allowRetake,
+    allowRetake: settings.allowRetake,
+    maxAttempts: resolveExamMaxAttempts(settings),
     attemptsStarted: exam.attemptsStarted === true,
     createdAt: exam.createdAt,
     updatedAt: exam.updatedAt,
@@ -539,6 +547,7 @@ export async function listPublishedStudentExamRecords(
       description: 1,
       status: 1,
       "settings.allowRetake": 1,
+      "settings.maxAttempts": 1,
       attemptsStarted: 1,
       createdAt: 1,
       updatedAt: 1,
@@ -581,6 +590,7 @@ export async function listStudentExamRecordsByIds(
       description: 1,
       status: 1,
       "settings.allowRetake": 1,
+      "settings.maxAttempts": 1,
       visibilityMode: 1,
       assignedStudentIds: 1,
       attemptsStarted: 1,
@@ -599,25 +609,30 @@ export async function listStudentExamRecordsByIds(
 
 export async function findStudentExamRecordById(
   examId: string,
+  session?: ClientSession,
 ): Promise<StudentExamWorkspacePersistenceRecord | null> {
   await prepareExamModel();
 
-  const exam = await ExamModel.findById(examId)
-    .select({
-      title: 1,
-      description: 1,
-      status: 1,
-      "settings.allowRetake": 1,
-      part3InputMode: 1,
-      structureSnapshot: 1,
-      attemptsStarted: 1,
-      "pdf.secureUrl": 1,
-      "pdf.originalFilename": 1,
-      createdAt: 1,
-      updatedAt: 1,
-    })
-    .lean<StudentExamWorkspaceDocumentData>()
-    .exec();
+  let query = ExamModel.findById(examId).select({
+    title: 1,
+    description: 1,
+    status: 1,
+    "settings.allowRetake": 1,
+    "settings.maxAttempts": 1,
+    part3InputMode: 1,
+    structureSnapshot: 1,
+    attemptsStarted: 1,
+    "pdf.secureUrl": 1,
+    "pdf.originalFilename": 1,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+
+  if (session) {
+    query = query.session(session);
+  }
+
+  const exam = await query.lean<StudentExamWorkspaceDocumentData>().exec();
 
   return exam ? toStudentExamWorkspaceRecord(exam) : null;
 }

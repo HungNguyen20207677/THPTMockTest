@@ -56,6 +56,7 @@ export interface ExamQuestionTopic {
 
 export interface ExamSettings {
   allowRetake: boolean;
+  maxAttempts?: number | null;
   showScoreAfterSubmission: boolean;
   showAnswersAfterSubmission: boolean;
   showSolutionAfterSubmission?: boolean;
