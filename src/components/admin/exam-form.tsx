@@ -165,6 +165,7 @@ function createEmptyEditorValues(mode: ExamFormProps["mode"]): ExamEditorInput {
       allowRetake: true,
       showScoreAfterSubmission: true,
       showAnswersAfterSubmission: false,
+      showSolutionAfterSubmission: false,
     },
   };
 
@@ -293,6 +294,10 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const router = useRouter();
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [currentPdf, setCurrentPdf] = useState<ExamPdf | null>(null);
+  const [solutionPdfFile, setSolutionPdfFile] = useState<File | null>(null);
+  const [currentSolutionPdf, setCurrentSolutionPdf] =
+    useState<ExamPdf | null>(null);
+  const [removeSolutionPdf, setRemoveSolutionPdf] = useState(false);
   const [currentUpdatedAt, setCurrentUpdatedAt] = useState<string | null>(null);
   const [initialAnswerKey, setInitialAnswerKey] =
     useState<AnyExamAnswerKey | null>(null);
@@ -323,6 +328,9 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
   const [topicLoadVersion, setTopicLoadVersion] = useState(0);
   const [pendingTopicCreations, setPendingTopicCreations] = useState(0);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [solutionFileError, setSolutionFileError] = useState<string | null>(
+    null,
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [pendingAnswerKeyCorrection, setPendingAnswerKeyCorrection] =
@@ -449,6 +457,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
         if (isCurrent) {
           reset(toEditorValues(exam));
           setCurrentPdf(exam.pdf);
+          setCurrentSolutionPdf(exam.solutionPdf ?? null);
           setCurrentUpdatedAt(exam.updatedAt);
           setInitialAnswerKey(exam.answerKey);
           setInitialPart3InputMode(exam.part3InputMode);
@@ -645,6 +654,26 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
     return true;
   }
 
+  function handleSolutionPdfChange(file: File | undefined): boolean {
+    if (!file) {
+      setSolutionPdfFile(null);
+      setSolutionFileError(null);
+      return true;
+    }
+
+    const validationError = getExamPdfValidationError(file);
+    if (validationError) {
+      setSolutionPdfFile(null);
+      setSolutionFileError(validationError);
+      return false;
+    }
+
+    setSolutionPdfFile(file);
+    setRemoveSolutionPdf(false);
+    setSolutionFileError(null);
+    return true;
+  }
+
   function setPartThreeTextAnswerValidity(
     questionIndex: number,
     isValid: boolean,
@@ -704,7 +733,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
 
     try {
       if (mode === "create" && pdfFile) {
-        await createExamRecord(input, pdfFile);
+        await createExamRecord(input, pdfFile, solutionPdfFile ?? undefined);
       } else if (mode === "edit" && examId && currentUpdatedAt) {
         const updateInput =
           "structureTemplateId" in input
@@ -718,6 +747,8 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
           { ...updateInput, expectedUpdatedAt: currentUpdatedAt },
           pdfFile ?? undefined,
           confirmAnswerKeyCorrection,
+          solutionPdfFile ?? undefined,
+          removeSolutionPdf,
         );
       } else {
         throw new Error("Invalid exam form state.");
@@ -1436,6 +1467,83 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                   {fileError}
                 </p>
               )}
+              <div className="border-border mt-5 space-y-2 border-t pt-5">
+                <Label htmlFor="solution-pdf">
+                  {currentSolutionPdf
+                    ? "Thay tệp lời giải PDF"
+                    : "Tệp lời giải PDF (không bắt buộc)"}
+                </Label>
+                <Input
+                  id="solution-pdf"
+                  type="file"
+                  className="cursor-pointer"
+                  accept="application/pdf,.pdf"
+                  aria-invalid={Boolean(solutionFileError)}
+                  aria-describedby={
+                    solutionFileError
+                      ? "solution-pdf-error"
+                      : "solution-pdf-help"
+                  }
+                  onChange={(event) => {
+                    if (!handleSolutionPdfChange(event.target.files?.[0])) {
+                      event.currentTarget.value = "";
+                    }
+                  }}
+                />
+                <p
+                  id="solution-pdf-help"
+                  className="text-muted-foreground text-xs"
+                >
+                  Chỉ nhận PDF, tối đa 15 MB. Tệp được bảo vệ và chỉ phân phối
+                  sau khi hệ thống kiểm tra quyền truy cập.
+                </p>
+                {currentSolutionPdf && !removeSolutionPdf && (
+                  <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <a
+                      className="text-primary underline underline-offset-4"
+                      href={`/api/admin/exams/${examId}/solution`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {currentSolutionPdf.originalFilename}
+                    </a>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setRemoveSolutionPdf(true);
+                        setSolutionPdfFile(null);
+                      }}
+                    >
+                      Xóa lời giải
+                    </Button>
+                  </div>
+                )}
+                {removeSolutionPdf && (
+                  <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <span className="text-muted-foreground">
+                      Tệp lời giải sẽ bị xóa khi lưu.
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setRemoveSolutionPdf(false)}
+                    >
+                      Hoàn tác
+                    </Button>
+                  </div>
+                )}
+                {solutionFileError && (
+                  <p
+                    id="solution-pdf-error"
+                    className="text-destructive text-sm"
+                  >
+                    {solutionFileError}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         </section>
@@ -1630,7 +1738,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 : "Hai cách nhập dùng cùng quy tắc 4 ô và cùng cách chấm điểm."}
             </p>
           </div>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label
               className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-start gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
             >
@@ -1660,6 +1768,16 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 {...register("settings.showAnswersAfterSubmission")}
               />
               <span>Hiện đáp án sau khi nộp</span>
+            </label>
+            <label
+              className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-start gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
+            >
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4"
+                {...register("settings.showSolutionAfterSubmission")}
+              />
+              <span>Cho xem lời giải sau khi nộp</span>
             </label>
           </div>
         </section>

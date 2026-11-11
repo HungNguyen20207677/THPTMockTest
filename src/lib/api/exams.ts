@@ -16,16 +16,19 @@ import type {
   ExamPdfUploadReference,
   ExamPdfUploadTicket,
   ExamSummary,
+  SolutionPdfUploadTicket,
 } from "@/types/exam";
 
 const EXAMS_ENDPOINT = "/api/admin/exams";
 const PDF_ENDPOINT = `${EXAMS_ENDPOINT}/pdf`;
 const PDF_SIGNATURE_ENDPOINT = `${PDF_ENDPOINT}/signature`;
+const SOLUTION_PDF_ENDPOINT = `${EXAMS_ENDPOINT}/solution-pdf`;
+const SOLUTION_PDF_SIGNATURE_ENDPOINT = `${SOLUTION_PDF_ENDPOINT}/signature`;
 
 const cloudinaryPdfUploadResponseSchema = z.object({
   public_id: z.string(),
   resource_type: z.literal("raw"),
-  type: z.literal("upload"),
+  type: z.enum(["upload", "authenticated"]),
   bytes: z.number().int().positive().max(EXAM_PDF_MAX_BYTES),
   secure_url: z.url().refine((url) => url.startsWith("https://")),
   placeholder: z.boolean().optional(),
@@ -93,9 +96,13 @@ function getCloudinaryUploadErrorMessage(
 
 async function discardUploadedExamPdf(
   reference: ExamPdfUploadReference,
+  isSolution = false,
 ): Promise<void> {
   try {
-    await apiRequest<void>(PDF_ENDPOINT, jsonRequest("DELETE", reference));
+    await apiRequest<void>(
+      isSolution ? SOLUTION_PDF_ENDPOINT : PDF_ENDPOINT,
+      jsonRequest("DELETE", reference),
+    );
   } catch {
     // A cleanup failure must not hide the original upload or save error.
   }
@@ -103,6 +110,7 @@ async function discardUploadedExamPdf(
 
 async function uploadExamPdfDirectly(
   file: File,
+  isSolution = false,
 ): Promise<ExamPdfUploadReference> {
   const validationError = getExamPdfValidationError(file);
 
@@ -115,9 +123,11 @@ async function uploadExamPdfDirectly(
   }
 
   const ticketResponse = await apiRequest<
-    ApiSuccessResponse<{ upload: ExamPdfUploadTicket }>
+    ApiSuccessResponse<{
+      upload: ExamPdfUploadTicket | SolutionPdfUploadTicket;
+    }>
   >(
-    PDF_SIGNATURE_ENDPOINT,
+    isSolution ? SOLUTION_PDF_SIGNATURE_ENDPOINT : PDF_SIGNATURE_ENDPOINT,
     jsonRequest("POST", {
       name: file.name,
       type: file.type,
@@ -149,7 +159,7 @@ async function uploadExamPdfDirectly(
       body: uploadBody,
     });
   } catch {
-    await discardUploadedExamPdf(reference);
+    await discardUploadedExamPdf(reference, isSolution);
 
     throw new ApiClientError(
       "Không thể tải tệp PDF lên Cloudinary. Vui lòng thử lại.",
@@ -161,7 +171,7 @@ async function uploadExamPdfDirectly(
   const responsePayload = await readJsonResponse(response);
 
   if (!response.ok) {
-    await discardUploadedExamPdf(reference);
+    await discardUploadedExamPdf(reference, isSolution);
 
     throw new ApiClientError(
       getCloudinaryUploadErrorMessage(response.status, responsePayload),
@@ -177,9 +187,10 @@ async function uploadExamPdfDirectly(
     !parsedUpload.success ||
     parsedUpload.data.public_id !== reference.publicId ||
     parsedUpload.data.bytes !== file.size ||
+    parsedUpload.data.type !== (isSolution ? "authenticated" : "upload") ||
     parsedUpload.data.placeholder === true
   ) {
-    await discardUploadedExamPdf(reference);
+    await discardUploadedExamPdf(reference, isSolution);
 
     throw new ApiClientError(
       "Cloudinary trả về thông tin tệp PDF không hợp lệ.",
@@ -206,16 +217,30 @@ export function fetchExam(
 export async function createExamRecord(
   input: CreateExamInput,
   pdf: File,
+  solutionPdf?: File,
 ): Promise<ApiSuccessResponse<{ exam: ExamDetail }>> {
   const pdfUpload = await uploadExamPdfDirectly(pdf);
+  let solutionPdfUpload: ExamPdfUploadReference | undefined;
+
+  try {
+    solutionPdfUpload = solutionPdf
+      ? await uploadExamPdfDirectly(solutionPdf, true)
+      : undefined;
+  } catch (error) {
+    await discardUploadedExamPdf(pdfUpload);
+    throw error;
+  }
 
   try {
     return await apiRequest(
       EXAMS_ENDPOINT,
-      jsonRequest("POST", { exam: input, pdfUpload }),
+      jsonRequest("POST", { exam: input, pdfUpload, solutionPdfUpload }),
     );
   } catch (error) {
     await discardUploadedExamPdf(pdfUpload);
+    if (solutionPdfUpload) {
+      await discardUploadedExamPdf(solutionPdfUpload, true);
+    }
 
     throw error;
   }
@@ -226,9 +251,14 @@ export async function updateExamRecord(
   input: UpdateExamInput,
   replacementPdf?: File,
   confirmAnswerKeyCorrection = false,
+  replacementSolutionPdf?: File,
+  removeSolutionPdf = false,
 ): Promise<ApiSuccessResponse<{ exam: ExamDetail }>> {
   const replacementPdfUpload = replacementPdf
     ? await uploadExamPdfDirectly(replacementPdf)
+    : undefined;
+  const replacementSolutionPdfUpload = replacementSolutionPdf
+    ? await uploadExamPdfDirectly(replacementSolutionPdf, true)
     : undefined;
 
   try {
@@ -237,12 +267,17 @@ export async function updateExamRecord(
       jsonRequest("PATCH", {
         exam: input,
         replacementPdfUpload,
+        replacementSolutionPdfUpload,
+        removeSolutionPdf: removeSolutionPdf || undefined,
         confirmAnswerKeyCorrection: confirmAnswerKeyCorrection || undefined,
       }),
     );
   } catch (error) {
     if (replacementPdfUpload) {
       await discardUploadedExamPdf(replacementPdfUpload);
+    }
+    if (replacementSolutionPdfUpload) {
+      await discardUploadedExamPdf(replacementSolutionPdfUpload, true);
     }
 
     throw error;

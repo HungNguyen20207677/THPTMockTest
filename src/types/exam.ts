@@ -58,6 +58,7 @@ export interface ExamSettings {
   allowRetake: boolean;
   showScoreAfterSubmission: boolean;
   showAnswersAfterSubmission: boolean;
+  showSolutionAfterSubmission?: boolean;
 }
 
 export interface ExamPdf {
@@ -89,6 +90,22 @@ export interface ExamPdfUploadReference {
   signature: string;
 }
 
+export interface SolutionPdfSignedUploadFields {
+  timestamp: string;
+  public_id: string;
+  overwrite: "0";
+  allowed_formats: "pdf";
+  filename_override: string;
+  type: "authenticated";
+}
+
+export interface SolutionPdfUploadTicket {
+  uploadUrl: string;
+  apiKey: string;
+  signature: string;
+  fields: SolutionPdfSignedUploadFields;
+}
+
 export interface ExamSummary {
   id: string;
   title: string;
@@ -107,6 +124,7 @@ export interface ExamDetail extends ExamSummary {
   part3InputMode: Part3InputMode;
   shortAnswerInputMode?: Part3InputMode;
   pdf: ExamPdf;
+  solutionPdf?: ExamPdf;
   answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
   questionTopics?: ExamQuestionTopic[];

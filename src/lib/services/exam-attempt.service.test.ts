@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   setOwnedTerminalExamAttemptGradingForRevision: vi.fn(),
   submitOwnedActiveExamAttempt: vi.fn(),
   findExamGradingRecordById: vi.fn(),
+  findExamRecordById: vi.fn(),
   findStudentExamRecordById: vi.fn(),
   isPublishedExamAvailableToStudent: vi.fn(),
   listPublishedStudentExamRecords: vi.fn(),
@@ -59,6 +60,7 @@ vi.mock("@/lib/cloudinary/essay-image", () => ({
 
 vi.mock("@/lib/db/dao/exam.dao", () => ({
   findExamGradingRecordById: mocks.findExamGradingRecordById,
+  findExamRecordById: mocks.findExamRecordById,
   findStudentExamRecordById: mocks.findStudentExamRecordById,
   isPublishedExamAvailableToStudent: mocks.isPublishedExamAvailableToStudent,
   listPublishedStudentExamRecords: mocks.listPublishedStudentExamRecords,
@@ -108,6 +110,7 @@ import {
   finalizeExpiredExamAttempt,
   getOwnedExamAttemptContext,
   getStudentExamAttemptResult,
+  getStudentExamAttemptSolutionPdf,
   listStudentExams,
   issueEssayImageUploadTicket,
   removeEssayImage,
@@ -452,6 +455,7 @@ describe("ExamAttempt service", () => {
 
     mocks.findStudentExamRecordById.mockResolvedValue(createStudentExam());
     mocks.findExamGradingRecordById.mockResolvedValue(createGradingExam());
+    mocks.findExamRecordById.mockResolvedValue(null);
     mocks.findActiveExamAttemptRecord.mockResolvedValue(null);
     mocks.findLatestExamAttemptRecord.mockResolvedValue(null);
     mocks.findExamAttemptRecordById.mockResolvedValue(null);
@@ -3181,6 +3185,92 @@ describe("ExamAttempt service", () => {
           ],
         }),
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+  });
+
+  describe("solution PDF access", () => {
+    const solutionPdf = {
+      publicId: "thpt-mock-test/solutions/solution.pdf",
+      secureUrl: "https://res.cloudinary.com/demo/raw/authenticated/solution.pdf",
+      originalFilename: "loi-giai.pdf",
+    };
+
+    it("allows the owner after submission when both visibility settings permit it", async () => {
+      mocks.findOwnedExamAttemptRecord.mockResolvedValue(
+        createAttempt({
+          status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+          submittedAt: serverNow,
+        }),
+      );
+      mocks.findExamRecordById.mockResolvedValue({
+        settings: {
+          showAnswersAfterSubmission: true,
+          showSolutionAfterSubmission: true,
+        },
+        solutionPdf,
+      });
+
+      await expect(
+        getStudentExamAttemptSolutionPdf(student, "exam-id", "attempt-id"),
+      ).resolves.toEqual(solutionPdf);
+    });
+
+    it("rejects non-owners and hidden solutions", async () => {
+      mocks.findOwnedExamAttemptRecord.mockResolvedValueOnce(null);
+      await expect(
+        getStudentExamAttemptSolutionPdf(student, "exam-id", "attempt-id"),
+      ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_NOT_FOUND" });
+
+      mocks.findOwnedExamAttemptRecord.mockResolvedValue(
+        createAttempt({
+          status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+          submittedAt: serverNow,
+        }),
+      );
+      mocks.findExamRecordById.mockResolvedValue({
+        settings: {
+          showAnswersAfterSubmission: false,
+          showSolutionAfterSubmission: true,
+        },
+        solutionPdf,
+      });
+
+      await expect(
+        getStudentExamAttemptSolutionPdf(student, "exam-id", "attempt-id"),
+      ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_RESULT_UNAVAILABLE" });
+    });
+
+    it("adds availability without leaking solution metadata in result JSON", async () => {
+      const answers = createEmptyAttemptAnswers();
+      const terminalAttempt = createAttempt({
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        submittedAt: serverNow,
+        answers,
+        grading: gradeAttemptAnswers(answers, createAnswerKey()),
+        gradedAt: serverNow,
+      });
+      const gradingExam = createGradingExam({
+        settings: {
+          showScoreAfterSubmission: true,
+          showAnswersAfterSubmission: true,
+          showSolutionAfterSubmission: true,
+        },
+        solutionPdf,
+      });
+      mocks.findOwnedExamAttemptRecord.mockResolvedValue(terminalAttempt);
+      mocks.findExamGradingRecordById.mockResolvedValue(gradingExam);
+
+      const result = await getStudentExamAttemptResult(
+        student,
+        "exam-id",
+        terminalAttempt.id,
+      );
+      const serialized = JSON.stringify(result);
+
+      expect(result.solutionAvailable).toBe(true);
+      expect(serialized).not.toContain(solutionPdf.publicId);
+      expect(serialized).not.toContain(solutionPdf.secureUrl);
+      expect(serialized).not.toContain(solutionPdf.originalFilename);
     });
   });
 });

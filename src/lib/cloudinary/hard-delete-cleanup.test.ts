@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   deleteEssayImage: vi.fn(),
   deleteExamPdf: vi.fn(),
+  deleteSolutionPdf: vi.fn(),
 }));
 
 vi.mock("@/lib/cloudinary/essay-image", () => ({
@@ -11,6 +12,10 @@ vi.mock("@/lib/cloudinary/essay-image", () => ({
 
 vi.mock("@/lib/cloudinary/exam-pdf", () => ({
   deleteExamPdf: mocks.deleteExamPdf,
+}));
+
+vi.mock("@/lib/cloudinary/solution-pdf", () => ({
+  deleteSolutionPdf: mocks.deleteSolutionPdf,
 }));
 
 import {
@@ -25,6 +30,8 @@ describe("Cloudinary hard-delete cleanup", () => {
     mocks.deleteEssayImage.mockResolvedValue(undefined);
     mocks.deleteExamPdf.mockReset();
     mocks.deleteExamPdf.mockResolvedValue(undefined);
+    mocks.deleteSolutionPdf.mockReset();
+    mocks.deleteSolutionPdf.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -35,12 +42,14 @@ describe("Cloudinary hard-delete cleanup", () => {
     const result = await cleanupCloudinaryAfterHardDelete({
       essayImagePublicIds: ["image-1", "image-1", "image-2"],
       examPdfPublicId: "exam-pdf",
+      solutionPdfPublicId: "solution-pdf",
     });
 
     expect(mocks.deleteEssayImage).toHaveBeenCalledTimes(2);
     expect(mocks.deleteEssayImage).toHaveBeenCalledWith("image-1");
     expect(mocks.deleteEssayImage).toHaveBeenCalledWith("image-2");
     expect(mocks.deleteExamPdf).toHaveBeenCalledWith("exam-pdf");
+    expect(mocks.deleteSolutionPdf).toHaveBeenCalledWith("solution-pdf");
     expect(
       Math.max(...mocks.deleteEssayImage.mock.invocationCallOrder),
     ).toBeLessThan(mocks.deleteExamPdf.mock.invocationCallOrder[0]!);

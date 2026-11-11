@@ -93,4 +93,5 @@ export const EXAM_SCORING_HUNDREDTHS = {
 export const EXAM_PDF_MAX_BYTES = 15 * 1024 * 1024;
 export const EXAM_PDF_MIME_TYPE = "application/pdf";
 export const EXAM_PDF_CLOUDINARY_FOLDER = "thpt-mock-test/exams";
+export const SOLUTION_PDF_CLOUDINARY_FOLDER = "thpt-mock-test/solutions";
 export const EXAM_PDF_UPLOAD_SIGNATURE_MAX_AGE_SECONDS = 10 * 60;

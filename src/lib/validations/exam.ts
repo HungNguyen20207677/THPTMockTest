@@ -150,6 +150,7 @@ export const examSettingsSchema = z.strictObject({
   allowRetake: z.boolean(),
   showScoreAfterSubmission: z.boolean(),
   showAnswersAfterSubmission: z.boolean(),
+  showSolutionAfterSubmission: z.boolean().optional(),
 });
 
 const assignedStudentIdListSchema = z
@@ -344,6 +345,7 @@ export const examUpsertSchema = z.union([
 export const createExamRequestSchema = z.strictObject({
   exam: examUpsertSchema,
   pdfUpload: examPdfUploadReferenceSchema,
+  solutionPdfUpload: examPdfUploadReferenceSchema.optional(),
 });
 
 export const updateExamSchema = z
@@ -383,7 +385,17 @@ export const updateExamSchema = z
 export const updateExamRequestSchema = z.strictObject({
   exam: updateExamSchema,
   replacementPdfUpload: examPdfUploadReferenceSchema.optional(),
+  replacementSolutionPdfUpload: examPdfUploadReferenceSchema.optional(),
+  removeSolutionPdf: z.boolean().optional().default(false),
   confirmAnswerKeyCorrection: z.literal(true).optional(),
+}).superRefine((input, context) => {
+  if (input.replacementSolutionPdfUpload && input.removeSolutionPdf) {
+    context.addIssue({
+      code: "custom",
+      message: "Không thể vừa thay vừa xóa tệp lời giải.",
+      path: ["removeSolutionPdf"],
+    });
+  }
 });
 
 export const publishableExamSchema = z.strictObject({

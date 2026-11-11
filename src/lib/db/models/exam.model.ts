@@ -44,6 +44,7 @@ export interface ExamRecord {
   structureTemplateId?: Types.ObjectId;
   structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
+  solutionPdf?: ExamPdf;
   settings: ExamSettings;
   answerKey: AnyExamAnswerKey;
   questionTopicIds: LegacyExamQuestionTopicObjectIds;
@@ -76,6 +77,11 @@ const settingsSchema = new Schema<ExamSettings>(
     allowRetake: { type: Boolean, required: true },
     showScoreAfterSubmission: { type: Boolean, required: true },
     showAnswersAfterSubmission: { type: Boolean, required: true },
+    showSolutionAfterSubmission: {
+      type: Boolean,
+      required: true,
+      default: false,
+    },
   },
   { _id: false },
 );
@@ -199,6 +205,7 @@ const examSchema = new Schema<ExamRecord>(
       immutable: true,
     },
     pdf: { type: pdfSchema, required: true },
+    solutionPdf: { type: pdfSchema, required: false },
     settings: { type: settingsSchema, required: true },
     answerKey: {
       type: Schema.Types.Mixed,
@@ -272,6 +279,10 @@ const examSchema = new Schema<ExamRecord>(
 examSchema.index({ createdAt: -1 });
 examSchema.index({ assignedStudentIds: 1 });
 examSchema.index({ "pdf.publicId": 1 }, { unique: true });
+examSchema.index(
+  { "solutionPdf.publicId": 1 },
+  { unique: true, sparse: true },
+);
 examSchema.index({ "questionTopicIds.partOne": 1 });
 examSchema.index({ "questionTopicIds.partTwo": 1 });
 examSchema.index({ "questionTopicIds.partThree": 1 });

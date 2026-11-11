@@ -43,6 +43,7 @@ export interface ExamPersistenceRecord {
   structureTemplateId?: string;
   structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
+  solutionPdf?: ExamPdf;
   settings: ExamSettings;
   answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
@@ -64,6 +65,7 @@ export interface SaveExamRecordInput {
   structureTemplateId?: string;
   structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
+  solutionPdf?: ExamPdf;
   settings: ExamSettings;
   answerKey: AnyExamAnswerKey;
   questionTopicIds: ExamQuestionTopicIds;
@@ -77,6 +79,7 @@ export interface UpdateExamMetadataRecordInput {
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   settings: ExamSettings;
+  solutionPdf?: ExamPdf;
   questionTopicIds: ExamQuestionTopicIds;
   questionTopics?: ExamQuestionTopic[];
 }
@@ -120,8 +123,11 @@ export interface ExamGradingPersistenceRecord {
   structureSnapshot?: ExamStructureSnapshot;
   settings: Pick<
     ExamSettings,
-    "showScoreAfterSubmission" | "showAnswersAfterSubmission"
+    | "showScoreAfterSubmission"
+    | "showAnswersAfterSubmission"
+    | "showSolutionAfterSubmission"
   >;
+  solutionPdf?: ExamPdf;
   questionTopicIds?: ExamQuestionTopicIds;
   questionTopics?: ExamQuestionTopic[];
 }
@@ -152,6 +158,7 @@ interface ExamDocumentData {
   structureTemplateId?: Types.ObjectId;
   structureSnapshot?: ExamStructureSnapshot;
   pdf: ExamPdf;
+  solutionPdf?: ExamPdf;
   settings: ExamSettings;
   answerKey: AnyExamAnswerKey;
   questionTopicIds?: ExamQuestionTopicDocumentData;
@@ -194,8 +201,11 @@ interface ExamGradingDocumentData {
   structureSnapshot?: ExamStructureSnapshot;
   settings: Pick<
     ExamSettings,
-    "showScoreAfterSubmission" | "showAnswersAfterSubmission"
+    | "showScoreAfterSubmission"
+    | "showAnswersAfterSubmission"
+    | "showSolutionAfterSubmission"
   >;
+  solutionPdf?: ExamPdf;
   questionTopicIds?: ExamQuestionTopicDocumentData;
   questionTopics?: DynamicExamQuestionTopicDocumentData[];
 }
@@ -351,7 +361,12 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
         }
       : {}),
     pdf: exam.pdf,
-    settings: exam.settings,
+    ...(exam.solutionPdf ? { solutionPdf: exam.solutionPdf } : {}),
+    settings: {
+      ...exam.settings,
+      showSolutionAfterSubmission:
+        exam.settings.showSolutionAfterSubmission === true,
+    },
     answerKey: cloneExamAnswerKey(exam.answerKey),
     questionTopicIds: toQuestionTopicIds(exam.questionTopicIds),
     ...(exam.structureSnapshot
@@ -449,7 +464,12 @@ function toExamGradingRecord(
           structureSnapshot: cloneExamStructureSnapshot(exam.structureSnapshot),
         }
       : {}),
-    settings: exam.settings,
+    settings: {
+      ...exam.settings,
+      showSolutionAfterSubmission:
+        exam.settings.showSolutionAfterSubmission === true,
+    },
+    ...(exam.solutionPdf ? { solutionPdf: exam.solutionPdf } : {}),
     ...(exam.questionTopicIds
       ? { questionTopicIds: toQuestionTopicIds(exam.questionTopicIds) }
       : {}),
@@ -671,6 +691,8 @@ export async function reserveExamForAttemptGrading(
       structureSnapshot: 1,
       "settings.showScoreAfterSubmission": 1,
       "settings.showAnswersAfterSubmission": 1,
+      "settings.showSolutionAfterSubmission": 1,
+      solutionPdf: 1,
       questionTopicIds: 1,
       questionTopics: 1,
     })
@@ -694,6 +716,8 @@ export async function findExamGradingRecordById(
       structureSnapshot: 1,
       "settings.showScoreAfterSubmission": 1,
       "settings.showAnswersAfterSubmission": 1,
+      "settings.showSolutionAfterSubmission": 1,
+      solutionPdf: 1,
     })
     .lean<ExamGradingDocumentData>()
     .exec();
@@ -774,6 +798,18 @@ export async function findExamRecordByPdfPublicId(
   return exam ? toExamRecord(exam) : null;
 }
 
+export async function findExamRecordBySolutionPdfPublicId(
+  publicId: string,
+): Promise<ExamPersistenceRecord | null> {
+  await prepareExamModel();
+
+  const exam = await ExamModel.findOne({ "solutionPdf.publicId": publicId })
+    .lean<ExamDocumentData>()
+    .exec();
+
+  return exam ? toExamRecord(exam) : null;
+}
+
 export async function createExamRecord(
   input: SaveExamRecordInput,
   createdBy: string,
@@ -794,15 +830,23 @@ export async function updateExamRecord(
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();
 
-  const { description, ...requiredFields } = input;
+  const { description, solutionPdf, ...requiredFields } = input;
   const requiredFieldsWithRevision = {
     ...requiredFields,
     answerKeyRevision,
   };
-  const update =
-    description === undefined
-      ? { $set: requiredFieldsWithRevision, $unset: { description: 1 } }
-      : { $set: { ...input, answerKeyRevision } };
+  const unset = {
+    ...(description === undefined ? { description: 1 } : {}),
+    ...(solutionPdf === undefined ? { solutionPdf: 1 } : {}),
+  };
+  const update = {
+    $set: {
+      ...requiredFieldsWithRevision,
+      ...(description !== undefined ? { description } : {}),
+      ...(solutionPdf !== undefined ? { solutionPdf } : {}),
+    },
+    ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+  };
 
   const exam = await ExamModel.findOneAndUpdate(
     {
@@ -829,15 +873,23 @@ export async function updateExamAnswerKeyRecord(
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();
 
-  const { description, ...requiredFields } = input;
+  const { description, solutionPdf, ...requiredFields } = input;
   const requiredFieldsWithRevision = {
     ...requiredFields,
     answerKeyRevision: nextAnswerKeyRevision,
   };
-  const update =
-    description === undefined
-      ? { $set: requiredFieldsWithRevision, $unset: { description: 1 } }
-      : { $set: { ...input, answerKeyRevision: nextAnswerKeyRevision } };
+  const unset = {
+    ...(description === undefined ? { description: 1 } : {}),
+    ...(solutionPdf === undefined ? { solutionPdf: 1 } : {}),
+  };
+  const update = {
+    $set: {
+      ...requiredFieldsWithRevision,
+      ...(description !== undefined ? { description } : {}),
+      ...(solutionPdf !== undefined ? { solutionPdf } : {}),
+    },
+    ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+  };
 
   const exam = await ExamModel.findOneAndUpdate(
     {
@@ -862,11 +914,19 @@ export async function updateExamMetadataRecord(
 ): Promise<ExamPersistenceRecord | null> {
   await prepareExamModel();
 
-  const { description, ...requiredFields } = input;
-  const update =
-    description === undefined
-      ? { $set: requiredFields, $unset: { description: 1 } }
-      : { $set: input };
+  const { description, solutionPdf, ...requiredFields } = input;
+  const unset = {
+    ...(description === undefined ? { description: 1 } : {}),
+    ...(solutionPdf === undefined ? { solutionPdf: 1 } : {}),
+  };
+  const update = {
+    $set: {
+      ...requiredFields,
+      ...(description !== undefined ? { description } : {}),
+      ...(solutionPdf !== undefined ? { solutionPdf } : {}),
+    },
+    ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+  };
 
   const exam = await ExamModel.findOneAndUpdate(
     { _id: examId, updatedAt: expectedUpdatedAt },

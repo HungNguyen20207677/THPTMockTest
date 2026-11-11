@@ -242,6 +242,7 @@ export interface StudentExamAttemptResult {
     answers: boolean;
   };
   gradingStatus: ExamAttemptGradingStatus;
+  solutionAvailable?: boolean;
   objectiveScore?: {
     earned: number;
     maximum: number;

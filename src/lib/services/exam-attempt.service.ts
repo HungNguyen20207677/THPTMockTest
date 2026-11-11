@@ -32,6 +32,7 @@ import {
 } from "@/lib/cloudinary/essay-image";
 import {
   findExamGradingRecordById,
+  findExamRecordById,
   findStudentExamRecordById,
   isPublishedExamAvailableToStudent,
   listPublishedStudentExamRecords,
@@ -110,6 +111,7 @@ import type {
   PartOneAnswer,
   PartTwoAnswer,
   ShortAnswerSlots,
+  ExamPdf,
 } from "@/types/exam";
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 import type { AppUser } from "@/types/user";
@@ -1522,6 +1524,11 @@ export function buildExamAttemptResult(
     },
     visibility,
     gradingStatus,
+    ...(visibility.answers &&
+    exam.settings.showSolutionAfterSubmission &&
+    exam.solutionPdf
+      ? { solutionAvailable: true }
+      : {}),
   };
 
   if (!grading || grading.answerKeyRevision !== exam.answerKeyRevision) {
@@ -1744,4 +1751,29 @@ export async function getStudentExamAttemptResult(
     score: graded.exam.settings.showScoreAfterSubmission,
     answers: graded.exam.settings.showAnswersAfterSubmission,
   });
+}
+
+export async function getStudentExamAttemptSolutionPdf(
+  actor: AppUser,
+  examId: string,
+  attemptId: string,
+): Promise<ExamPdf> {
+  assertStudent(actor);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const resolvedAttempt = await resolveAttemptExpiration(attempt, new Date());
+
+  if (!isTerminalExamAttemptStatus(resolvedAttempt.status)) {
+    throw new ExamAttemptResultUnavailableError();
+  }
+
+  const exam = await findExamRecordById(examId);
+  if (
+    !exam?.solutionPdf ||
+    !exam.settings.showAnswersAfterSubmission ||
+    !exam.settings.showSolutionAfterSubmission
+  ) {
+    throw new ExamAttemptResultUnavailableError();
+  }
+
+  return exam.solutionPdf;
 }

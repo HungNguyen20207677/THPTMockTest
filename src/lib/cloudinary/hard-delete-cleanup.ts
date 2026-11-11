@@ -2,6 +2,7 @@ import "server-only";
 
 import { deleteEssayImage } from "@/lib/cloudinary/essay-image";
 import { deleteExamPdf } from "@/lib/cloudinary/exam-pdf";
+import { deleteSolutionPdf } from "@/lib/cloudinary/solution-pdf";
 import type { HardDeleteResult } from "@/types/deletion";
 
 const CLEANUP_RETRY_DELAYS_MS = [0, 100, 500] as const;
@@ -10,7 +11,7 @@ const ESSAY_IMAGE_CLEANUP_CONCURRENCY = 4;
 export const HARD_DELETE_CLEANUP_WARNING =
   "Dữ liệu đã được xóa khỏi hệ thống nhưng một số tệp trên Cloudinary chưa thể xóa. Vui lòng kiểm tra log hoặc thử dọn dẹp lại.";
 
-type CloudinaryResourceType = "essay-image" | "exam-pdf";
+type CloudinaryResourceType = "essay-image" | "exam-pdf" | "solution-pdf";
 
 interface CleanupFailure {
   resourceType: CloudinaryResourceType;
@@ -60,6 +61,7 @@ async function deleteWithRetry(
 export async function cleanupCloudinaryAfterHardDelete(input: {
   essayImagePublicIds: string[];
   examPdfPublicId?: string;
+  solutionPdfPublicId?: string;
 }): Promise<HardDeleteResult> {
   const essayImagePublicIds = [...new Set(input.essayImagePublicIds)];
   const failures: CleanupFailure[] = [];
@@ -95,6 +97,14 @@ export async function cleanupCloudinaryAfterHardDelete(input: {
     const pdfPublicId = input.examPdfPublicId;
     const failure = await deleteWithRetry("exam-pdf", pdfPublicId, () =>
       deleteExamPdf(pdfPublicId),
+    );
+    if (failure) failures.push(failure);
+  }
+
+  if (input.solutionPdfPublicId) {
+    const publicId = input.solutionPdfPublicId;
+    const failure = await deleteWithRetry("solution-pdf", publicId, () =>
+      deleteSolutionPdf(publicId),
     );
     if (failure) failures.push(failure);
   }

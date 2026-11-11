@@ -29,7 +29,12 @@ export async function POST(request: Request) {
   try {
     const admin = await requireApiRole(USER_ROLE.ADMIN);
     const input = await parseJsonRequest(request, createExamRequestSchema);
-    const exam = await createExam(admin, input.exam, input.pdfUpload);
+    const exam = await createExam(
+      admin,
+      input.exam,
+      input.pdfUpload,
+      input.solutionPdfUpload,
+    );
     const response = {
       data: { exam },
     } satisfies ApiSuccessResponse<{ exam: ExamDetail }>;

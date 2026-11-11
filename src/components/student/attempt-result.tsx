@@ -582,6 +582,26 @@ export function AttemptResult({ examId, attemptId }: AttemptResultProps) {
       <ScoreSummary result={result} />
       <PendingGradingSummary result={result} />
 
+      {result.solutionAvailable && (
+        <section className="border-primary/20 bg-primary/5 flex flex-wrap items-center justify-between gap-4 rounded-xl border p-5">
+          <div>
+            <h2 className="font-semibold">Lời giải chi tiết</h2>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Mở tệp PDF lời giải do quản trị viên cung cấp.
+            </p>
+          </div>
+          <Button asChild>
+            <a
+              href={`/api/student/exams/${examId}/attempts/${attemptId}/solution`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Xem lời giải chi tiết
+            </a>
+          </Button>
+        </section>
+      )}
+
       {!result.visibility.score && !result.visibility.answers && (
         <div className="border-border bg-muted/50 rounded-xl border p-6 text-center text-sm leading-6">
           Bài làm đã được ghi nhận. Kết quả hiện chưa được công bố.
