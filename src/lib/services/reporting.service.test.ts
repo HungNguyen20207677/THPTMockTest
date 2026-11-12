@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   listTerminalExamAttemptRecords: vi.fn(),
   countExamRecords: vi.fn(),
   findExamReportingRecordById: vi.fn(),
+  findExamAssignmentReportingRecordById: vi.fn(),
   findExamReportingRecordsByIds: vi.fn(),
   isPublishedExamAvailableToStudent: vi.fn(),
   findTopicRecordsByIds: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   countStudentUsers: vi.fn(),
   findStudentUsersByIds: vi.fn(),
   findUserById: vi.fn(),
+  getExamAssignmentCompletionPage: vi.fn(),
   buildExamAttemptResult: vi.fn(),
   ensureTerminalAttemptGrading: vi.fn(),
   isTerminalExamAttemptStatus: vi.fn(),
@@ -37,6 +39,8 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
 vi.mock("@/lib/db/dao/exam.dao", () => ({
   countExamRecords: mocks.countExamRecords,
   findExamReportingRecordById: mocks.findExamReportingRecordById,
+  findExamAssignmentReportingRecordById:
+    mocks.findExamAssignmentReportingRecordById,
   findExamReportingRecordsByIds: mocks.findExamReportingRecordsByIds,
   isPublishedExamAvailableToStudent: mocks.isPublishedExamAvailableToStudent,
 }));
@@ -57,6 +61,7 @@ vi.mock("@/lib/db/dao/user.dao", () => ({
   countStudentUsers: mocks.countStudentUsers,
   findStudentUsersByIds: mocks.findStudentUsersByIds,
   findUserById: mocks.findUserById,
+  getExamAssignmentCompletionPage: mocks.getExamAssignmentCompletionPage,
 }));
 
 vi.mock("@/lib/services/exam-attempt.service", () => ({
@@ -70,7 +75,7 @@ import {
   EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
 } from "@/lib/constants/exam-attempt";
-import { EXAM_STATUS } from "@/lib/constants/exam";
+import { EXAM_STATUS, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import { USER_ROLE } from "@/lib/constants/roles";
 import type { ExamAttemptPersistenceRecord } from "@/lib/db/dao/exam-attempt.dao";
@@ -82,6 +87,7 @@ import {
   getAdminAttemptDetail,
   getAdminDashboardSummary,
   getAdminExamResults,
+  getAdminExamAssignmentCompletion,
   getAdminStudentDetail,
   getStudentExamAttemptHistory,
   getStudentTopicPerformance,
@@ -425,6 +431,24 @@ describe("reporting service", () => {
     mocks.findLatestExamAttemptRecord.mockResolvedValue(null);
     mocks.findUserById.mockResolvedValue(createStudent());
     mocks.findExamReportingRecordById.mockResolvedValue(createExam());
+    mocks.findExamAssignmentReportingRecordById.mockResolvedValue({
+      id: "exam-id",
+      title: "Đề thi thử Toán số 1",
+      status: EXAM_STATUS.PUBLISHED,
+      assignmentDueAt: null,
+      visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
+      assignedStudentIds: [],
+    });
+    mocks.getExamAssignmentCompletionPage.mockResolvedValue({
+      students: [],
+      totals: {
+        assigned: 0,
+        completed: 0,
+        inProgress: 0,
+        notStarted: 0,
+        overdue: 0,
+      },
+    });
     mocks.isPublishedExamAvailableToStudent.mockResolvedValue(true);
     mocks.findExamReportingRecordsByIds.mockImplementation(
       (examIds: string[]) =>
@@ -477,6 +501,170 @@ describe("reporting service", () => {
       statusCode: 403,
     });
     expect(mocks.listExpiredExamAttemptRecords).not.toHaveBeenCalled();
+  });
+
+  it("rejects student access to assignment completion data", async () => {
+    await expect(
+      getAdminExamAssignmentCompletion(studentActor, "exam-id", {
+        page: 1,
+        pageSize: 20,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(mocks.findExamAssignmentReportingRecordById).not.toHaveBeenCalled();
+    expect(mocks.getExamAssignmentCompletionPage).not.toHaveBeenCalled();
+  });
+
+  it("returns paginated completion without exposing scores or other attempt data", async () => {
+    const assignmentDueAt = new Date("2026-08-11T02:00:00.000Z");
+    mocks.findExamAssignmentReportingRecordById.mockResolvedValue({
+      id: "exam-id",
+      title: "Đề thi thử Toán số 1",
+      status: EXAM_STATUS.PUBLISHED,
+      assignmentDueAt,
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+      assignedStudentIds: ["student-1", "student-2", "student-3"],
+    });
+    mocks.getExamAssignmentCompletionPage.mockResolvedValue({
+      students: [
+        {
+          studentId: "student-1",
+          username: "student1",
+          fullName: "Hoc Sinh 1",
+          isActive: true,
+          completionStatus: "COMPLETED",
+          isOverdue: false,
+          firstCompletion: {
+            attemptId: "attempt-submitted",
+            attemptNumber: 1,
+            status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+            submittedAt: new Date("2026-08-11T01:59:00.000Z"),
+          },
+        },
+        {
+          studentId: "student-2",
+          username: "student2",
+          fullName: "Hoc Sinh 2",
+          isActive: false,
+          completionStatus: "COMPLETED",
+          isOverdue: false,
+          firstCompletion: {
+            attemptId: "attempt-auto-submitted",
+            attemptNumber: 2,
+            status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+            submittedAt: new Date("2026-08-11T02:01:00.000Z"),
+          },
+        },
+        {
+          studentId: "student-3",
+          username: "student3",
+          fullName: "Hoc Sinh 3",
+          isActive: true,
+          completionStatus: "IN_PROGRESS",
+          isOverdue: true,
+          firstCompletion: null,
+        },
+      ],
+      totals: {
+        assigned: 3,
+        completed: 2,
+        inProgress: 1,
+        notStarted: 0,
+        overdue: 1,
+      },
+    });
+
+    const result = await getAdminExamAssignmentCompletion(admin, "exam-id", {
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(mocks.getExamAssignmentCompletionPage).toHaveBeenCalledWith({
+      examId: "exam-id",
+      visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
+      assignedStudentIds: ["student-1", "student-2", "student-3"],
+      assignmentDueAt,
+      now,
+      page: 1,
+      pageSize: 20,
+    });
+    expect(result.totals).toEqual({
+      assigned: 3,
+      completed: 2,
+      inProgress: 1,
+      notStarted: 0,
+      overdue: 1,
+    });
+    expect(result.students[0].firstCompletion?.timeliness).toBe("ON_TIME");
+    expect(result.students[1].firstCompletion?.timeliness).toBe("LATE");
+    expect(result.students[1].firstCompletion?.status).toBe(
+      EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+    );
+    expect(result.students[0]).not.toHaveProperty("score");
+    expect(result.students[0]).not.toHaveProperty("answers");
+    expect(result.pagination).toEqual({
+      page: 1,
+      pageSize: 20,
+      totalItems: 3,
+      totalPages: 1,
+    });
+  });
+
+  it("reclassifies completion against the current edited deadline", async () => {
+    mocks.getExamAssignmentCompletionPage.mockResolvedValue({
+      students: [
+        {
+          studentId: "student-1",
+          username: "student1",
+          fullName: "Hoc Sinh 1",
+          isActive: true,
+          completionStatus: "COMPLETED",
+          isOverdue: false,
+          firstCompletion: {
+            attemptId: "attempt-id",
+            attemptNumber: 1,
+            status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+            submittedAt: new Date("2026-08-11T02:00:00.000Z"),
+          },
+        },
+      ],
+      totals: {
+        assigned: 1,
+        completed: 1,
+        inProgress: 0,
+        notStarted: 0,
+        overdue: 0,
+      },
+    });
+    mocks.findExamAssignmentReportingRecordById
+      .mockResolvedValueOnce({
+        id: "exam-id",
+        title: "Exam",
+        status: EXAM_STATUS.PUBLISHED,
+        assignmentDueAt: new Date("2026-08-11T01:00:00.000Z"),
+        visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
+        assignedStudentIds: [],
+      })
+      .mockResolvedValueOnce({
+        id: "exam-id",
+        title: "Exam",
+        status: EXAM_STATUS.PUBLISHED,
+        assignmentDueAt: new Date("2026-08-11T03:00:00.000Z"),
+        visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
+        assignedStudentIds: [],
+      });
+
+    const beforeEdit = await getAdminExamAssignmentCompletion(
+      admin,
+      "exam-id",
+      { page: 1, pageSize: 20 },
+    );
+    const afterEdit = await getAdminExamAssignmentCompletion(admin, "exam-id", {
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(beforeEdit.students[0].firstCompletion?.timeliness).toBe("LATE");
+    expect(afterEdit.students[0].firstCompletion?.timeliness).toBe("ON_TIME");
   });
 
   it("reconciles expired attempts before returning dashboard counts", async () => {

@@ -47,6 +47,13 @@ function createCompletedExam(
     completedAttemptCount: 2,
     createdAt: "2026-11-11T00:00:00.000Z",
     ...overrides,
+    assignmentDueAt: overrides.assignmentDueAt ?? null,
+    assignmentCompletionStatus:
+      overrides.assignmentCompletionStatus ?? "COMPLETED",
+    assignmentCompletedAt:
+      overrides.assignmentCompletedAt ?? "2026-11-11T00:30:00.000Z",
+    assignmentTimeliness: overrides.assignmentTimeliness ?? null,
+    isAssignmentOverdue: overrides.isAssignmentOverdue ?? false,
   };
 }
 
@@ -151,5 +158,37 @@ describe("Student Exam list attempt limits", () => {
     expect(
       screen.getByRole("button", { name: /Tiếp tục làm bài/ }),
     ).toBeTruthy();
+  });
+
+  it("shows an overdue deadline without disabling an otherwise eligible start", async () => {
+    mocks.fetchStudentExams.mockResolvedValue({
+      data: {
+        exams: [
+          createCompletedExam({
+            state: STUDENT_EXAM_STATE.NOT_STARTED,
+            latestCompletedAttemptId: undefined,
+            completedAttemptCount: 0,
+            attemptCount: 0,
+            canStartNewAttempt: true,
+            assignmentDueAt: "2026-11-10T01:00:00.000Z",
+            assignmentCompletionStatus: "NOT_STARTED",
+            assignmentCompletedAt: null,
+            isAssignmentOverdue: true,
+          }),
+        ],
+        serverTime: "2026-11-11T01:00:00.000Z",
+      },
+    });
+
+    render(<StudentExamList />);
+
+    expect((await screen.findByText(/Hạn hoàn thành/)).textContent).toContain(
+      "Quá hạn",
+    );
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: /Bắt đầu làm bài/,
+      }).disabled,
+    ).toBe(false);
   });
 });

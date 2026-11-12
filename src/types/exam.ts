@@ -118,6 +118,7 @@ export interface ExamSummary {
   assignedStudentCount: number;
   availableFrom: string | null;
   availableUntil: string | null;
+  assignmentDueAt: string | null;
   availabilityState: ExamAvailabilityState;
   settings: ExamSettings;
   hasAttempts: boolean;

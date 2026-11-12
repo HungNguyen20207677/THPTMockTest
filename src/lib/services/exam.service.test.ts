@@ -344,13 +344,19 @@ function createStoredExam(
   overrides: Partial<ExamPersistenceRecord> = {},
 ): ExamPersistenceRecord {
   const input = createValidInput();
-  const { availableFrom, availableUntil, ...inputWithoutAvailability } = input;
+  const {
+    availableFrom,
+    availableUntil,
+    assignmentDueAt,
+    ...inputWithoutAvailability
+  } = input;
 
   return {
     id: "exam-id",
     ...inputWithoutAvailability,
     availableFrom: availableFrom ? new Date(availableFrom) : null,
     availableUntil: availableUntil ? new Date(availableUntil) : null,
+    assignmentDueAt: assignmentDueAt ? new Date(assignmentDueAt) : null,
     pdf: oldPdf,
     answerKeyRevision: 1,
     createdBy: admin.id,
@@ -509,11 +515,12 @@ describe("exam service", () => {
     expect(mocks.createExamRecord).not.toHaveBeenCalled();
   });
 
-  it("persists ADMIN availability timestamps as UTC Dates", async () => {
+  it("persists ADMIN availability and deadline timestamps as UTC Dates", async () => {
     const input: UpsertExamInput = {
       ...createValidInput(),
       availableFrom: "2026-11-12T01:00:00.000Z",
       availableUntil: "2026-11-12T03:00:00.000Z",
+      assignmentDueAt: "2026-11-12T05:00:00.000Z",
     };
     mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
     mocks.createExamRecord.mockImplementation(
@@ -527,6 +534,7 @@ describe("exam service", () => {
       expect.objectContaining({
         availableFrom: new Date(input.availableFrom!),
         availableUntil: new Date(input.availableUntil!),
+        assignmentDueAt: new Date(input.assignmentDueAt!),
       }),
       admin.id,
       mocks.transactionSession,
@@ -534,6 +542,7 @@ describe("exam service", () => {
     expect(result).toMatchObject({
       availableFrom: input.availableFrom,
       availableUntil: input.availableUntil,
+      assignmentDueAt: input.assignmentDueAt,
     });
   });
 
@@ -716,6 +725,9 @@ describe("exam service", () => {
           : null,
         availableUntil: input.availableUntil
           ? new Date(input.availableUntil)
+          : null,
+        assignmentDueAt: input.assignmentDueAt
+          ? new Date(input.assignmentDueAt)
           : null,
         pdf: newPdf,
       }),
@@ -1781,6 +1793,7 @@ describe("exam service", () => {
         status: input.status,
         availableFrom: null,
         availableUntil: null,
+        assignmentDueAt: null,
         visibilityMode: input.visibilityMode,
         assignedStudentIds: input.assignedStudentIds,
         settings: input.settings,
@@ -1807,38 +1820,73 @@ describe("exam service", () => {
     expect(mocks.replaceTerminalExamAttemptGradings).not.toHaveBeenCalled();
   });
 
-  it("updates availability after attempts without changing historical attempts", async () => {
+  it("updates availability and deadline after attempts without changing historical attempts", async () => {
     const currentExam = createStoredExam({ attemptsStarted: true });
     const availableFrom = "2026-11-12T01:00:00.000Z";
     const availableUntil = "2026-11-12T03:00:00.000Z";
+    const assignmentDueAt = "2026-11-12T05:00:00.000Z";
     const input: UpdateExamInput = {
       ...createValidInput(),
       availableFrom,
       availableUntil,
+      assignmentDueAt,
       expectedUpdatedAt: currentExam.updatedAt.toISOString(),
     };
     const updatedExam = createStoredExam({
       attemptsStarted: true,
       availableFrom: new Date(availableFrom),
       availableUntil: new Date(availableUntil),
+      assignmentDueAt: new Date(assignmentDueAt),
     });
     mocks.findExamRecordById.mockResolvedValue(currentExam);
     mocks.updateExamMetadataRecord.mockResolvedValue(updatedExam);
 
     const result = await editExam(admin, currentExam.id, input);
 
-    expect(result).toMatchObject({ availableFrom, availableUntil });
+    expect(result).toMatchObject({
+      availableFrom,
+      availableUntil,
+      assignmentDueAt,
+    });
     expect(mocks.updateExamMetadataRecord).toHaveBeenCalledWith(
       currentExam.id,
       expect.objectContaining({
         availableFrom: new Date(availableFrom),
         availableUntil: new Date(availableUntil),
+        assignmentDueAt: new Date(assignmentDueAt),
       }),
       currentExam.updatedAt,
       mocks.transactionSession,
     );
     expect(mocks.updateExamRecord).not.toHaveBeenCalled();
     expect(mocks.updateExamAnswerKeyRecord).not.toHaveBeenCalled();
+  });
+
+  it("clears a deadline after attempts without modifying attempts", async () => {
+    const currentExam = createStoredExam({
+      attemptsStarted: true,
+      assignmentDueAt: new Date("2026-11-12T05:00:00.000Z"),
+    });
+    const input: UpdateExamInput = {
+      ...createValidInput(),
+      assignmentDueAt: null,
+      expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+    };
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.updateExamMetadataRecord.mockResolvedValue(
+      createStoredExam({ attemptsStarted: true, assignmentDueAt: null }),
+    );
+
+    const result = await editExam(admin, currentExam.id, input);
+
+    expect(result.assignmentDueAt).toBeNull();
+    expect(mocks.updateExamMetadataRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      expect.objectContaining({ assignmentDueAt: null }),
+      currentExam.updatedAt,
+      mocks.transactionSession,
+    );
+    expect(mocks.listTerminalExamAttemptRegradeSources).not.toHaveBeenCalled();
   });
 
   it("updates dynamic Topics as metadata after attempts without changing grading revision", async () => {

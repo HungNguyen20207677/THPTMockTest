@@ -266,6 +266,7 @@ const examBaseFields = {
   status: examStatusSchema,
   availableFrom: optionalExamDateSchema,
   availableUntil: optionalExamDateSchema,
+  assignmentDueAt: optionalExamDateSchema,
   part3InputMode: part3InputModeSchema,
   settings: examSettingsSchema,
 };

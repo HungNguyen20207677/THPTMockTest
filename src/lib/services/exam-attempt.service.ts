@@ -648,6 +648,27 @@ export async function listStudentExams(
     const latestCompletedAttempt = examAttempts
       .filter((attempt) => isTerminalExamAttemptStatus(attempt.status))
       .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
+    const firstCompletedAttempt = examAttempts
+      .filter(
+        (attempt) =>
+          isTerminalExamAttemptStatus(attempt.status) && attempt.submittedAt,
+      )
+      .sort(
+        (left, right) =>
+          left.submittedAt!.getTime() - right.submittedAt!.getTime() ||
+          left.attemptNumber - right.attemptNumber,
+      )[0];
+    const assignmentCompletionStatus =
+      completedAttemptCount > 0
+        ? "COMPLETED"
+        : activeAttempt
+          ? "IN_PROGRESS"
+          : "NOT_STARTED";
+    const isAssignmentOverdue = Boolean(
+      exam.assignmentDueAt &&
+      serverNow.getTime() > exam.assignmentDueAt.getTime() &&
+      completedAttemptCount === 0,
+    );
     const state = activeAttempt
       ? STUDENT_EXAM_STATE.IN_PROGRESS
       : completedAttemptCount > 0
@@ -661,6 +682,18 @@ export async function listStudentExams(
       durationMinutes: EXAM_STRUCTURE.durationMinutes,
       availableFrom: exam.availableFrom?.toISOString() ?? null,
       availableUntil: exam.availableUntil?.toISOString() ?? null,
+      assignmentDueAt: exam.assignmentDueAt?.toISOString() ?? null,
+      assignmentCompletionStatus,
+      assignmentCompletedAt:
+        firstCompletedAttempt?.submittedAt?.toISOString() ?? null,
+      assignmentTimeliness:
+        firstCompletedAttempt?.submittedAt && exam.assignmentDueAt
+          ? firstCompletedAttempt.submittedAt.getTime() <=
+            exam.assignmentDueAt.getTime()
+            ? "ON_TIME"
+            : "LATE"
+          : null,
+      isAssignmentOverdue,
       availabilityState,
       allowRetake: exam.allowRetake,
       maxAttempts: exam.maxAttempts,

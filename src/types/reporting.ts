@@ -81,6 +81,32 @@ export interface AdminResultList {
   pagination: PaginationMetadata;
 }
 
+export interface AdminExamAssignmentCompletionPage {
+  exam: ReportingExamIdentity & {
+    assignmentDueAt: string | null;
+  };
+  totals: {
+    assigned: number;
+    completed: number;
+    inProgress: number;
+    notStarted: number;
+    overdue: number;
+  };
+  students: Array<{
+    student: ReportingStudentIdentity;
+    completionStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
+    isOverdue: boolean;
+    firstCompletion: {
+      attemptId: string;
+      attemptNumber: number;
+      status: Exclude<ExamAttemptStatus, "IN_PROGRESS">;
+      submittedAt: string;
+      timeliness: "ON_TIME" | "LATE" | null;
+    } | null;
+  }>;
+  pagination: PaginationMetadata;
+}
+
 export interface AdminAttemptDetail {
   student: ReportingStudentIdentity | null;
   exam: ReportingExamIdentity | null;

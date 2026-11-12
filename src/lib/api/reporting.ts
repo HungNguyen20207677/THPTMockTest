@@ -5,6 +5,7 @@ import type {
   AdminAttemptDetail,
   AdminDashboardSummary,
   AdminExamResults,
+  AdminExamAssignmentCompletionPage,
   AdminResultList,
   AdminStudentDetail,
 } from "@/types/reporting";
@@ -70,4 +71,14 @@ export function fetchAdminExamResults(
   examId: string,
 ): Promise<ApiSuccessResponse<{ report: AdminExamResults }>> {
   return apiRequest(`/api/admin/exams/${examId}/results`);
+}
+
+export function fetchAdminExamAssignmentCompletion(
+  examId: string,
+  page = 1,
+  pageSize = 20,
+): Promise<ApiSuccessResponse<{ report: AdminExamAssignmentCompletionPage }>> {
+  return apiRequest(
+    `/api/admin/exams/${examId}/completions${toQueryString({ page, pageSize })}`,
+  );
 }

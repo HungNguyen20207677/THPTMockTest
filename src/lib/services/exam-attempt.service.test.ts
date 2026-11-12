@@ -3110,6 +3110,65 @@ describe("ExamAttempt service", () => {
     );
   });
 
+  it("reports deadline completion separately from F.4 and F.5 controls", async () => {
+    const overdueExam = createStudentExam({
+      id: "overdue-exam",
+      assignmentDueAt: new Date(serverNow.getTime() - 60_000),
+    });
+    const completedExam = createStudentExam({
+      id: "completed-after-deadline",
+      assignmentDueAt: new Date(serverNow.getTime() - 120_000),
+    });
+    const retakeExam = createStudentExam({
+      id: "active-retake",
+      assignmentDueAt: new Date(serverNow.getTime() + 60_000),
+    });
+    mocks.listPublishedStudentExamRecords.mockResolvedValue([
+      overdueExam,
+      completedExam,
+      retakeExam,
+    ]);
+    mocks.listAllExamAttemptRecordsForStudent.mockResolvedValue([
+      createAttempt({
+        id: "late-auto-submission",
+        examId: completedExam.id,
+        status: EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
+        submittedAt: new Date(serverNow.getTime() - 60_000),
+      }),
+      createAttempt({
+        id: "completed-before-retake",
+        examId: retakeExam.id,
+        status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+        submittedAt: new Date(serverNow.getTime() - 60_000),
+      }),
+      createAttempt({
+        id: "retake-in-progress",
+        examId: retakeExam.id,
+        attemptNumber: 2,
+      }),
+    ]);
+
+    const result = await listStudentExams(student);
+    const byId = new Map(result.exams.map((exam) => [exam.id, exam]));
+
+    expect(byId.get(overdueExam.id)).toMatchObject({
+      assignmentCompletionStatus: "NOT_STARTED",
+      isAssignmentOverdue: true,
+      canStartNewAttempt: true,
+    });
+    expect(byId.get(completedExam.id)).toMatchObject({
+      assignmentCompletionStatus: "COMPLETED",
+      assignmentTimeliness: "LATE",
+      isAssignmentOverdue: false,
+    });
+    expect(byId.get(retakeExam.id)).toMatchObject({
+      state: STUDENT_EXAM_STATE.IN_PROGRESS,
+      assignmentCompletionStatus: "COMPLETED",
+      assignmentTimeliness: "ON_TIME",
+      isAssignmentOverdue: false,
+    });
+  });
+
   it("reports finite attempt exhaustion from every created attempt", async () => {
     const finiteExam = createStudentExam({
       id: "finite-exam",

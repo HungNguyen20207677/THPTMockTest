@@ -187,6 +187,11 @@ export interface StudentExamSummary {
   durationMinutes: number;
   availableFrom: string | null;
   availableUntil: string | null;
+  assignmentDueAt: string | null;
+  assignmentCompletionStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
+  assignmentCompletedAt: string | null;
+  assignmentTimeliness: "ON_TIME" | "LATE" | null;
+  isAssignmentOverdue: boolean;
   availabilityState: ExamAvailabilityState;
   allowRetake: boolean;
   maxAttempts: number | null;

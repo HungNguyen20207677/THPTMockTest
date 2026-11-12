@@ -43,6 +43,7 @@ export interface ExamPersistenceRecord {
   status: ExamStatus;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
+  assignmentDueAt?: Date | null;
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
@@ -67,6 +68,7 @@ export interface SaveExamRecordInput {
   status: ExamStatus;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
+  assignmentDueAt?: Date | null;
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
@@ -86,6 +88,7 @@ export interface UpdateExamMetadataRecordInput {
   status: ExamStatus;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
+  assignmentDueAt?: Date | null;
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   settings: ExamSettings;
@@ -110,6 +113,7 @@ export interface StudentExamPersistenceRecord {
   status: ExamStatus;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
+  assignmentDueAt?: Date | null;
   allowRetake: boolean;
   maxAttempts: number | null;
   attemptsStarted: boolean;
@@ -149,6 +153,15 @@ export interface ExamReportingPersistenceRecord extends ExamGradingPersistenceRe
   questionTopicIds: ExamQuestionTopicIds;
 }
 
+export interface ExamAssignmentReportingPersistenceRecord {
+  id: string;
+  title: string;
+  status: ExamStatus;
+  assignmentDueAt: Date | null;
+  visibilityMode: ExamVisibilityMode;
+  assignedStudentIds: string[];
+}
+
 interface ExamQuestionTopicDocumentData {
   partOne?: Types.ObjectId[][];
   partTwo?: Types.ObjectId[][];
@@ -167,6 +180,7 @@ interface ExamDocumentData {
   status: ExamStatus;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
+  assignmentDueAt?: Date | null;
   visibilityMode?: ExamVisibilityMode;
   assignedStudentIds?: Types.ObjectId[];
   part3InputMode?: Part3InputMode;
@@ -192,6 +206,7 @@ interface StudentExamDocumentData {
   status: ExamStatus;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
+  assignmentDueAt?: Date | null;
   settings: { allowRetake?: boolean; maxAttempts?: number | null };
   attemptsStarted?: boolean;
   createdAt: Date;
@@ -368,6 +383,7 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     status: exam.status,
     availableFrom: exam.availableFrom ?? null,
     availableUntil: exam.availableUntil ?? null,
+    assignmentDueAt: exam.assignmentDueAt ?? null,
     visibilityMode,
     assignedStudentIds,
     part3InputMode: exam.part3InputMode ?? PART3_INPUT_MODE.BUBBLE,
@@ -448,6 +464,7 @@ function toStudentExamRecord(
     status: exam.status,
     availableFrom: exam.availableFrom ?? null,
     availableUntil: exam.availableUntil ?? null,
+    assignmentDueAt: exam.assignmentDueAt ?? null,
     allowRetake: settings.allowRetake,
     maxAttempts: resolveExamMaxAttempts(settings),
     attemptsStarted: exam.attemptsStarted === true,
@@ -564,6 +581,7 @@ export async function listPublishedStudentExamRecords(
       status: 1,
       availableFrom: 1,
       availableUntil: 1,
+      assignmentDueAt: 1,
       "settings.allowRetake": 1,
       "settings.maxAttempts": 1,
       attemptsStarted: 1,
@@ -609,6 +627,7 @@ export async function listStudentExamRecordsByIds(
       status: 1,
       availableFrom: 1,
       availableUntil: 1,
+      assignmentDueAt: 1,
       "settings.allowRetake": 1,
       "settings.maxAttempts": 1,
       visibilityMode: 1,
@@ -639,6 +658,7 @@ export async function findStudentExamRecordById(
     status: 1,
     availableFrom: 1,
     availableUntil: 1,
+    assignmentDueAt: 1,
     "settings.allowRetake": 1,
     "settings.maxAttempts": 1,
     part3InputMode: 1,
@@ -782,6 +802,44 @@ export async function findExamReportingRecordById(
     .exec();
 
   return exam ? toExamReportingRecord(exam) : null;
+}
+
+export async function findExamAssignmentReportingRecordById(
+  examId: string,
+): Promise<ExamAssignmentReportingPersistenceRecord | null> {
+  await prepareExamModel();
+
+  const exam = await ExamModel.findById(examId)
+    .select({
+      title: 1,
+      status: 1,
+      assignmentDueAt: 1,
+      visibilityMode: 1,
+      assignedStudentIds: 1,
+    })
+    .lean<ExamDocumentData>()
+    .exec();
+
+  if (!exam) {
+    return null;
+  }
+
+  const visibilityMode =
+    exam.visibilityMode ?? EXAM_VISIBILITY_MODE.ALL_STUDENTS;
+
+  return {
+    id: exam._id.toString(),
+    title: exam.title,
+    status: exam.status,
+    assignmentDueAt: exam.assignmentDueAt ?? null,
+    visibilityMode,
+    assignedStudentIds:
+      visibilityMode === EXAM_VISIBILITY_MODE.SELECTED_STUDENTS
+        ? (exam.assignedStudentIds ?? []).map((studentId) =>
+            studentId.toString(),
+          )
+        : [],
+  };
 }
 
 export async function findExamReportingRecordsByIds(

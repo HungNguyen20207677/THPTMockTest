@@ -40,6 +40,7 @@ export interface ExamRecord {
   status: ExamStatus;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
+  assignmentDueAt?: Date | null;
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: Types.ObjectId[];
   part3InputMode: Part3InputMode;
@@ -192,6 +193,7 @@ const examSchema = new Schema<ExamRecord>(
     },
     availableFrom: { type: Date, default: null },
     availableUntil: { type: Date, default: null },
+    assignmentDueAt: { type: Date, default: null },
     visibilityMode: {
       type: String,
       enum: EXAM_VISIBILITY_MODES,

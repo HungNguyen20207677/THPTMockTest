@@ -21,6 +21,7 @@ import {
   countExamRecords,
   findExamReportingRecordById,
   findExamReportingRecordsByIds,
+  findExamAssignmentReportingRecordById,
   isPublishedExamAvailableToStudent,
   type ExamReportingPersistenceRecord,
 } from "@/lib/db/dao/exam.dao";
@@ -31,6 +32,7 @@ import {
   countStudentUsers,
   findStudentUsersByIds,
   findUserById,
+  getExamAssignmentCompletionPage,
   type UserAccountRecord,
 } from "@/lib/db/dao/user.dao";
 import {
@@ -78,6 +80,7 @@ import type {
   AdminAttemptDetail,
   AdminDashboardSummary,
   AdminExamResults,
+  AdminExamAssignmentCompletionPage,
   AdminResultList,
   AdminResultSummary,
   AdminStudentDetail,
@@ -457,6 +460,67 @@ export async function listAdminResults(
       toAdminResultSummary(attempt, studentMap, examMap),
     ),
     pagination: toPaginationMetadata(query, page.totalItems),
+  };
+}
+
+export async function getAdminExamAssignmentCompletion(
+  actor: AppUser,
+  examId: string,
+  query: PaginationQuery,
+): Promise<AdminExamAssignmentCompletionPage> {
+  assertAdmin(actor);
+  const now = new Date();
+  const [exam, assignment] = await Promise.all([
+    findExamReportingRecordById(examId),
+    findExamAssignmentReportingRecordById(examId),
+  ]);
+
+  if (!exam || !assignment) {
+    throw new ExamNotFoundError();
+  }
+
+  await reconcileExpiredAttempts(now, { examId }, exam);
+  const page = await getExamAssignmentCompletionPage({
+    examId,
+    visibilityMode: assignment.visibilityMode,
+    assignedStudentIds: assignment.assignedStudentIds,
+    assignmentDueAt: assignment.assignmentDueAt,
+    now,
+    page: query.page,
+    pageSize: query.pageSize,
+  });
+
+  return {
+    exam: {
+      ...toExamIdentity(assignment),
+      assignmentDueAt: assignment.assignmentDueAt?.toISOString() ?? null,
+    },
+    totals: page.totals,
+    students: page.students.map((item) => ({
+      student: {
+        id: item.studentId,
+        username: item.username,
+        fullName: item.fullName,
+        isActive: item.isActive,
+      },
+      completionStatus: item.completionStatus,
+      isOverdue: item.isOverdue,
+      firstCompletion: item.firstCompletion
+        ? {
+            attemptId: item.firstCompletion.attemptId,
+            attemptNumber: item.firstCompletion.attemptNumber,
+            status: item.firstCompletion.status,
+            submittedAt: item.firstCompletion.submittedAt.toISOString(),
+            timeliness: assignment.assignmentDueAt
+              ? item.firstCompletion.submittedAt.getTime() <=
+                assignment.assignmentDueAt.getTime()
+                ? "ON_TIME"
+                : "LATE"
+              : null,
+          }
+        : null,
+    })),
+    pagination: toPaginationMetadata(query, page.totals.assigned),
   };
 }
 

@@ -87,19 +87,23 @@ describe("exam answer-key validation", () => {
       ...createValidExamInput(),
       availableFrom: "2026-11-12T08:00:00+07:00",
       availableUntil: "2026-11-12T10:00:00+07:00",
+      assignmentDueAt: "2026-11-12T12:30:00+07:00",
     };
     const scheduled = examUpsertSchema.parse(scheduledInput);
 
     expect(unrestricted.availableFrom).toBeUndefined();
     expect(unrestricted.availableUntil).toBeUndefined();
+    expect(unrestricted.assignmentDueAt).toBeUndefined();
     expect(scheduled.availableFrom).toBe("2026-11-12T01:00:00.000Z");
     expect(scheduled.availableUntil).toBe("2026-11-12T03:00:00.000Z");
+    expect(scheduled.assignmentDueAt).toBe("2026-11-12T05:30:00.000Z");
   });
 
   it("rejects malformed or non-increasing availability dates", () => {
     const malformed = {
       ...createValidExamInput(),
       availableFrom: "not-a-date",
+      assignmentDueAt: "not-a-date",
     };
     const reversed = {
       ...createValidExamInput(),

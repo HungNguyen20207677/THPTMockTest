@@ -124,6 +124,7 @@ function toExamSummary(
     status: exam.status,
     availableFrom: exam.availableFrom?.toISOString() ?? null,
     availableUntil: exam.availableUntil?.toISOString() ?? null,
+    assignmentDueAt: exam.assignmentDueAt?.toISOString() ?? null,
     availabilityState: getExamAvailabilityState(
       exam.availableFrom,
       exam.availableUntil,
@@ -141,11 +142,18 @@ function toExamSummary(
 function toExamAvailabilityRecord(input: {
   availableFrom?: string | null;
   availableUntil?: string | null;
-}): Pick<SaveExamRecordInput, "availableFrom" | "availableUntil"> {
+  assignmentDueAt?: string | null;
+}): Pick<
+  SaveExamRecordInput,
+  "availableFrom" | "availableUntil" | "assignmentDueAt"
+> {
   return {
     availableFrom: input.availableFrom ? new Date(input.availableFrom) : null,
     availableUntil: input.availableUntil
       ? new Date(input.availableUntil)
+      : null,
+    assignmentDueAt: input.assignmentDueAt
+      ? new Date(input.assignmentDueAt)
       : null,
   };
 }
@@ -542,11 +550,16 @@ export async function createExam(
     }
 
     assertAnswerKeyMatchesStructure(input.answerKey, structureSnapshot);
-    const { availableFrom, availableUntil, ...inputWithoutAvailability } =
-      input;
+    const {
+      availableFrom,
+      availableUntil,
+      assignmentDueAt,
+      ...inputWithoutAvailability
+    } = input;
     const availability = toExamAvailabilityRecord({
       availableFrom,
       availableUntil,
+      assignmentDueAt,
     });
     let examInput: Omit<SaveExamRecordInput, "pdf">;
 
@@ -815,6 +828,7 @@ export async function editExam(
             status: examInput.status,
             availableFrom: examInput.availableFrom,
             availableUntil: examInput.availableUntil,
+            assignmentDueAt: examInput.assignmentDueAt,
             visibilityMode: examInput.visibilityMode,
             assignedStudentIds: examInput.assignedStudentIds,
             settings: examInput.settings,
@@ -895,6 +909,7 @@ export async function editExam(
             status: examInput.status,
             availableFrom: examInput.availableFrom,
             availableUntil: examInput.availableUntil,
+            assignmentDueAt: examInput.assignmentDueAt,
             visibilityMode: examInput.visibilityMode,
             assignedStudentIds: examInput.assignedStudentIds,
             settings: examInput.settings,

@@ -165,6 +165,7 @@ function createEmptyEditorValues(mode: ExamFormProps["mode"]): ExamEditorInput {
     status: EXAM_STATUS.DRAFT,
     availableFrom: null,
     availableUntil: null,
+    assignmentDueAt: null,
     visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
     assignedStudentIds: [],
     part3InputMode: PART3_INPUT_MODE.BUBBLE,
@@ -215,6 +216,7 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     status: exam.status,
     availableFrom: exam.availableFrom,
     availableUntil: exam.availableUntil,
+    assignmentDueAt: exam.assignmentDueAt,
     visibilityMode: exam.visibilityMode,
     assignedStudentIds: [...exam.assignedStudentIds],
     part3InputMode: exam.part3InputMode,
@@ -1622,6 +1624,43 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               Giờ Việt Nam (Asia/Ho_Chi_Minh, UTC+7). Học sinh chỉ có thể bắt
               đầu lượt mới trong khoảng đã chọn; lượt đang làm vẫn tiếp tục đủ
               90 phút. Xóa nội dung ô để bỏ từng giới hạn.
+            </p>
+          </fieldset>
+          <fieldset className="border-border bg-muted/20 max-w-2xl space-y-3 rounded-md border p-4">
+            <legend className="px-1 text-sm font-medium">Hạn hoàn thành</legend>
+            <Controller
+              control={control}
+              name="assignmentDueAt"
+              render={({ field }) => (
+                <div className="max-w-sm space-y-2">
+                  <Label htmlFor="exam-assignmentDueAt">
+                    Hạn hoàn thành (không bắt buộc)
+                  </Label>
+                  <Input
+                    ref={field.ref}
+                    id="exam-assignmentDueAt"
+                    name={field.name}
+                    type="datetime-local"
+                    value={utcToVietnamDateTimeLocal(field.value)}
+                    aria-invalid={Boolean(errors.assignmentDueAt)}
+                    onBlur={field.onBlur}
+                    onChange={(event) =>
+                      field.onChange(
+                        vietnamDateTimeLocalToUtc(event.target.value),
+                      )
+                    }
+                  />
+                  {errors.assignmentDueAt && (
+                    <p role="alert" className="text-destructive text-xs">
+                      {errors.assignmentDueAt.message}
+                    </p>
+                  )}
+                </div>
+              )}
+            />
+            <p className="text-muted-foreground text-xs leading-5">
+              Giờ Việt Nam. Hạn này chỉ dùng để theo dõi tiến độ, không đóng đề,
+              không kết thúc lượt đang làm và không thay đổi quyền làm lại.
             </p>
           </fieldset>
           <fieldset className="max-w-2xl space-y-3">

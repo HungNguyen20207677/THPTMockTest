@@ -92,6 +92,20 @@ function getAvailabilityLabel(exam: StudentExamSummary): string {
   return `Đang mở · từ ${examAvailabilityDateFormatter.format(new Date(exam.availableFrom!))}`;
 }
 
+function getAssignmentDeadlineLabel(exam: StudentExamSummary): string | null {
+  if (!exam.assignmentDueAt) {
+    return null;
+  }
+
+  const dueAt = examAvailabilityDateFormatter.format(
+    new Date(exam.assignmentDueAt),
+  );
+  if (exam.assignmentCompletionStatus === "COMPLETED") {
+    return `Hạn hoàn thành · ${dueAt} · ${exam.assignmentTimeliness === "LATE" ? "Hoàn thành trễ" : "Đã hoàn thành"}`;
+  }
+  return `Hạn hoàn thành · ${dueAt}${exam.isAssignmentOverdue ? " · Quá hạn" : ""}`;
+}
+
 export function StudentExamList() {
   const router = useRouter();
   const [exams, setExams] = useState<StudentExamSummary[]>([]);
@@ -373,6 +387,13 @@ export function StudentExamList() {
                 <p className="text-muted-foreground mt-4 text-xs font-medium">
                   {getAvailabilityLabel(exam)}
                 </p>
+                {getAssignmentDeadlineLabel(exam) && (
+                  <p
+                    className={`mt-2 text-xs font-medium ${exam.isAssignmentOverdue ? "text-destructive" : "text-muted-foreground"}`}
+                  >
+                    {getAssignmentDeadlineLabel(exam)}
+                  </p>
+                )}
 
                 <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                   <span>

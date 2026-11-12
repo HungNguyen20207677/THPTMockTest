@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AdminResultListPanel } from "@/components/admin/result-list-panel";
+import { ExamCompletionTracking } from "@/components/admin/exam-completion-tracking";
 import { StatisticsSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
@@ -429,6 +430,22 @@ export function AdminExamResultsView({ examId }: { examId: string }) {
             </div>
           ))}
         </div>
+      </section>
+
+      <section
+        aria-labelledby="completion-tracking-heading"
+        className="space-y-4"
+      >
+        <div>
+          <h2 id="completion-tracking-heading" className="text-xl font-bold">
+            Tiến độ hoàn thành
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Theo dõi từng học sinh trong phạm vi phân công hiện tại; mỗi học
+            sinh chỉ được tính một lần dù có nhiều lượt làm.
+          </p>
+        </div>
+        <ExamCompletionTracking examId={examId} />
       </section>
 
       <section aria-labelledby="topic-analysis-heading" className="space-y-4">
