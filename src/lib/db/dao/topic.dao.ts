@@ -90,6 +90,7 @@ function escapeRegularExpression(value: string): string {
 
 export async function listTopicRecords(
   search?: string,
+  session?: ClientSession,
 ): Promise<TopicPersistenceRecord[]> {
   await prepareTopicModel();
   const normalizedSearch = search ? normalizeTopicName(search) : "";
@@ -100,7 +101,11 @@ export async function listTopicRecords(
         },
       }
     : {};
-  const topics = await TopicModel.find(filter)
+  const query = TopicModel.find(filter);
+  if (session) {
+    query.session(session);
+  }
+  const topics = await query
     .sort({ normalizedName: 1, _id: 1 })
     .lean<TopicDocumentData[]>()
     .exec();
@@ -132,6 +137,7 @@ export async function findTopicRecordByChapterAndNormalizedName(
 
 export async function findTopicRecordsByIds(
   topicIds: string[],
+  session?: ClientSession,
 ): Promise<TopicPersistenceRecord[]> {
   const uniqueTopicIds = [...new Set(topicIds)];
 
@@ -140,11 +146,34 @@ export async function findTopicRecordsByIds(
   }
 
   await prepareTopicModel();
-  const topics = await TopicModel.find({ _id: { $in: uniqueTopicIds } })
-    .lean<TopicDocumentData[]>()
-    .exec();
+  const query = TopicModel.find({ _id: { $in: uniqueTopicIds } });
+  if (session) {
+    query.session(session);
+  }
+  const topics = await query.lean<TopicDocumentData[]>().exec();
 
   return topics.map(toTopicRecord);
+}
+
+export async function deleteTopicRecords(
+  topics: Array<{ id: string; expectedUpdatedAt: Date }>,
+  session: ClientSession,
+): Promise<number> {
+  if (topics.length === 0) {
+    return 0;
+  }
+
+  await prepareTopicModel();
+  const result = await TopicModel.deleteMany(
+    {
+      $or: topics.map((topic) => ({
+        _id: topic.id,
+        updatedAt: topic.expectedUpdatedAt,
+      })),
+    },
+    { session },
+  ).exec();
+  return result.deletedCount;
 }
 
 export async function createTopicRecord(
@@ -160,6 +189,26 @@ export async function createTopicRecord(
   await topic.save({ session });
 
   return toTopicRecord(topic.toObject() as TopicDocumentData);
+}
+
+export async function createTopicRecords(
+  inputs: Array<{
+    chapterId: string;
+    name: string;
+    normalizedName: string;
+  }>,
+  session: ClientSession,
+): Promise<TopicPersistenceRecord[]> {
+  if (inputs.length === 0) return [];
+
+  await prepareTopicModel();
+  const topics = await TopicModel.insertMany(inputs, {
+    ordered: true,
+    session,
+  });
+  return topics.map((topic) =>
+    toTopicRecord(topic.toObject() as TopicDocumentData),
+  );
 }
 
 export async function updateTopicRecord(

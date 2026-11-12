@@ -51,13 +51,35 @@ function toGradeRecord(grade: GradeDocumentData): GradePersistenceRecord {
   };
 }
 
-export async function listGradeRecords(): Promise<GradePersistenceRecord[]> {
+export async function listGradeRecords(
+  session?: ClientSession,
+): Promise<GradePersistenceRecord[]> {
   await prepareGradeModel();
-  const grades = await GradeModel.find()
+  const query = GradeModel.find();
+  if (session) {
+    query.session(session);
+  }
+  const grades = await query
     .sort({ sortOrder: 1, normalizedName: 1, _id: 1 })
     .lean<GradeDocumentData[]>()
     .exec();
   return grades.map(toGradeRecord);
+}
+
+export async function reserveGradeRecordsByIds(
+  gradeIds: string[],
+  session: ClientSession,
+): Promise<number> {
+  const uniqueGradeIds = [...new Set(gradeIds)];
+  if (uniqueGradeIds.length === 0) return 0;
+
+  await prepareGradeModel();
+  const result = await GradeModel.updateMany(
+    { _id: { $in: uniqueGradeIds } },
+    { $inc: { integrityRevision: 1 } },
+    { session, timestamps: false },
+  ).exec();
+  return result.matchedCount;
 }
 
 export async function findGradeRecordById(

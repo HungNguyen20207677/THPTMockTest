@@ -55,13 +55,34 @@ function toChapterRecord(
 
 export async function listChapterRecords(
   gradeId?: string,
+  session?: ClientSession,
 ): Promise<ChapterPersistenceRecord[]> {
   await prepareChapterModel();
-  const chapters = await ChapterModel.find(gradeId ? { gradeId } : {})
+  const query = ChapterModel.find(gradeId ? { gradeId } : {});
+  if (session) {
+    query.session(session);
+  }
+  const chapters = await query
     .sort({ normalizedName: 1, _id: 1 })
     .lean<ChapterDocumentData[]>()
     .exec();
   return chapters.map(toChapterRecord);
+}
+
+export async function reserveChapterRecordsByIds(
+  chapterIds: string[],
+  session: ClientSession,
+): Promise<number> {
+  const uniqueChapterIds = [...new Set(chapterIds)];
+  if (uniqueChapterIds.length === 0) return 0;
+
+  await prepareChapterModel();
+  const result = await ChapterModel.updateMany(
+    { _id: { $in: uniqueChapterIds } },
+    { $inc: { integrityRevision: 1 } },
+    { session, timestamps: false },
+  ).exec();
+  return result.matchedCount;
 }
 
 export async function findChapterRecordById(

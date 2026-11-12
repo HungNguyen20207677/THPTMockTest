@@ -121,6 +121,36 @@ export class TopicInUseError extends AppError {
   }
 }
 
+export class TopicBulkDeleteBlockedError extends AppError {
+  constructor(topicNames: string[]) {
+    super(
+      `Không thể xóa vì các chủ đề sau đang được sử dụng trong đề thi: ${topicNames.join(", ")}.`,
+      "TOPIC_IN_USE",
+      409,
+    );
+  }
+}
+
+export class TopicBulkDeleteConflictError extends AppError {
+  constructor(topicLabels: string[]) {
+    super(
+      `Không thể xóa vì các chủ đề sau đã thay đổi hoặc không còn tồn tại: ${topicLabels.join(", ")}. Vui lòng tải lại và thử lại.`,
+      "CURRICULUM_CONFLICT",
+      409,
+    );
+  }
+}
+
+export class TopicImportConflictError extends AppError {
+  constructor() {
+    super(
+      "Danh mục đã thay đổi trong khi nhập. Không có chủ đề nào được tạo; vui lòng xem trước lại.",
+      "TOPIC_IMPORT_CONFLICT",
+      409,
+    );
+  }
+}
+
 export class ExamNotFoundError extends AppError {
   constructor() {
     super("Không tìm thấy đề thi.", "EXAM_NOT_FOUND", 404);

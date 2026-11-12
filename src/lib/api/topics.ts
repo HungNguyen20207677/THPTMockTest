@@ -1,11 +1,17 @@
 import { apiRequest } from "@/lib/api/client";
 import type {
+  BulkDeleteTopicsInput,
   CreateTopicInput,
   DeleteTopicInput,
+  TopicImportInput,
   UpdateTopicInput,
 } from "@/lib/validations/topic";
 import type { ApiSuccessResponse } from "@/types/api";
-import type { Topic } from "@/types/topic";
+import type {
+  Topic,
+  TopicImportPreview,
+  TopicImportResult,
+} from "@/types/topic";
 
 const TOPICS_ENDPOINT = "/api/admin/topics";
 
@@ -48,4 +54,28 @@ export function deleteTopicRecord(
     `${TOPICS_ENDPOINT}/${topicId}`,
     jsonRequest("DELETE", input),
   );
+}
+
+export function bulkDeleteTopicRecords(
+  input: BulkDeleteTopicsInput,
+): Promise<ApiSuccessResponse<{ deletedCount: number }>> {
+  return apiRequest(
+    `${TOPICS_ENDPOINT}/bulk-delete`,
+    jsonRequest("POST", input),
+  );
+}
+
+export function previewTopicImport(
+  input: TopicImportInput,
+): Promise<ApiSuccessResponse<{ preview: TopicImportPreview }>> {
+  return apiRequest(
+    `${TOPICS_ENDPOINT}/import/preview`,
+    jsonRequest("POST", input),
+  );
+}
+
+export function importTopicRecords(
+  input: TopicImportInput,
+): Promise<ApiSuccessResponse<{ result: TopicImportResult }>> {
+  return apiRequest(`${TOPICS_ENDPOINT}/import`, jsonRequest("POST", input));
 }

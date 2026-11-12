@@ -1097,6 +1097,72 @@ export async function hasExamRecordsWithTopicId(
   );
 }
 
+export async function findExamReferencedTopicIds(
+  topicIds: string[],
+  session: ClientSession,
+): Promise<string[]> {
+  const uniqueTopicIds = [...new Set(topicIds)];
+  if (uniqueTopicIds.length === 0) {
+    return [];
+  }
+
+  await prepareExamModel();
+  const exams = await ExamModel.find({
+    $or: [
+      {
+        "questionTopicIds.partOne": {
+          $elemMatch: { $elemMatch: { $in: uniqueTopicIds } },
+        },
+      },
+      {
+        "questionTopicIds.partTwo": {
+          $elemMatch: { $elemMatch: { $in: uniqueTopicIds } },
+        },
+      },
+      {
+        "questionTopicIds.partThree": {
+          $elemMatch: { $elemMatch: { $in: uniqueTopicIds } },
+        },
+      },
+      { "questionTopics.topicIds": { $in: uniqueTopicIds } },
+    ],
+  })
+    .select({ questionTopicIds: 1, questionTopics: 1 })
+    .session(session)
+    .lean<
+      Array<{
+        questionTopicIds?: ExamQuestionTopicDocumentData;
+        questionTopics?: DynamicExamQuestionTopicDocumentData[];
+      }>
+    >()
+    .exec();
+  const requestedIds = new Set(uniqueTopicIds);
+  const referencedIds = new Set<string>();
+
+  for (const exam of exams) {
+    for (const part of [
+      exam.questionTopicIds?.partOne,
+      exam.questionTopicIds?.partTwo,
+      exam.questionTopicIds?.partThree,
+    ]) {
+      for (const questionIds of part ?? []) {
+        for (const topicId of questionIds) {
+          const id = topicId.toString();
+          if (requestedIds.has(id)) referencedIds.add(id);
+        }
+      }
+    }
+    for (const question of exam.questionTopics ?? []) {
+      for (const topicId of question.topicIds ?? []) {
+        const id = topicId.toString();
+        if (requestedIds.has(id)) referencedIds.add(id);
+      }
+    }
+  }
+
+  return [...referencedIds];
+}
+
 export async function deleteExamRecord(
   examId: string,
   expectedUpdatedAt: Date,

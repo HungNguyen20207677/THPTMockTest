@@ -40,6 +40,7 @@ import {
   createEmptyQuestionTopics,
 } from "@/lib/exam/question-topics";
 import {
+  findExamReferencedTopicIds,
   findExamRecordById,
   findStudentExamRecordById,
   hasExamRecordsWithTopicId,
@@ -210,6 +211,34 @@ describe("Exam DAO compatibility", () => {
       ],
     });
     expect(sessionQuery).toHaveBeenCalledWith(session);
+  });
+
+  it("returns every requested Topic referenced by fixed or dynamic questions", async () => {
+    const firstId = "64b000000000000000000011";
+    const secondId = "64b000000000000000000012";
+    const session = { id: "session" };
+    const exec = vi.fn().mockResolvedValue([
+      {
+        questionTopicIds: { partOne: [[{ toString: () => firstId }]] },
+        questionTopics: [
+          { questionId: "q1", topicIds: [{ toString: () => secondId }] },
+        ],
+      },
+    ]);
+    const lean = vi.fn().mockReturnValue({ exec });
+    const sessionQuery = vi.fn().mockReturnValue({ lean });
+    const select = vi.fn().mockReturnValue({ session: sessionQuery });
+    mocks.find.mockReturnValue({ select });
+
+    await expect(
+      findExamReferencedTopicIds([firstId, secondId], session as never),
+    ).resolves.toEqual([firstId, secondId]);
+
+    expect(sessionQuery).toHaveBeenCalledWith(session);
+    expect(select).toHaveBeenCalledWith({
+      questionTopicIds: 1,
+      questionTopics: 1,
+    });
   });
 
   it("maps the legacy student workspace safely to BUBBLE", async () => {

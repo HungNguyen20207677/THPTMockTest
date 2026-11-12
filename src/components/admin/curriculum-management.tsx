@@ -6,9 +6,12 @@ import {
   CurriculumEditor,
   type CurriculumEditorTarget,
 } from "@/components/admin/curriculum-editor";
+import { TopicBulkDeleteDialog } from "@/components/admin/topic-bulk-delete-dialog";
+import { TopicImportDialog } from "@/components/admin/topic-import-dialog";
 import { IconAction } from "@/components/shared/icon-action";
 import { CurriculumTreeSkeleton } from "@/components/shared/loading-skeletons";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ApiClientError } from "@/lib/api/client";
 import {
   deleteChapterRecord,
@@ -17,6 +20,8 @@ import {
   fetchGrades,
 } from "@/lib/api/curriculum";
 import { deleteTopicRecord, fetchTopics } from "@/lib/api/topics";
+import { normalizeTopicName } from "@/lib/utils/topic-name";
+import { MAX_TOPIC_BULK_ITEMS } from "@/lib/validations/topic";
 import type { Chapter, Grade } from "@/types/curriculum";
 import type { Topic } from "@/types/topic";
 
@@ -24,6 +29,12 @@ type DeleteTarget =
   | { kind: "grade"; value: Grade }
   | { kind: "chapter"; value: Chapter }
   | { kind: "topic"; value: Topic };
+
+interface BulkDeleteTarget {
+  topics: Topic[];
+  scopeLabel: string;
+  requireTypedConfirmation: boolean;
+}
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiClientError) {
@@ -76,9 +87,17 @@ export function CurriculumManagement() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [editor, setEditor] = useState<CurriculumEditorTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [search, setSearch] = useState("");
+  const [selectedTopicIds, setSelectedTopicIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [bulkDeleteTarget, setBulkDeleteTarget] =
+    useState<BulkDeleteTarget | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
 
   useEffect(() => {
     let isCurrent = true;
@@ -89,6 +108,7 @@ export function CurriculumManagement() {
           setGrades(gradeResponse.data.grades);
           setChapters(chapterResponse.data.chapters);
           setTopics(topicResponse.data.topics);
+          setSelectedTopicIds(new Set());
           setLoadError(null);
         }
       })
@@ -108,12 +128,25 @@ export function CurriculumManagement() {
     };
   }, [refreshVersion]);
 
-  const isBusy = Boolean(deleteTarget);
-  const unclassifiedTopics = topics.filter((topic) => !topic.chapterId);
+  const isBusy = Boolean(deleteTarget || bulkDeleteTarget);
+  const normalizedSearch = normalizeTopicName(search);
+  const visibleTopics = topics.filter(
+    (topic) =>
+      !normalizedSearch ||
+      normalizeTopicName(topic.name).includes(normalizedSearch),
+  );
+  const selectedTopics = topics.filter((topic) =>
+    selectedTopicIds.has(topic.id),
+  );
+  const allVisibleSelected =
+    visibleTopics.length > 0 &&
+    visibleTopics.every((topic) => selectedTopicIds.has(topic.id));
+  const unclassifiedTopics = visibleTopics.filter((topic) => !topic.chapterId);
 
-  function refreshCatalog() {
+  function refreshCatalog(successMessage?: string) {
     setEditor(null);
     setActionError(null);
+    setActionSuccess(successMessage ?? null);
     setLoadError(null);
     setIsLoading(true);
     setRefreshVersion((version) => version + 1);
@@ -122,8 +155,44 @@ export function CurriculumManagement() {
   function refreshAfterConflict(message: string) {
     setEditor(null);
     setActionError(message);
+    setActionSuccess(null);
     setIsLoading(true);
     setRefreshVersion((version) => version + 1);
+  }
+
+  function toggleTopic(topicId: string) {
+    setSelectedTopicIds((current) => {
+      const next = new Set(current);
+      if (next.has(topicId)) next.delete(topicId);
+      else next.add(topicId);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelectedTopicIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) {
+        for (const topic of visibleTopics) next.delete(topic.id);
+      } else {
+        for (const topic of visibleTopics) next.add(topic.id);
+      }
+      return next;
+    });
+  }
+
+  function handleBulkError(error: unknown) {
+    setBulkDeleteTarget(null);
+    const message = getErrorMessage(error);
+    if (
+      error instanceof ApiClientError &&
+      error.code === "CURRICULUM_CONFLICT"
+    ) {
+      refreshAfterConflict(message);
+    } else {
+      setActionSuccess(null);
+      setActionError(message);
+    }
   }
 
   async function handleDelete(target: DeleteTarget) {
@@ -182,15 +251,51 @@ export function CurriculumManagement() {
             Quản lý cây kiến thức động theo Khối → Chương → Chủ đề.
           </p>
         </div>
-        <Button
-          type="button"
-          disabled={isBusy}
-          onClick={() => setEditor({ kind: "create-grade" })}
-        >
-          <span aria-hidden="true">+</span>
-          Thêm khối
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={isBusy}
+            onClick={() => setIsImportOpen(true)}
+          >
+            Nhập JSON
+          </Button>
+          <Button
+            type="button"
+            disabled={isBusy}
+            onClick={() => setEditor({ kind: "create-grade" })}
+          >
+            <span aria-hidden="true">+</span>
+            Thêm khối
+          </Button>
+        </div>
       </div>
+
+      {bulkDeleteTarget && (
+        <TopicBulkDeleteDialog
+          topics={bulkDeleteTarget.topics}
+          scopeLabel={bulkDeleteTarget.scopeLabel}
+          requireTypedConfirmation={bulkDeleteTarget.requireTypedConfirmation}
+          onClose={() => setBulkDeleteTarget(null)}
+          onError={handleBulkError}
+          onDeleted={(count) => {
+            setBulkDeleteTarget(null);
+            refreshCatalog(`Đã xóa ${count} chủ đề.`);
+          }}
+        />
+      )}
+
+      {isImportOpen && (
+        <TopicImportDialog
+          onClose={() => setIsImportOpen(false)}
+          onImported={(createdCount, skippedCount) => {
+            setIsImportOpen(false);
+            refreshCatalog(
+              `Đã tạo ${createdCount} chủ đề${skippedCount > 0 ? `, bỏ qua ${skippedCount} chủ đề đã tồn tại` : ""}.`,
+            );
+          }}
+        />
+      )}
 
       {editor && (
         <CurriculumEditor
@@ -221,12 +326,25 @@ export function CurriculumManagement() {
         </p>
       )}
 
+      {actionSuccess && (
+        <p
+          role="status"
+          className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300"
+        >
+          {actionSuccess}
+        </p>
+      )}
+
       {loadError ? (
         <div className="border-border space-y-3 rounded-xl border p-5">
           <p role="alert" className="text-destructive text-sm">
             {loadError}
           </p>
-          <Button type="button" variant="outline" onClick={refreshCatalog}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => refreshCatalog()}
+          >
             Thử lại
           </Button>
         </div>
@@ -253,6 +371,82 @@ export function CurriculumManagement() {
                 Chủ đề
               </span>
             </div>
+          </div>
+          <div className="border-border bg-card space-y-3 rounded-lg border p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <Input
+                className="sm:max-w-sm"
+                type="search"
+                aria-label="Lọc chủ đề theo tên"
+                placeholder="Lọc chủ đề theo tên..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <p className="text-muted-foreground text-sm" aria-live="polite">
+                Hiển thị {visibleTopics.length}/{topics.length} chủ đề · Đã chọn{" "}
+                {selectedTopics.length}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={visibleTopics.length === 0 || isBusy}
+                onClick={toggleAllVisible}
+              >
+                {allVisibleSelected
+                  ? "Bỏ chọn đang hiển thị"
+                  : "Chọn tất cả đang hiển thị"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={
+                  selectedTopics.length === 0 ||
+                  selectedTopics.length > MAX_TOPIC_BULK_ITEMS ||
+                  isBusy
+                }
+                onClick={() =>
+                  setBulkDeleteTarget({
+                    topics: selectedTopics,
+                    scopeLabel: `${selectedTopics.length} chủ đề đã chọn`,
+                    requireTypedConfirmation: false,
+                  })
+                }
+              >
+                Xóa mục đã chọn ({selectedTopics.length})
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={
+                  visibleTopics.length === 0 ||
+                  visibleTopics.length > MAX_TOPIC_BULK_ITEMS ||
+                  isBusy
+                }
+                onClick={() =>
+                  setBulkDeleteTarget({
+                    topics: visibleTopics,
+                    scopeLabel: search.trim()
+                      ? `${visibleTopics.length} kết quả cho bộ lọc “${search.trim()}”`
+                      : `${visibleTopics.length} chủ đề đang hiển thị`,
+                    requireTypedConfirmation: true,
+                  })
+                }
+              >
+                Xóa tất cả đang hiển thị ({visibleTopics.length})
+              </Button>
+            </div>
+            {(selectedTopics.length > MAX_TOPIC_BULK_ITEMS ||
+              visibleTopics.length > MAX_TOPIC_BULK_ITEMS) && (
+              <p className="text-muted-foreground text-xs">
+                Mỗi lần chỉ có thể xóa tối đa {MAX_TOPIC_BULK_ITEMS} chủ đề. Hãy
+                lọc hoặc chọn phạm vi nhỏ hơn.
+              </p>
+            )}
           </div>
           {grades.map((grade) => {
             const gradeChapters = chapters.filter(
@@ -304,7 +498,7 @@ export function CurriculumManagement() {
 
                 <div className="space-y-3 p-3 sm:p-4">
                   {gradeChapters.map((chapter) => {
-                    const chapterTopics = topics
+                    const chapterTopics = visibleTopics
                       .filter((topic) => topic.chapterId === chapter.id)
                       .sort((first, second) =>
                         first.name.localeCompare(second.name, "vi"),
@@ -370,6 +564,14 @@ export function CurriculumManagement() {
                                 className="hover:bg-muted/20 flex items-center justify-between gap-3 px-3 py-2 text-sm transition-colors"
                               >
                                 <span className="flex min-w-0 items-center gap-2.5">
+                                  <input
+                                    type="checkbox"
+                                    className="accent-primary size-4 shrink-0"
+                                    aria-label={`Chọn chủ đề ${topic.name}`}
+                                    checked={selectedTopicIds.has(topic.id)}
+                                    disabled={isBusy}
+                                    onChange={() => toggleTopic(topic.id)}
+                                  />
                                   <span className="bg-primary/60 size-1.5 shrink-0 rounded-full" />
                                   <span className="truncate">{topic.name}</span>
                                 </span>
@@ -436,7 +638,17 @@ export function CurriculumManagement() {
                     key={topic.id}
                     className="flex items-center justify-between gap-3 px-4 py-2 text-sm"
                   >
-                    <span>{topic.name}</span>
+                    <span className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        className="accent-primary size-4 shrink-0"
+                        aria-label={`Chọn chủ đề ${topic.name}`}
+                        checked={selectedTopicIds.has(topic.id)}
+                        disabled={isBusy}
+                        onChange={() => toggleTopic(topic.id)}
+                      />
+                      <span>{topic.name}</span>
+                    </span>
                     <ActionButtons
                       label={`chủ đề ${topic.name}`}
                       disabled={isBusy}
