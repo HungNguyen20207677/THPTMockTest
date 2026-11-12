@@ -55,6 +55,7 @@ import { withMongoTransaction } from "@/lib/db/mongoose";
 import { reserveStudentsForExamAssignment } from "@/lib/db/dao/user.dao";
 import { collectEssayImagePublicIds } from "@/lib/exam/essay-image-resources";
 import { areExamAnswerKeysEqual } from "@/lib/exam/answer-key";
+import { getExamAvailabilityState } from "@/lib/exam/availability";
 import {
   hasFinalTotalScore,
   regradeExamAttemptAnswersPreservingManualScores,
@@ -121,12 +122,31 @@ function toExamSummary(
     id: exam.id,
     title: exam.title,
     status: exam.status,
+    availableFrom: exam.availableFrom?.toISOString() ?? null,
+    availableUntil: exam.availableUntil?.toISOString() ?? null,
+    availabilityState: getExamAvailabilityState(
+      exam.availableFrom,
+      exam.availableUntil,
+      new Date(),
+    ),
     visibilityMode: exam.visibilityMode,
     assignedStudentCount: exam.assignedStudentIds.length,
     settings: exam.settings,
     hasAttempts: hasAttempts || exam.attemptsStarted,
     createdAt: exam.createdAt.toISOString(),
     updatedAt: exam.updatedAt.toISOString(),
+  };
+}
+
+function toExamAvailabilityRecord(input: {
+  availableFrom?: string | null;
+  availableUntil?: string | null;
+}): Pick<SaveExamRecordInput, "availableFrom" | "availableUntil"> {
+  return {
+    availableFrom: input.availableFrom ? new Date(input.availableFrom) : null,
+    availableUntil: input.availableUntil
+      ? new Date(input.availableUntil)
+      : null,
   };
 }
 
@@ -522,26 +542,34 @@ export async function createExam(
     }
 
     assertAnswerKeyMatchesStructure(input.answerKey, structureSnapshot);
+    const { availableFrom, availableUntil, ...inputWithoutAvailability } =
+      input;
+    const availability = toExamAvailabilityRecord({
+      availableFrom,
+      availableUntil,
+    });
     let examInput: Omit<SaveExamRecordInput, "pdf">;
 
-    if ("structureTemplateId" in input) {
+    if ("structureTemplateId" in inputWithoutAvailability) {
       if (!structureSnapshot) {
         throw new ExamStructureTemplateNotFoundError();
       }
 
       examInput = {
-        ...input,
+        ...inputWithoutAvailability,
+        ...availability,
         ...normalizeExamAssignment(input),
         questionTopicIds: createEmptyQuestionTopicIds(),
         questionTopics: normalizeDynamicQuestionTopics(
-          input.questionTopics,
+          inputWithoutAvailability.questionTopics,
           structureSnapshot,
         ),
         structureSnapshot,
       };
     } else {
       examInput = {
-        ...input,
+        ...inputWithoutAvailability,
+        ...availability,
         ...normalizeExamAssignment(input),
       };
     }
@@ -708,6 +736,7 @@ export async function editExam(
     title: input.title,
     description: input.description,
     status: input.status,
+    ...toExamAvailabilityRecord(input),
     ...assignment,
     part3InputMode: input.part3InputMode,
     settings: input.settings,
@@ -784,6 +813,8 @@ export async function editExam(
             title: examInput.title,
             description: examInput.description,
             status: examInput.status,
+            availableFrom: examInput.availableFrom,
+            availableUntil: examInput.availableUntil,
             visibilityMode: examInput.visibilityMode,
             assignedStudentIds: examInput.assignedStudentIds,
             settings: examInput.settings,
@@ -862,6 +893,8 @@ export async function editExam(
             title: examInput.title,
             description: examInput.description,
             status: examInput.status,
+            availableFrom: examInput.availableFrom,
+            availableUntil: examInput.availableUntil,
             visibilityMode: examInput.visibilityMode,
             assignedStudentIds: examInput.assignedStudentIds,
             settings: examInput.settings,

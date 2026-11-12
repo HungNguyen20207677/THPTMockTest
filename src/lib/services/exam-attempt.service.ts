@@ -50,6 +50,7 @@ import {
 } from "@/lib/db/dao/user.dao";
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
+import { getExamAvailabilityState } from "@/lib/exam/availability";
 import { examStructureContainsQuestionType } from "@/lib/exam/structure";
 import {
   applyManualEssayScores,
@@ -71,11 +72,13 @@ import {
 } from "@/lib/exam/short-answer";
 import {
   ExamAttemptConflictError,
+  ExamAvailabilityEndedError,
   ExamAttemptLockedError,
   ExamAttemptNotFoundError,
   ExamAttemptResultUnavailableError,
   ExamAttemptStateConflictError,
   ExamNotFoundError,
+  ExamNotYetAvailableError,
   ExamNotPublishedError,
   ExamRetakeNotAllowedError,
   ForbiddenError,
@@ -482,9 +485,6 @@ export async function startOrResumeExamAttempt(
       }
     }
 
-    const startedAt = new Date();
-    const expiresAt = new Date(startedAt.getTime() + ATTEMPT_DURATION_MS);
-
     try {
       const creation = await withMongoTransaction(async (session) => {
         if (!(await reserveExamForAttemptCreation(examId, actor.id, session))) {
@@ -499,6 +499,20 @@ export async function startOrResumeExamAttempt(
 
         if (!reservedExam || reservedExam.status !== EXAM_STATUS.PUBLISHED) {
           throw new ExamNotPublishedError();
+        }
+
+        const startedAt = new Date();
+        const availabilityState = getExamAvailabilityState(
+          reservedExam.availableFrom,
+          reservedExam.availableUntil,
+          startedAt,
+        );
+
+        if (availabilityState === "UPCOMING") {
+          throw new ExamNotYetAvailableError();
+        }
+        if (availabilityState === "CLOSED") {
+          throw new ExamAvailabilityEndedError();
         }
 
         const attemptCount = await countExamAttemptRecordsForStudentExam(
@@ -521,7 +535,7 @@ export async function startOrResumeExamAttempt(
             attemptNumber: attemptCount + 1,
             status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
             startedAt,
-            expiresAt,
+            expiresAt: new Date(startedAt.getTime() + ATTEMPT_DURATION_MS),
             ...(reservedExam.structureSnapshot
               ? {
                   answers: createEmptyAttemptAnswers(
@@ -620,6 +634,11 @@ export async function listStudentExams(
       isTerminalExamAttemptStatus(attempt.status),
     ).length;
     const attemptCount = examAttempts.length;
+    const availabilityState = getExamAvailabilityState(
+      exam.availableFrom,
+      exam.availableUntil,
+      serverNow,
+    );
     const latestCompletedAttempt = examAttempts
       .filter((attempt) => isTerminalExamAttemptStatus(attempt.status))
       .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
@@ -634,12 +653,17 @@ export async function listStudentExams(
       title: exam.title,
       description: exam.description,
       durationMinutes: EXAM_STRUCTURE.durationMinutes,
+      availableFrom: exam.availableFrom?.toISOString() ?? null,
+      availableUntil: exam.availableUntil?.toISOString() ?? null,
+      availabilityState,
       allowRetake: exam.allowRetake,
       maxAttempts: exam.maxAttempts,
       attemptCount,
       canStartNewAttempt:
         publishedExamIds.has(exam.id) &&
         !activeAttempt &&
+        (availabilityState === "OPEN" ||
+          availabilityState === "UNRESTRICTED") &&
         (exam.maxAttempts === null || attemptCount < exam.maxAttempts),
       isAvailable: publishedExamIds.has(exam.id),
       state,

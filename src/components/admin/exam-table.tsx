@@ -10,6 +10,7 @@ import {
 import { IconAction } from "@/components/shared/icon-action";
 import { EXAM_STATUSES, EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
 import { resolveExamMaxAttempts } from "@/lib/exam/attempt-limit";
+import { examAvailabilityDateFormatter } from "@/lib/exam/availability";
 import { cn } from "@/lib/utils";
 import type { ExamStatus, ExamSummary } from "@/types/exam";
 
@@ -33,6 +34,23 @@ const statusClassNames: Record<ExamStatus, string> = {
   HIDDEN:
     "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
 };
+
+function getAvailabilityLabel(exam: ExamSummary): string {
+  if (exam.availabilityState === "UNRESTRICTED") {
+    return "Không giới hạn thời gian";
+  }
+  if (exam.availabilityState === "UPCOMING" && exam.availableFrom) {
+    return `Sắp mở · ${examAvailabilityDateFormatter.format(new Date(exam.availableFrom))}`;
+  }
+  if (exam.availabilityState === "CLOSED" && exam.availableUntil) {
+    return `Đã đóng · ${examAvailabilityDateFormatter.format(new Date(exam.availableUntil))}`;
+  }
+  if (exam.availableUntil) {
+    return `Đang mở · đến ${examAvailabilityDateFormatter.format(new Date(exam.availableUntil))}`;
+  }
+
+  return `Đang mở · từ ${examAvailabilityDateFormatter.format(new Date(exam.availableFrom!))}`;
+}
 
 interface ExamTableProps {
   exams: ExamSummary[];
@@ -110,6 +128,9 @@ export function ExamTable({
             {resolveExamMaxAttempts(row.original.settings) === null
               ? "Không giới hạn lượt"
               : `Tối đa ${resolveExamMaxAttempts(row.original.settings)} lượt`}
+          </p>
+          <p className="text-muted-foreground">
+            {getAvailabilityLabel(row.original)}
           </p>
         </div>
       ),

@@ -1,5 +1,6 @@
 import type {
   EXAM_STATUS,
+  EXAM_AVAILABILITY_STATE,
   EXAM_VISIBILITY_MODE,
   PART3_INPUT_MODE,
   PART_ONE_CHOICES,
@@ -8,6 +9,8 @@ import type {
 import type { ExamStructureSnapshot } from "@/types/exam-structure-template";
 
 export type ExamStatus = (typeof EXAM_STATUS)[keyof typeof EXAM_STATUS];
+export type ExamAvailabilityState =
+  (typeof EXAM_AVAILABILITY_STATE)[keyof typeof EXAM_AVAILABILITY_STATE];
 export type ExamVisibilityMode =
   (typeof EXAM_VISIBILITY_MODE)[keyof typeof EXAM_VISIBILITY_MODE];
 export type Part3InputMode =
@@ -113,6 +116,9 @@ export interface ExamSummary {
   status: ExamStatus;
   visibilityMode: ExamVisibilityMode;
   assignedStudentCount: number;
+  availableFrom: string | null;
+  availableUntil: string | null;
+  availabilityState: ExamAvailabilityState;
   settings: ExamSettings;
   hasAttempts: boolean;
   createdAt: string;

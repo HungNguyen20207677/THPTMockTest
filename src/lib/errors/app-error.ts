@@ -241,6 +241,22 @@ export class ExamNotPublishedError extends AppError {
   }
 }
 
+export class ExamNotYetAvailableError extends AppError {
+  constructor() {
+    super("Đề thi chưa đến thời gian mở.", "EXAM_NOT_YET_AVAILABLE", 409);
+  }
+}
+
+export class ExamAvailabilityEndedError extends AppError {
+  constructor() {
+    super(
+      "Thời gian bắt đầu lượt làm mới của đề thi đã kết thúc.",
+      "EXAM_AVAILABILITY_ENDED",
+      409,
+    );
+  }
+}
+
 export class ExamAttemptNotFoundError extends AppError {
   constructor() {
     super("Không tìm thấy lượt làm bài.", "EXAM_ATTEMPT_NOT_FOUND", 404);

@@ -344,10 +344,13 @@ function createStoredExam(
   overrides: Partial<ExamPersistenceRecord> = {},
 ): ExamPersistenceRecord {
   const input = createValidInput();
+  const { availableFrom, availableUntil, ...inputWithoutAvailability } = input;
 
   return {
     id: "exam-id",
-    ...input,
+    ...inputWithoutAvailability,
+    availableFrom: availableFrom ? new Date(availableFrom) : null,
+    availableUntil: availableUntil ? new Date(availableUntil) : null,
     pdf: oldPdf,
     answerKeyRevision: 1,
     createdBy: admin.id,
@@ -504,6 +507,34 @@ describe("exam service", () => {
       replacementPdfUpload,
     );
     expect(mocks.createExamRecord).not.toHaveBeenCalled();
+  });
+
+  it("persists ADMIN availability timestamps as UTC Dates", async () => {
+    const input: UpsertExamInput = {
+      ...createValidInput(),
+      availableFrom: "2026-11-12T01:00:00.000Z",
+      availableUntil: "2026-11-12T03:00:00.000Z",
+    };
+    mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
+    mocks.createExamRecord.mockImplementation(
+      async (examInput: SaveExamRecordInput, createdBy: string) =>
+        createStoredExam({ ...examInput, createdBy }),
+    );
+
+    const result = await createExam(admin, input, replacementPdfUpload);
+
+    expect(mocks.createExamRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        availableFrom: new Date(input.availableFrom!),
+        availableUntil: new Date(input.availableUntil!),
+      }),
+      admin.id,
+      mocks.transactionSession,
+    );
+    expect(result).toMatchObject({
+      availableFrom: input.availableFrom,
+      availableUntil: input.availableUntil,
+    });
   });
 
   it("rejects question topic IDs that do not exist", async () => {
@@ -678,7 +709,16 @@ describe("exam service", () => {
     mocks.findExamRecordById.mockResolvedValue(currentExam);
     mocks.verifyExamPdfAsset.mockResolvedValue(newPdf);
     mocks.updateExamRecord.mockResolvedValue(
-      createStoredExam({ ...input, pdf: newPdf }),
+      createStoredExam({
+        ...input,
+        availableFrom: input.availableFrom
+          ? new Date(input.availableFrom)
+          : null,
+        availableUntil: input.availableUntil
+          ? new Date(input.availableUntil)
+          : null,
+        pdf: newPdf,
+      }),
     );
     mocks.deleteExamPdf.mockResolvedValue(undefined);
 
@@ -1739,9 +1779,12 @@ describe("exam service", () => {
         title: input.title,
         description: input.description,
         status: input.status,
+        availableFrom: null,
+        availableUntil: null,
         visibilityMode: input.visibilityMode,
         assignedStudentIds: input.assignedStudentIds,
         settings: input.settings,
+        solutionPdf: undefined,
         questionTopicIds,
       },
       currentExam.updatedAt,
@@ -1762,6 +1805,40 @@ describe("exam service", () => {
     expect(mocks.updateExamAnswerKeyRecord).not.toHaveBeenCalled();
     expect(mocks.listTerminalExamAttemptRegradeSources).not.toHaveBeenCalled();
     expect(mocks.replaceTerminalExamAttemptGradings).not.toHaveBeenCalled();
+  });
+
+  it("updates availability after attempts without changing historical attempts", async () => {
+    const currentExam = createStoredExam({ attemptsStarted: true });
+    const availableFrom = "2026-11-12T01:00:00.000Z";
+    const availableUntil = "2026-11-12T03:00:00.000Z";
+    const input: UpdateExamInput = {
+      ...createValidInput(),
+      availableFrom,
+      availableUntil,
+      expectedUpdatedAt: currentExam.updatedAt.toISOString(),
+    };
+    const updatedExam = createStoredExam({
+      attemptsStarted: true,
+      availableFrom: new Date(availableFrom),
+      availableUntil: new Date(availableUntil),
+    });
+    mocks.findExamRecordById.mockResolvedValue(currentExam);
+    mocks.updateExamMetadataRecord.mockResolvedValue(updatedExam);
+
+    const result = await editExam(admin, currentExam.id, input);
+
+    expect(result).toMatchObject({ availableFrom, availableUntil });
+    expect(mocks.updateExamMetadataRecord).toHaveBeenCalledWith(
+      currentExam.id,
+      expect.objectContaining({
+        availableFrom: new Date(availableFrom),
+        availableUntil: new Date(availableUntil),
+      }),
+      currentExam.updatedAt,
+      mocks.transactionSession,
+    );
+    expect(mocks.updateExamRecord).not.toHaveBeenCalled();
+    expect(mocks.updateExamAnswerKeyRecord).not.toHaveBeenCalled();
   });
 
   it("updates dynamic Topics as metadata after attempts without changing grading revision", async () => {

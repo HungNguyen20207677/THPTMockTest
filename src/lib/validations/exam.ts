@@ -157,6 +157,13 @@ export const examSettingsSchema = z
   })
   .transform(normalizeExamSettings);
 
+const optionalExamDateSchema = z
+  .string()
+  .datetime({ offset: true })
+  .transform((value) => new Date(value).toISOString())
+  .nullable()
+  .optional();
+
 const assignedStudentIdListSchema = z
   .array(studentIdSchema)
   .transform((studentIds) => [...new Set(studentIds)]);
@@ -257,6 +264,8 @@ const examBaseFields = {
   title: titleSchema,
   description: descriptionSchema,
   status: examStatusSchema,
+  availableFrom: optionalExamDateSchema,
+  availableUntil: optionalExamDateSchema,
   part3InputMode: part3InputModeSchema,
   settings: examSettingsSchema,
 };
@@ -271,6 +280,29 @@ type OptionalExamAssignment = {
   visibilityMode?: (typeof EXAM_VISIBILITY_MODES)[number];
   assignedStudentIds?: string[];
 };
+
+type OptionalExamAvailability = {
+  availableFrom?: string | null;
+  availableUntil?: string | null;
+};
+
+function validateExamAvailability(
+  exam: OptionalExamAvailability,
+  context: z.RefinementCtx,
+): void {
+  if (
+    exam.availableFrom &&
+    exam.availableUntil &&
+    new Date(exam.availableFrom).getTime() >=
+      new Date(exam.availableUntil).getTime()
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Thời gian đóng đề phải sau thời gian mở đề.",
+      path: ["availableUntil"],
+    });
+  }
+}
 
 function validateExamAssignmentPair(
   exam: OptionalExamAssignment,
@@ -327,6 +359,7 @@ const legacyExamUpsertSchema = z
       .default(createEmptyQuestionTopicIds),
   })
   .superRefine(validateExamAssignmentPair)
+  .superRefine(validateExamAvailability)
   .transform(normalizeLegacyExamAssignment);
 
 const dynamicExamUpsertSchema = z
@@ -339,6 +372,7 @@ const dynamicExamUpsertSchema = z
     questionTopics: examQuestionTopicsSchema.optional().default([]),
   })
   .superRefine(validateExamAssignmentPair)
+  .superRefine(validateExamAvailability)
   .transform(normalizeLegacyExamAssignment);
 
 export const examUpsertSchema = z.union([
@@ -364,6 +398,7 @@ export const updateExamSchema = z
   })
   .superRefine((exam, context) => {
     validateExamAssignmentPair(exam, context);
+    validateExamAvailability(exam, context);
     const isDynamic = "answersByQuestionId" in exam.answerKey;
 
     if (isDynamic && exam.questionTopicIds !== undefined) {
@@ -509,6 +544,7 @@ const legacyExamEditorSchema = z
         .length(EXAM_STRUCTURE.partThreeQuestions),
     }),
   })
+  .superRefine(validateExamAvailability)
   .transform(normalizeExamAssignment);
 
 const missingDynamicAnswerSchema = z.literal("").transform((_, context) => {
@@ -536,6 +572,7 @@ const dynamicExamEditorSchema = z
       ),
     }),
   })
+  .superRefine(validateExamAvailability)
   .transform(normalizeExamAssignment);
 
 export const examEditorSchema = z.union([

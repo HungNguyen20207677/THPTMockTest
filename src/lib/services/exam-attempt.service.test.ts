@@ -550,6 +550,43 @@ describe("ExamAttempt service", () => {
     expect(result.serverNow).toBe(serverNow.toISOString());
   });
 
+  it("allows a new attempt at the exact opening timestamp", async () => {
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ availableFrom: serverNow }),
+    );
+
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).resolves.toMatchObject({ attempt: { attemptNumber: 1 } });
+  });
+
+  it.each([
+    [
+      "before opening",
+      { availableFrom: new Date(serverNow.getTime() + 1) },
+      "EXAM_NOT_YET_AVAILABLE",
+    ],
+    [
+      "at the exact closing timestamp",
+      { availableUntil: serverNow },
+      "EXAM_AVAILABILITY_ENDED",
+    ],
+    [
+      "after closing",
+      { availableUntil: new Date(serverNow.getTime() - 1) },
+      "EXAM_AVAILABILITY_ENDED",
+    ],
+  ])("rejects a new attempt %s", async (_label, schedule, code) => {
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam(schedule),
+    );
+
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code, statusCode: 409 });
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
   it("re-reads the Exam when another request wins the content-lock race", async () => {
     const unlockedExam = createStudentExam();
     const lockedExam = createStudentExam({
@@ -602,6 +639,9 @@ describe("ExamAttempt service", () => {
 
   it("returns the same valid active attempt for repeated starts", async () => {
     const activeAttempt = createAttempt();
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ availableUntil: new Date(serverNow.getTime() - 1) }),
+    );
     mocks.findActiveExamAttemptRecord.mockResolvedValue(activeAttempt);
 
     const result = await startOrResumeExamAttempt(student, "exam-id");
@@ -609,12 +649,16 @@ describe("ExamAttempt service", () => {
     expect(result.attempt.id).toBe(activeAttempt.id);
     expect(mocks.findLatestExamAttemptRecord).not.toHaveBeenCalled();
     expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+    expect(mocks.reserveExamForAttemptCreation).not.toHaveBeenCalled();
   });
 
   it("resumes an owned active attempt after the student is unassigned", async () => {
     const activeAttempt = createAttempt({ attemptNumber: 2 });
     mocks.findStudentExamRecordById.mockResolvedValue(
-      createStudentExam({ maxAttempts: 2 }),
+      createStudentExam({
+        maxAttempts: 2,
+        availableUntil: new Date(serverNow.getTime() - 1),
+      }),
     );
     mocks.isPublishedExamAvailableToStudent.mockResolvedValue(false);
     mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
@@ -691,6 +735,12 @@ describe("ExamAttempt service", () => {
 
   it("recovers a duplicate-key start race to the concurrent active attempt", async () => {
     const concurrentAttempt = createAttempt({ id: "winning-attempt" });
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({
+        availableFrom: new Date(serverNow.getTime() - 60_000),
+        availableUntil: new Date(serverNow.getTime() + 60_000),
+      }),
+    );
     mocks.findActiveExamAttemptRecord
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(concurrentAttempt);
@@ -743,7 +793,11 @@ describe("ExamAttempt service", () => {
 
   it("rejects a new attempt inside the transaction when the limit is exhausted", async () => {
     mocks.findStudentExamRecordById.mockResolvedValue(
-      createStudentExam({ maxAttempts: 2 }),
+      createStudentExam({
+        maxAttempts: 2,
+        availableFrom: new Date(serverNow.getTime() - 1),
+        availableUntil: new Date(serverNow.getTime() + 1),
+      }),
     );
     mocks.countExamAttemptRecordsForStudentExam.mockResolvedValue(2);
 
@@ -767,6 +821,26 @@ describe("ExamAttempt service", () => {
     await expect(
       startOrResumeExamAttempt(student, "exam-id"),
     ).rejects.toMatchObject({ code: "EXAM_RETAKE_NOT_ALLOWED" });
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
+  it("enforces a schedule closed while attempt creation is being reserved", async () => {
+    mocks.findStudentExamRecordById
+      .mockResolvedValueOnce(
+        createStudentExam({
+          availableUntil: new Date(serverNow.getTime() + 60_000),
+        }),
+      )
+      .mockResolvedValueOnce(
+        createStudentExam({
+          availableUntil: serverNow,
+        }),
+      );
+
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code: "EXAM_AVAILABILITY_ENDED" });
+    expect(mocks.countExamAttemptRecordsForStudentExam).not.toHaveBeenCalled();
     expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
   });
 
@@ -2869,6 +2943,9 @@ describe("ExamAttempt service", () => {
       attemptCount: 2,
       maxAttempts: null,
       canStartNewAttempt: false,
+      availableFrom: null,
+      availableUntil: null,
+      availabilityState: "UNRESTRICTED",
       durationMinutes: 90,
     });
     expect(result.exams[0]).not.toHaveProperty("answerKey");
@@ -2880,6 +2957,40 @@ describe("ExamAttempt service", () => {
     );
     expect(mocks.listAllExamAttemptRecordsForStudent).toHaveBeenCalledTimes(1);
     expect(result.exams[2].latestCompletedAttemptId).toBe("completed-attempt");
+  });
+
+  it("reports upcoming and closed schedules without allowing new attempts", async () => {
+    const upcomingExam = createStudentExam({
+      id: "upcoming-exam",
+      availableFrom: new Date(serverNow.getTime() + 60_000),
+    });
+    const closedExam = createStudentExam({
+      id: "closed-exam",
+      availableUntil: serverNow,
+    });
+    mocks.listPublishedStudentExamRecords.mockResolvedValue([
+      upcomingExam,
+      closedExam,
+    ]);
+
+    const result = await listStudentExams(student);
+
+    expect(result.exams).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: upcomingExam.id,
+          availabilityState: "UPCOMING",
+          availableFrom: upcomingExam.availableFrom?.toISOString(),
+          canStartNewAttempt: false,
+        }),
+        expect.objectContaining({
+          id: closedExam.id,
+          availabilityState: "CLOSED",
+          availableUntil: serverNow.toISOString(),
+          canStartNewAttempt: false,
+        }),
+      ]),
+    );
   });
 
   it("reports finite attempt exhaustion from every created attempt", async () => {

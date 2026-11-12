@@ -81,6 +81,36 @@ function createValidExamInput() {
 }
 
 describe("exam answer-key validation", () => {
+  it("accepts optional availability dates and canonicalizes offsets to UTC", () => {
+    const unrestricted = examUpsertSchema.parse(createValidExamInput());
+    const scheduledInput = {
+      ...createValidExamInput(),
+      availableFrom: "2026-11-12T08:00:00+07:00",
+      availableUntil: "2026-11-12T10:00:00+07:00",
+    };
+    const scheduled = examUpsertSchema.parse(scheduledInput);
+
+    expect(unrestricted.availableFrom).toBeUndefined();
+    expect(unrestricted.availableUntil).toBeUndefined();
+    expect(scheduled.availableFrom).toBe("2026-11-12T01:00:00.000Z");
+    expect(scheduled.availableUntil).toBe("2026-11-12T03:00:00.000Z");
+  });
+
+  it("rejects malformed or non-increasing availability dates", () => {
+    const malformed = {
+      ...createValidExamInput(),
+      availableFrom: "not-a-date",
+    };
+    const reversed = {
+      ...createValidExamInput(),
+      availableFrom: "2026-11-12T03:00:00.000Z",
+      availableUntil: "2026-11-12T03:00:00.000Z",
+    };
+
+    expect(examUpsertSchema.safeParse(malformed).success).toBe(false);
+    expect(examUpsertSchema.safeParse(reversed).success).toBe(false);
+  });
+
   it("normalizes legacy and explicit attempt limits", () => {
     const legacyUnlimited = examUpsertSchema.parse(createValidExamInput());
     const legacySingleInput = createValidExamInput();

@@ -49,6 +49,10 @@ import {
 } from "@/lib/exam/answer-key";
 import { resolveExamMaxAttempts } from "@/lib/exam/attempt-limit";
 import {
+  utcToVietnamDateTimeLocal,
+  vietnamDateTimeLocalToUtc,
+} from "@/lib/exam/availability";
+import {
   createEmptyQuestionTopicIds,
   createEmptyQuestionTopics,
   normalizeExamQuestionTopics,
@@ -159,6 +163,8 @@ function createEmptyEditorValues(mode: ExamFormProps["mode"]): ExamEditorInput {
     title: "",
     description: "",
     status: EXAM_STATUS.DRAFT,
+    availableFrom: null,
+    availableUntil: null,
     visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
     assignedStudentIds: [],
     part3InputMode: PART3_INPUT_MODE.BUBBLE,
@@ -207,6 +213,8 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     title: exam.title,
     description: exam.description ?? "",
     status: exam.status,
+    availableFrom: exam.availableFrom,
+    availableUntil: exam.availableUntil,
     visibilityMode: exam.visibilityMode,
     assignedStudentIds: [...exam.assignedStudentIds],
     part3InputMode: exam.part3InputMode,
@@ -1568,6 +1576,54 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
               sau khi nộp.
             </p>
           </div>
+          <fieldset className="border-border bg-muted/20 max-w-2xl space-y-3 rounded-md border p-4">
+            <legend className="px-1 text-sm font-medium">
+              Thời gian mở đề
+            </legend>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {(
+                [
+                  ["availableFrom", "Bắt đầu (không bắt buộc)"],
+                  ["availableUntil", "Kết thúc (không bắt buộc)"],
+                ] as const
+              ).map(([name, label]) => (
+                <Controller
+                  key={name}
+                  control={control}
+                  name={name}
+                  render={({ field }) => (
+                    <div className="space-y-2">
+                      <Label htmlFor={`exam-${name}`}>{label}</Label>
+                      <Input
+                        ref={field.ref}
+                        id={`exam-${name}`}
+                        name={field.name}
+                        type="datetime-local"
+                        value={utcToVietnamDateTimeLocal(field.value)}
+                        aria-invalid={Boolean(errors[name])}
+                        onBlur={field.onBlur}
+                        onChange={(event) =>
+                          field.onChange(
+                            vietnamDateTimeLocalToUtc(event.target.value),
+                          )
+                        }
+                      />
+                      {errors[name] && (
+                        <p role="alert" className="text-destructive text-xs">
+                          {errors[name]?.message}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                />
+              ))}
+            </div>
+            <p className="text-muted-foreground text-xs leading-5">
+              Giờ Việt Nam (Asia/Ho_Chi_Minh, UTC+7). Học sinh chỉ có thể bắt
+              đầu lượt mới trong khoảng đã chọn; lượt đang làm vẫn tiếp tục đủ
+              90 phút. Xóa nội dung ô để bỏ từng giới hạn.
+            </p>
+          </fieldset>
           <fieldset className="max-w-2xl space-y-3">
             <legend className="text-sm font-medium">Phạm vi học sinh</legend>
             <div className="grid gap-2 sm:grid-cols-2">

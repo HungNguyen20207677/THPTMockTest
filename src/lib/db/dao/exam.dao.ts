@@ -41,6 +41,8 @@ export interface ExamPersistenceRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  availableFrom?: Date | null;
+  availableUntil?: Date | null;
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
@@ -63,6 +65,8 @@ export interface SaveExamRecordInput {
   title: string;
   description?: string;
   status: ExamStatus;
+  availableFrom?: Date | null;
+  availableUntil?: Date | null;
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   part3InputMode: Part3InputMode;
@@ -80,6 +84,8 @@ export interface UpdateExamMetadataRecordInput {
   title: string;
   description?: string;
   status: ExamStatus;
+  availableFrom?: Date | null;
+  availableUntil?: Date | null;
   visibilityMode: ExamVisibilityMode;
   assignedStudentIds: string[];
   settings: ExamSettings;
@@ -102,6 +108,8 @@ export interface StudentExamPersistenceRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  availableFrom?: Date | null;
+  availableUntil?: Date | null;
   allowRetake: boolean;
   maxAttempts: number | null;
   attemptsStarted: boolean;
@@ -157,6 +165,8 @@ interface ExamDocumentData {
   title: string;
   description?: string;
   status: ExamStatus;
+  availableFrom?: Date | null;
+  availableUntil?: Date | null;
   visibilityMode?: ExamVisibilityMode;
   assignedStudentIds?: Types.ObjectId[];
   part3InputMode?: Part3InputMode;
@@ -180,6 +190,8 @@ interface StudentExamDocumentData {
   title: string;
   description?: string;
   status: ExamStatus;
+  availableFrom?: Date | null;
+  availableUntil?: Date | null;
   settings: { allowRetake?: boolean; maxAttempts?: number | null };
   attemptsStarted?: boolean;
   createdAt: Date;
@@ -354,6 +366,8 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     title: exam.title,
     description: exam.description,
     status: exam.status,
+    availableFrom: exam.availableFrom ?? null,
+    availableUntil: exam.availableUntil ?? null,
     visibilityMode,
     assignedStudentIds,
     part3InputMode: exam.part3InputMode ?? PART3_INPUT_MODE.BUBBLE,
@@ -432,6 +446,8 @@ function toStudentExamRecord(
     title: exam.title,
     description: exam.description,
     status: exam.status,
+    availableFrom: exam.availableFrom ?? null,
+    availableUntil: exam.availableUntil ?? null,
     allowRetake: settings.allowRetake,
     maxAttempts: resolveExamMaxAttempts(settings),
     attemptsStarted: exam.attemptsStarted === true,
@@ -546,6 +562,8 @@ export async function listPublishedStudentExamRecords(
       title: 1,
       description: 1,
       status: 1,
+      availableFrom: 1,
+      availableUntil: 1,
       "settings.allowRetake": 1,
       "settings.maxAttempts": 1,
       attemptsStarted: 1,
@@ -589,6 +607,8 @@ export async function listStudentExamRecordsByIds(
       title: 1,
       description: 1,
       status: 1,
+      availableFrom: 1,
+      availableUntil: 1,
       "settings.allowRetake": 1,
       "settings.maxAttempts": 1,
       visibilityMode: 1,
@@ -617,6 +637,8 @@ export async function findStudentExamRecordById(
     title: 1,
     description: 1,
     status: 1,
+    availableFrom: 1,
+    availableUntil: 1,
     "settings.allowRetake": 1,
     "settings.maxAttempts": 1,
     part3InputMode: 1,

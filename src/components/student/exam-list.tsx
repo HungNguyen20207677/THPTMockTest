@@ -21,6 +21,7 @@ import {
   startStudentExamAttempt,
 } from "@/lib/api/student-exams";
 import { STUDENT_EXAM_STATE } from "@/lib/constants/exam-attempt";
+import { examAvailabilityDateFormatter } from "@/lib/exam/availability";
 import { createConfirmedExamStart } from "@/lib/exam/start-flow";
 import {
   exitDocumentFullscreen,
@@ -72,6 +73,23 @@ function getAttemptHref(examId: string, attemptId: string): string {
 
 function getResultHref(examId: string, attemptId: string): string {
   return `${getAttemptHref(examId, attemptId)}/result`;
+}
+
+function getAvailabilityLabel(exam: StudentExamSummary): string {
+  if (exam.availabilityState === "UNRESTRICTED") {
+    return "Không giới hạn thời gian";
+  }
+  if (exam.availabilityState === "UPCOMING" && exam.availableFrom) {
+    return `Sắp mở · ${examAvailabilityDateFormatter.format(new Date(exam.availableFrom))}`;
+  }
+  if (exam.availabilityState === "CLOSED" && exam.availableUntil) {
+    return `Đã đóng · ${examAvailabilityDateFormatter.format(new Date(exam.availableUntil))}`;
+  }
+  if (exam.availableUntil) {
+    return `Đang mở · đến ${examAvailabilityDateFormatter.format(new Date(exam.availableUntil))}`;
+  }
+
+  return `Đang mở · từ ${examAvailabilityDateFormatter.format(new Date(exam.availableFrom!))}`;
 }
 
 export function StudentExamList() {
@@ -149,7 +167,9 @@ export function StudentExamList() {
         error instanceof ApiClientError &&
         (error.code === "EXAM_NOT_FOUND" ||
           error.code === "EXAM_NOT_PUBLISHED" ||
-          error.code === "EXAM_RETAKE_NOT_ALLOWED")
+          error.code === "EXAM_RETAKE_NOT_ALLOWED" ||
+          error.code === "EXAM_NOT_YET_AVAILABLE" ||
+          error.code === "EXAM_AVAILABILITY_ENDED")
       ) {
         setStartTarget(null);
         setIsLoading(true);
@@ -350,7 +370,11 @@ export function StudentExamList() {
                   </p>
                 )}
 
-                <div className="text-muted-foreground mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                <p className="text-muted-foreground mt-4 text-xs font-medium">
+                  {getAvailabilityLabel(exam)}
+                </p>
+
+                <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                   <span>
                     {exam.attemptCount}
                     {exam.maxAttempts === null
@@ -368,7 +392,11 @@ export function StudentExamList() {
                         ? "Đề thi đã đóng"
                         : exam.canStartNewAttempt
                           ? "Có thể làm lại"
-                          : "Đã dùng hết lượt làm"}
+                          : exam.availabilityState === "UPCOMING"
+                            ? "Chưa đến thời gian mở đề"
+                            : exam.availabilityState === "CLOSED"
+                              ? "Đã hết thời gian mở đề"
+                              : "Đã dùng hết lượt làm"}
                     </span>
                   )}
                 </div>

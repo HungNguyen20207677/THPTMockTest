@@ -5,6 +5,7 @@ import type {
   STUDENT_EXAM_STATE,
 } from "@/lib/constants/exam-attempt";
 import type {
+  ExamAvailabilityState,
   Part3InputMode,
   PartOneAnswer,
   PartTwoAnswer,
@@ -183,6 +184,9 @@ export interface StudentExamSummary {
   title: string;
   description?: string;
   durationMinutes: number;
+  availableFrom: string | null;
+  availableUntil: string | null;
+  availabilityState: ExamAvailabilityState;
   allowRetake: boolean;
   maxAttempts: number | null;
   attemptCount: number;

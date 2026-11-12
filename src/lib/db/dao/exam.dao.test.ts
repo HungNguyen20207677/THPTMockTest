@@ -117,6 +117,8 @@ describe("Exam DAO compatibility", () => {
     expect(exam?.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
     expect(exam?.settings.maxAttempts).toBeNull();
     expect(exam?.assignedStudentIds).toEqual([]);
+    expect(exam?.availableFrom).toBeNull();
+    expect(exam?.availableUntil).toBeNull();
     expect(exam?.questionTopicIds).toEqual(createEmptyQuestionTopicIds());
     expect(exam).not.toHaveProperty("structureTemplateId");
     expect(exam).not.toHaveProperty("structureSnapshot");
@@ -221,6 +223,8 @@ describe("Exam DAO compatibility", () => {
       expect.objectContaining({ part3InputMode: 1 }),
     );
     expect(exam?.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
+    expect(exam?.availableFrom).toBeNull();
+    expect(exam?.availableUntil).toBeNull();
     expect(exam?.maxAttempts).toBeNull();
     expect(exam).not.toHaveProperty("answerKey");
     expect(exam).not.toHaveProperty("questionTopicIds");

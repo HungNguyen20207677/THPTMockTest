@@ -10,6 +10,15 @@ export const EXAM_STATUSES = [
   EXAM_STATUS.HIDDEN,
 ] as const;
 
+export const EXAM_AVAILABILITY_STATE = {
+  UNRESTRICTED: "UNRESTRICTED",
+  UPCOMING: "UPCOMING",
+  OPEN: "OPEN",
+  CLOSED: "CLOSED",
+} as const;
+
+export const EXAM_TIME_ZONE = "Asia/Ho_Chi_Minh";
+
 export const EXAM_VISIBILITY_MODE = {
   ALL_STUDENTS: "ALL_STUDENTS",
   SELECTED_STUDENTS: "SELECTED_STUDENTS",

@@ -34,6 +34,9 @@ function createCompletedExam(
     id: "exam-id",
     title: "Đề giới hạn lượt",
     durationMinutes: 90,
+    availableFrom: null,
+    availableUntil: null,
+    availabilityState: "UNRESTRICTED",
     allowRetake: true,
     maxAttempts: 2,
     attemptCount: 2,
@@ -93,5 +96,60 @@ describe("Student Exam list attempt limits", () => {
     );
     expect(screen.getByText(/1\/2 lượt đã dùng/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Làm lại" })).toBeTruthy();
+  });
+
+  it("shows an upcoming Exam without offering a start action", async () => {
+    mocks.fetchStudentExams.mockResolvedValue({
+      data: {
+        exams: [
+          createCompletedExam({
+            title: "Đề sắp mở",
+            state: STUDENT_EXAM_STATE.NOT_STARTED,
+            latestCompletedAttemptId: undefined,
+            completedAttemptCount: 0,
+            attemptCount: 0,
+            availableFrom: "2026-11-12T01:00:00.000Z",
+            availabilityState: "UPCOMING",
+            canStartNewAttempt: false,
+          }),
+        ],
+        serverTime: "2026-11-11T01:00:00.000Z",
+      },
+    });
+
+    render(<StudentExamList />);
+
+    await waitFor(() => expect(screen.getByText(/Sắp mở/)).toBeTruthy());
+    expect(
+      screen.queryByRole("button", { name: "Bắt đầu làm bài" }),
+    ).toBeNull();
+  });
+
+  it("prioritizes resuming an active attempt after the schedule closes", async () => {
+    mocks.fetchStudentExams.mockResolvedValue({
+      data: {
+        exams: [
+          createCompletedExam({
+            title: "Đề đang làm",
+            state: STUDENT_EXAM_STATE.IN_PROGRESS,
+            activeAttemptId: "active-attempt",
+            latestCompletedAttemptId: undefined,
+            completedAttemptCount: 0,
+            attemptCount: 1,
+            availableUntil: "2026-11-12T01:00:00.000Z",
+            availabilityState: "CLOSED",
+            canStartNewAttempt: false,
+          }),
+        ],
+        serverTime: "2026-11-12T02:00:00.000Z",
+      },
+    });
+
+    render(<StudentExamList />);
+
+    await waitFor(() => expect(screen.getByText(/Đã đóng/)).toBeTruthy());
+    expect(
+      screen.getByRole("button", { name: /Tiếp tục làm bài/ }),
+    ).toBeTruthy();
   });
 });

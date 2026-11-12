@@ -17,6 +17,8 @@ describe("Exam model", () => {
     expect(exam.answerKeyRevision).toBe(INITIAL_ANSWER_KEY_REVISION);
     expect(exam.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
     expect(exam.assignedStudentIds).toEqual([]);
+    expect(exam.availableFrom).toBeNull();
+    expect(exam.availableUntil).toBeNull();
     expect(exam.structureTemplateId).toBeUndefined();
     expect(exam.structureSnapshot).toBeUndefined();
     expect(exam.toObject().questionTopicIds).toEqual(
