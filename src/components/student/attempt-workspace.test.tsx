@@ -43,6 +43,9 @@ function renderWorkspaceAnswers(answers: DynamicAttemptAnswers): string {
       onEssayImageRemove={vi.fn()}
       onFilePickerOpen={vi.fn()}
       onFilePickerReturn={vi.fn()}
+      flaggedQuestionIds={new Set(["essay"])}
+      pendingFlagQuestionIds={new Set()}
+      onToggleQuestionFlag={vi.fn()}
     />,
   );
 }
@@ -63,6 +66,8 @@ describe("dynamic ESSAY_IMAGE workspace", () => {
     expect(markup).toContain("Tối đa 5 ảnh");
     expect(markup).toContain("5,00 điểm");
     expect(markup).toContain('accept="image/jpeg,image/png,image/webp"');
+    expect(markup).toContain("Bỏ đánh dấu Câu 2 Phần hỗn hợp");
+    expect(markup).toContain('aria-pressed="true"');
   });
 
   it("renders persisted images from resumed attempt data", () => {

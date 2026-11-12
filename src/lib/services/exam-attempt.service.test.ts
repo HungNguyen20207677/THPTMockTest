@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   listAllExamAttemptRecordsForStudent: vi.fn(),
   removeEssayImageFromOwnedActiveExamAttempt: vi.fn(),
   saveOwnedActiveExamAttemptAnswers: vi.fn(),
+  setOwnedActiveExamAttemptQuestionFlag: vi.fn(),
   setTerminalManualEssayGrading: vi.fn(),
   setOwnedTerminalExamAttemptGradingForRevision: vi.fn(),
   submitOwnedActiveExamAttempt: vi.fn(),
@@ -49,6 +50,8 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
   removeEssayImageFromOwnedActiveExamAttempt:
     mocks.removeEssayImageFromOwnedActiveExamAttempt,
   saveOwnedActiveExamAttemptAnswers: mocks.saveOwnedActiveExamAttemptAnswers,
+  setOwnedActiveExamAttemptQuestionFlag:
+    mocks.setOwnedActiveExamAttemptQuestionFlag,
   setTerminalManualEssayGrading: mocks.setTerminalManualEssayGrading,
   setOwnedTerminalExamAttemptGradingForRevision:
     mocks.setOwnedTerminalExamAttemptGradingForRevision,
@@ -118,6 +121,7 @@ import {
   issueEssayImageUploadTicket,
   removeEssayImage,
   saveExamAttemptAnswers,
+  setExamAttemptQuestionFlag,
   startOrResumeExamAttempt,
   submitExamAttempt,
   updateManualEssayGrading,
@@ -383,6 +387,7 @@ function createAttempt(
     createdAt: new Date("2026-08-11T02:55:00.000Z"),
     updatedAt: new Date("2026-08-11T02:55:00.000Z"),
     ...overrides,
+    flaggedQuestionIds: overrides.flaggedQuestionIds ?? [],
   };
 }
 
@@ -444,6 +449,7 @@ function mockAttemptCreation(): void {
           startedAt: input.startedAt,
           expiresAt: input.expiresAt,
           answers: input.answers,
+          flaggedQuestionIds: [],
           createdAt: input.startedAt,
           updatedAt: input.startedAt,
         }),
@@ -482,6 +488,7 @@ describe("ExamAttempt service", () => {
     mocks.countExamAttemptRecordsForStudentExam.mockResolvedValue(0);
     mocks.attachEssayImageToOwnedActiveExamAttempt.mockResolvedValue(null);
     mocks.removeEssayImageFromOwnedActiveExamAttempt.mockResolvedValue(null);
+    mocks.setOwnedActiveExamAttemptQuestionFlag.mockResolvedValue(null);
     mocks.setOwnedTerminalExamAttemptGradingForRevision.mockResolvedValue(null);
     mocks.listPublishedStudentExamRecords.mockResolvedValue([]);
     mocks.listStudentExamRecordsByIds.mockResolvedValue([]);
@@ -1079,6 +1086,116 @@ describe("ExamAttempt service", () => {
     expect(result.attempt.answers).toEqual(savedAnswers);
     expect(result.attempt.lastSavedAt).toBe("2026-08-11T02:58:00.000Z");
     expect(result.serverNow).toBe(serverNow.toISOString());
+  });
+
+  it("returns persisted question flags when resuming an owned attempt", async () => {
+    const activeAttempt = createAttempt({
+      flaggedQuestionIds: ["part-one-question-1", "part-three-question-6"],
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+
+    const result = await getOwnedExamAttemptContext(
+      student,
+      "exam-id",
+      activeAttempt.id,
+    );
+
+    expect(result.attempt.flaggedQuestionIds).toEqual(
+      activeAttempt.flaggedQuestionIds,
+    );
+  });
+
+  it("sets a canonical legacy question flag independently of answers", async () => {
+    const activeAttempt = createAttempt({ answerRevision: 7 });
+    const savedAttempt = createAttempt({
+      answerRevision: 7,
+      flaggedQuestionIds: ["part-one-question-1"],
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.setOwnedActiveExamAttemptQuestionFlag.mockResolvedValue(savedAttempt);
+
+    const result = await setExamAttemptQuestionFlag(
+      student,
+      "exam-id",
+      activeAttempt.id,
+      "part-one-question-1",
+      true,
+    );
+
+    expect(mocks.setOwnedActiveExamAttemptQuestionFlag).toHaveBeenCalledWith({
+      attemptId: activeAttempt.id,
+      examId: "exam-id",
+      studentId: student.id,
+      questionId: "part-one-question-1",
+      flagged: true,
+      now: serverNow,
+    });
+    expect(result.attempt.flaggedQuestionIds).toEqual(["part-one-question-1"]);
+    expect(result.attempt.answerRevision).toBe(7);
+  });
+
+  it("accepts dynamic question IDs and rejects IDs outside the attempt structure", async () => {
+    const activeAttempt = createAttempt();
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(activeAttempt);
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ structureSnapshot: dynamicStructure }),
+    );
+    mocks.setOwnedActiveExamAttemptQuestionFlag.mockResolvedValue(
+      createAttempt({
+        answers: createDynamicAnswers(),
+        flaggedQuestionIds: ["question-choice-opening"],
+      }),
+    );
+
+    await expect(
+      setExamAttemptQuestionFlag(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        "question-choice-opening",
+        true,
+      ),
+    ).resolves.toMatchObject({
+      attempt: { flaggedQuestionIds: ["question-choice-opening"] },
+    });
+
+    await expect(
+      setExamAttemptQuestionFlag(
+        student,
+        "exam-id",
+        activeAttempt.id,
+        "question-outside-structure",
+        true,
+      ),
+    ).rejects.toMatchObject({
+      code: "EXAM_ATTEMPT_QUESTION_NOT_FOUND",
+      statusCode: 404,
+    });
+    expect(mocks.setOwnedActiveExamAttemptQuestionFlag).toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
+  it("rejects question flag mutations for terminal attempts", async () => {
+    const submittedAttempt = createAttempt({
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      submittedAt: serverNow,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(submittedAttempt);
+
+    await expect(
+      setExamAttemptQuestionFlag(
+        student,
+        "exam-id",
+        submittedAttempt.id,
+        "part-one-question-1",
+        true,
+      ),
+    ).rejects.toMatchObject({
+      code: "EXAM_ATTEMPT_LOCKED",
+      statusCode: 409,
+    });
+    expect(mocks.setOwnedActiveExamAttemptQuestionFlag).not.toHaveBeenCalled();
   });
 
   it("saves partial answers for the owned active attempt using server time", async () => {

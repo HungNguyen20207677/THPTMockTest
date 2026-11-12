@@ -29,6 +29,7 @@ export interface ExamAttemptRecord {
   lastSavedAt?: Date;
   answers: ExamAttemptAnswers;
   answerRevision: number;
+  flaggedQuestionIds: string[];
   grading?: ExamAttemptGradingSnapshot;
   manualGradingRevision?: number;
   gradedAt?: Date;
@@ -71,6 +72,11 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
       },
     },
     answerRevision: { type: Number, required: true, default: 0, min: 0 },
+    flaggedQuestionIds: {
+      type: [String],
+      required: true,
+      default: [],
+    },
     grading: {
       type: Schema.Types.Mixed,
       validate: {

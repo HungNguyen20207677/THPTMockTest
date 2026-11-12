@@ -26,6 +26,7 @@ import {
   finalizeStudentExamAttempt,
   removeStudentEssayImage,
   saveStudentExamAttemptAnswers,
+  setStudentExamAttemptQuestionFlag,
   submitStudentExamAttempt,
   uploadStudentEssayImage,
 } from "@/lib/api/student-exams";
@@ -112,6 +113,9 @@ interface AnswerSheetProps {
     questionIndex: number,
     isValid: boolean,
   ) => void;
+  flaggedQuestionIds: ReadonlySet<string>;
+  pendingFlagQuestionIds: ReadonlySet<string>;
+  onToggleQuestionFlag: (questionId: string) => void;
 }
 
 function getRequestError(
@@ -144,45 +148,127 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
+function FlagIcon({ filled = false }: { filled?: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="size-4"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6 21V4.5A1.5 1.5 0 0 1 7.5 3H18l-2.5 4L18 11H7" />
+    </svg>
+  );
+}
+
+function QuestionFlagButton({
+  questionId,
+  label,
+  flagged,
+  pending,
+  disabled,
+  onToggle,
+}: {
+  questionId: string;
+  label: string;
+  flagged: boolean;
+  pending: boolean;
+  disabled: boolean;
+  onToggle: (questionId: string) => void;
+}) {
+  const actionLabel = flagged
+    ? `Bỏ đánh dấu ${label}`
+    : `Đánh dấu ${label} để xem lại`;
+
+  return (
+    <button
+      type="button"
+      aria-label={actionLabel}
+      aria-pressed={flagged}
+      aria-busy={pending}
+      title={actionLabel}
+      disabled={disabled}
+      className={cn(
+        "focus-visible:ring-ring/50 group relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border outline-none transition-[color,background-color,border-color,transform] motion-safe:hover:-translate-y-0.5 motion-reduce:transition-none focus-visible:ring-3 disabled:pointer-events-none disabled:opacity-50",
+        flagged
+          ? "border-amber-500 bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
+          : "border-input bg-background text-muted-foreground hover:border-amber-500 hover:text-amber-700",
+        pending && "motion-safe:animate-pulse",
+      )}
+      onClick={() => onToggle(questionId)}
+    >
+      <FlagIcon filled={flagged} />
+      <span
+        role="tooltip"
+        className="bg-popover text-popover-foreground pointer-events-none absolute right-0 bottom-full z-20 mb-1.5 w-max max-w-56 rounded-md border px-2 py-1 text-xs font-normal opacity-0 shadow-md transition-opacity motion-reduce:transition-none group-hover:opacity-100 group-focus-visible:opacity-100"
+      >
+        {actionLabel}
+      </span>
+    </button>
+  );
+}
+
 function QuestionStatusLink({
   targetId,
+  questionId,
   questionNumber,
   answered,
+  flagged,
+  current,
   sectionLabel,
   onSelect,
 }: {
   targetId: string;
+  questionId: string;
   questionNumber: number;
   answered: boolean;
+  flagged: boolean;
+  current: boolean;
   sectionLabel: string;
-  onSelect: (targetId: string) => void;
+  onSelect: (targetId: string, questionId: string) => void;
 }) {
   return (
     <a
       href={`#${targetId}`}
-      aria-label={`${sectionLabel}, câu ${questionNumber}, ${answered ? "đã trả lời" : "chưa trả lời"}`}
+      aria-label={`${sectionLabel}, câu ${questionNumber}, ${answered ? "đã trả lời" : "chưa trả lời"}${flagged ? ", đã đánh dấu" : ""}`}
+      aria-current={current ? "true" : undefined}
       onClick={(event) => {
         event.preventDefault();
-        onSelect(targetId);
+        onSelect(targetId, questionId);
       }}
       className={cn(
-        "focus-visible:border-ring focus-visible:ring-ring/50 flex size-9 items-center justify-center rounded-lg border text-xs font-semibold outline-none transition-colors focus-visible:ring-3",
+        "focus-visible:border-ring focus-visible:ring-ring/50 relative flex size-9 items-center justify-center rounded-lg border text-xs font-semibold outline-none transition-colors motion-reduce:transition-none focus-visible:ring-3",
         answered
           ? "border-emerald-600 bg-emerald-600 text-white shadow-xs"
           : "border-input bg-background text-muted-foreground border-dashed hover:border-primary hover:text-foreground",
+        flagged && "ring-2 ring-amber-400 ring-offset-1",
+        current && "outline-primary outline-2 outline-offset-2",
       )}
     >
       {questionNumber}
+      {flagged && (
+        <span className="absolute -top-1.5 -right-1.5 rounded-full bg-amber-100 p-0.5 text-amber-800 shadow-sm dark:bg-amber-950 dark:text-amber-200">
+          <FlagIcon filled />
+        </span>
+      )}
     </a>
   );
 }
 
 function QuestionOverview({
   progress,
+  flaggedQuestionIds,
+  currentQuestionId,
   onQuestionSelect,
 }: {
   progress: AttemptAnswerProgress;
-  onQuestionSelect: (targetId: string) => void;
+  flaggedQuestionIds: ReadonlySet<string>;
+  currentQuestionId: string | null;
+  onQuestionSelect: (targetId: string, questionId: string) => void;
 }) {
   const sections = [
     {
@@ -210,16 +296,22 @@ function QuestionOverview({
             {section.label}
           </p>
           <div className="flex flex-wrap gap-1.5">
-            {section.questions.map((answered, questionIndex) => (
-              <QuestionStatusLink
-                key={questionIndex}
-                targetId={`${section.idPrefix}-${questionIndex + 1}`}
-                questionNumber={questionIndex + 1}
-                answered={answered}
-                sectionLabel={section.label}
-                onSelect={onQuestionSelect}
-              />
-            ))}
+            {section.questions.map((answered, questionIndex) => {
+              const questionId = `${section.idPrefix}-${questionIndex + 1}`;
+              return (
+                <QuestionStatusLink
+                  key={questionId}
+                  targetId={questionId}
+                  questionId={questionId}
+                  questionNumber={questionIndex + 1}
+                  answered={answered}
+                  flagged={flaggedQuestionIds.has(questionId)}
+                  current={currentQuestionId === questionId}
+                  sectionLabel={section.label}
+                  onSelect={onQuestionSelect}
+                />
+              );
+            })}
           </div>
         </div>
       ))}
@@ -237,11 +329,15 @@ function getDynamicQuestionTargetId(
 function DynamicQuestionOverview({
   structure,
   progress,
+  flaggedQuestionIds,
+  currentQuestionId,
   onQuestionSelect,
 }: {
   structure: ExamStructureSnapshot;
   progress: DynamicAttemptAnswerProgress;
-  onQuestionSelect: (targetId: string) => void;
+  flaggedQuestionIds: ReadonlySet<string>;
+  currentQuestionId: string | null;
+  onQuestionSelect: (targetId: string, questionId: string) => void;
 }) {
   return (
     <nav aria-label="Tổng quan câu trả lời" className="space-y-2.5">
@@ -258,8 +354,11 @@ function DynamicQuestionOverview({
                   sectionIndex,
                   questionIndex,
                 )}
+                questionId={question.id}
                 questionNumber={questionIndex + 1}
                 answered={progress.byQuestionId[question.id] ?? false}
+                flagged={flaggedQuestionIds.has(question.id)}
+                current={currentQuestionId === question.id}
                 sectionLabel={section.title}
                 onSelect={onQuestionSelect}
               />
@@ -276,6 +375,9 @@ function PartOneSection({
   updateAnswers,
   disabled,
   progress,
+  flaggedQuestionIds,
+  pendingFlagQuestionIds,
+  onToggleQuestionFlag,
 }: AnswerSheetProps) {
   function selectAnswer(questionIndex: number, choice: PartOneAnswer) {
     updateAnswers((currentAnswers) => {
@@ -298,47 +400,62 @@ function PartOneSection({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {answers.partOne.map((selectedAnswer, questionIndex) => (
-          <fieldset
-            key={questionIndex}
-            id={`part-one-question-${questionIndex + 1}`}
-            disabled={disabled}
-            className={cn(
-              "scroll-mt-40 rounded-xl border bg-card p-3.5 shadow-xs",
-              progress.partOne[questionIndex]
-                ? "border-emerald-600/40"
-                : "border-border border-dashed",
-            )}
-          >
-            <legend className="px-1 text-sm font-semibold">
-              Câu {questionIndex + 1}
-            </legend>
-            <div className="grid grid-cols-4 gap-2">
-              {PART_ONE_CHOICES.map((choice) => (
-                <label
-                  key={choice}
-                  className={cn(
-                    "focus-within:border-ring focus-within:ring-ring/50 relative flex h-10 cursor-pointer items-center justify-center rounded-lg border text-sm font-semibold transition-colors focus-within:ring-3",
-                    selectedAnswer === choice
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-input bg-background hover:border-primary",
-                    disabled && "cursor-not-allowed opacity-60",
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name={`part-one-${questionIndex}`}
-                    value={choice}
-                    checked={selectedAnswer === choice}
-                    className="sr-only"
-                    onChange={() => selectAnswer(questionIndex, choice)}
+        {answers.partOne.map((selectedAnswer, questionIndex) => {
+          const questionId = `part-one-question-${questionIndex + 1}`;
+          return (
+            <fieldset
+              key={questionId}
+              id={questionId}
+              disabled={disabled}
+              className={cn(
+                "scroll-mt-40 rounded-xl border bg-card p-3.5 shadow-xs",
+                progress.partOne[questionIndex]
+                  ? "border-emerald-600/40"
+                  : "border-border border-dashed",
+                flaggedQuestionIds.has(questionId) &&
+                  "ring-2 ring-amber-400/70",
+              )}
+            >
+              <legend className="w-full px-1 text-sm font-semibold">
+                <span className="flex items-center justify-between gap-3">
+                  Câu {questionIndex + 1}
+                  <QuestionFlagButton
+                    questionId={questionId}
+                    label={`câu ${questionIndex + 1} Phần I`}
+                    flagged={flaggedQuestionIds.has(questionId)}
+                    pending={pendingFlagQuestionIds.has(questionId)}
+                    disabled={disabled}
+                    onToggle={onToggleQuestionFlag}
                   />
-                  {choice}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        ))}
+                </span>
+              </legend>
+              <div className="grid grid-cols-4 gap-2">
+                {PART_ONE_CHOICES.map((choice) => (
+                  <label
+                    key={choice}
+                    className={cn(
+                      "focus-within:border-ring focus-within:ring-ring/50 relative flex h-10 cursor-pointer items-center justify-center rounded-lg border text-sm font-semibold transition-colors focus-within:ring-3",
+                      selectedAnswer === choice
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-input bg-background hover:border-primary",
+                      disabled && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name={`part-one-${questionIndex}`}
+                      value={choice}
+                      checked={selectedAnswer === choice}
+                      className="sr-only"
+                      onChange={() => selectAnswer(questionIndex, choice)}
+                    />
+                    {choice}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          );
+        })}
       </div>
     </section>
   );
@@ -349,6 +466,9 @@ function PartTwoSection({
   updateAnswers,
   disabled,
   progress,
+  flaggedQuestionIds,
+  pendingFlagQuestionIds,
+  onToggleQuestionFlag,
 }: AnswerSheetProps) {
   function selectStatementAnswer(
     questionIndex: number,
@@ -378,21 +498,34 @@ function PartTwoSection({
       <div className="space-y-3">
         {answers.partTwo.map((answer, questionIndex) => {
           const answeredStatements = countAnsweredPartTwoStatements(answer);
+          const questionId = `part-two-question-${questionIndex + 1}`;
 
           return (
             <fieldset
-              key={questionIndex}
-              id={`part-two-question-${questionIndex + 1}`}
+              key={questionId}
+              id={questionId}
               disabled={disabled}
               className={cn(
                 "scroll-mt-40 rounded-xl border bg-card p-3.5 shadow-xs",
                 progress.partTwo[questionIndex]
                   ? "border-emerald-600/40"
                   : "border-border border-dashed",
+                flaggedQuestionIds.has(questionId) &&
+                  "ring-2 ring-amber-400/70",
               )}
             >
-              <legend className="px-1 text-sm font-semibold">
-                Câu {questionIndex + 1}
+              <legend className="w-full px-1 text-sm font-semibold">
+                <span className="flex items-center justify-between gap-3">
+                  Câu {questionIndex + 1}
+                  <QuestionFlagButton
+                    questionId={questionId}
+                    label={`câu ${questionIndex + 1} Phần II`}
+                    flagged={flaggedQuestionIds.has(questionId)}
+                    pending={pendingFlagQuestionIds.has(questionId)}
+                    disabled={disabled}
+                    onToggle={onToggleQuestionFlag}
+                  />
+                </span>
               </legend>
               <p className="text-muted-foreground mb-2 text-xs">
                 Đã trả lời {answeredStatements}/
@@ -463,6 +596,9 @@ function PartThreeSection({
   disabled,
   part3InputMode,
   onPartThreeTextValidityChange,
+  flaggedQuestionIds,
+  pendingFlagQuestionIds,
+  onToggleQuestionFlag,
 }: AnswerSheetProps) {
   function updateShortAnswer(questionIndex: number, value: ShortAnswerSlots) {
     updateAnswers((currentAnswers) => {
@@ -489,32 +625,49 @@ function PartThreeSection({
       </div>
 
       <div className="space-y-3">
-        {answers.partThree.map((answer, questionIndex) => (
-          <div
-            key={questionIndex}
-            id={`part-three-question-${questionIndex + 1}`}
-            className="scroll-mt-40"
-          >
-            {part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
-              <ShortAnswerBubbleInput
-                value={answer}
-                onChange={(value) => updateShortAnswer(questionIndex, value)}
-                label={`Câu ${questionIndex + 1}`}
-                disabled={disabled}
-              />
-            ) : (
-              <ShortAnswerTextInput
-                value={answer}
-                onChange={(value) => updateShortAnswer(questionIndex, value)}
-                label={`Câu ${questionIndex + 1}`}
-                disabled={disabled}
-                onValidityChange={(isValid) =>
-                  onPartThreeTextValidityChange(questionIndex, isValid)
-                }
-              />
-            )}
-          </div>
-        ))}
+        {answers.partThree.map((answer, questionIndex) => {
+          const questionId = `part-three-question-${questionIndex + 1}`;
+          return (
+            <div
+              key={questionId}
+              id={questionId}
+              className={cn(
+                "scroll-mt-40 rounded-xl",
+                flaggedQuestionIds.has(questionId) &&
+                  "ring-2 ring-amber-400/70",
+              )}
+            >
+              <div className="flex justify-end px-2 pt-2">
+                <QuestionFlagButton
+                  questionId={questionId}
+                  label={`câu ${questionIndex + 1} Phần III`}
+                  flagged={flaggedQuestionIds.has(questionId)}
+                  pending={pendingFlagQuestionIds.has(questionId)}
+                  disabled={disabled}
+                  onToggle={onToggleQuestionFlag}
+                />
+              </div>
+              {part3InputMode === PART3_INPUT_MODE.BUBBLE ? (
+                <ShortAnswerBubbleInput
+                  value={answer}
+                  onChange={(value) => updateShortAnswer(questionIndex, value)}
+                  label={`Câu ${questionIndex + 1}`}
+                  disabled={disabled}
+                />
+              ) : (
+                <ShortAnswerTextInput
+                  value={answer}
+                  onChange={(value) => updateShortAnswer(questionIndex, value)}
+                  label={`Câu ${questionIndex + 1}`}
+                  disabled={disabled}
+                  onValidityChange={(isValid) =>
+                    onPartThreeTextValidityChange(questionIndex, isValid)
+                  }
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -545,6 +698,9 @@ interface DynamicAnswerSheetProps {
   onEssayImageRemove: (questionId: string, publicId: string) => Promise<void>;
   onFilePickerOpen: () => void;
   onFilePickerReturn: () => void;
+  flaggedQuestionIds: ReadonlySet<string>;
+  pendingFlagQuestionIds: ReadonlySet<string>;
+  onToggleQuestionFlag: (questionId: string) => void;
 }
 
 const dynamicQuestionTypeLabels = {
@@ -566,6 +722,9 @@ export function DynamicAnswerSheet({
   onEssayImageRemove,
   onFilePickerOpen,
   onFilePickerReturn,
+  flaggedQuestionIds,
+  pendingFlagQuestionIds,
+  onToggleQuestionFlag,
 }: DynamicAnswerSheetProps) {
   return (
     <div className="space-y-8 p-3 sm:p-4">
@@ -617,10 +776,22 @@ export function DynamicAnswerSheet({
                       answered
                         ? "border-emerald-600/40"
                         : "border-border border-dashed",
+                      flaggedQuestionIds.has(question.id) &&
+                        "ring-2 ring-amber-400/70",
                     )}
                   >
-                    <legend className="px-1 text-sm font-semibold">
-                      {label}
+                    <legend className="w-full px-1 text-sm font-semibold">
+                      <span className="flex items-center justify-between gap-3">
+                        {label}
+                        <QuestionFlagButton
+                          questionId={question.id}
+                          label={`${label} ${section.title}`}
+                          flagged={flaggedQuestionIds.has(question.id)}
+                          pending={pendingFlagQuestionIds.has(question.id)}
+                          disabled={disabled}
+                          onToggle={onToggleQuestionFlag}
+                        />
+                      </span>
                     </legend>
                     <p className="text-muted-foreground mb-2 text-xs">
                       {dynamicQuestionTypeLabels[question.type]}
@@ -667,10 +838,22 @@ export function DynamicAnswerSheet({
                       answered
                         ? "border-emerald-600/40"
                         : "border-border border-dashed",
+                      flaggedQuestionIds.has(question.id) &&
+                        "ring-2 ring-amber-400/70",
                     )}
                   >
-                    <legend className="px-1 text-sm font-semibold">
-                      {label}
+                    <legend className="w-full px-1 text-sm font-semibold">
+                      <span className="flex items-center justify-between gap-3">
+                        {label}
+                        <QuestionFlagButton
+                          questionId={question.id}
+                          label={`${label} ${section.title}`}
+                          flagged={flaggedQuestionIds.has(question.id)}
+                          pending={pendingFlagQuestionIds.has(question.id)}
+                          disabled={disabled}
+                          onToggle={onToggleQuestionFlag}
+                        />
+                      </span>
                     </legend>
                     <p className="text-muted-foreground mb-2 text-xs">
                       Đã trả lời {answeredStatements}/
@@ -728,7 +911,25 @@ export function DynamicAnswerSheet({
               if (question.type === EXAM_STRUCTURE_QUESTION_TYPE.SHORT_ANSWER) {
                 const shortAnswer = answer as ShortAnswerSlots;
                 return (
-                  <div key={question.id} id={targetId} className="scroll-mt-40">
+                  <div
+                    key={question.id}
+                    id={targetId}
+                    className={cn(
+                      "scroll-mt-40 rounded-xl",
+                      flaggedQuestionIds.has(question.id) &&
+                        "ring-2 ring-amber-400/70",
+                    )}
+                  >
+                    <div className="flex justify-end px-2 pt-2">
+                      <QuestionFlagButton
+                        questionId={question.id}
+                        label={`${label} ${section.title}`}
+                        flagged={flaggedQuestionIds.has(question.id)}
+                        pending={pendingFlagQuestionIds.has(question.id)}
+                        disabled={disabled}
+                        onToggle={onToggleQuestionFlag}
+                      />
+                    </div>
                     {shortAnswerInputMode === PART3_INPUT_MODE.BUBBLE ? (
                       <ShortAnswerBubbleInput
                         value={shortAnswer}
@@ -761,6 +962,8 @@ export function DynamicAnswerSheet({
                     answered
                       ? "border-emerald-600/40"
                       : "border-border border-dashed",
+                    flaggedQuestionIds.has(question.id) &&
+                      "ring-2 ring-amber-400/70",
                   )}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -770,9 +973,19 @@ export function DynamicAnswerSheet({
                         {dynamicQuestionTypeLabels[question.type]}
                       </p>
                     </div>
-                    <span className="text-muted-foreground shrink-0 text-xs">
-                      {scoreLabel}
-                    </span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-muted-foreground text-xs">
+                        {scoreLabel}
+                      </span>
+                      <QuestionFlagButton
+                        questionId={question.id}
+                        label={`${label} ${section.title}`}
+                        flagged={flaggedQuestionIds.has(question.id)}
+                        pending={pendingFlagQuestionIds.has(question.id)}
+                        disabled={disabled}
+                        onToggle={onToggleQuestionFlag}
+                      />
+                    </div>
                   </div>
                   <EssayImageAnswerInput
                     answer={essayAnswer}
@@ -919,6 +1132,16 @@ function ActiveAttemptWorkspace({
   const [answers, setAnswers] = useState<ExamAttemptAnswers>(
     initialAttempt.answers,
   );
+  const [flaggedQuestionIds, setFlaggedQuestionIds] = useState<Set<string>>(
+    () => new Set(initialAttempt.flaggedQuestionIds ?? []),
+  );
+  const [pendingFlagQuestionIds, setPendingFlagQuestionIds] = useState<
+    Set<string>
+  >(() => new Set());
+  const [flagError, setFlagError] = useState<string | null>(null);
+  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
+    null,
+  );
   const [hasCountdownExpired, setHasCountdownExpired] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
@@ -977,6 +1200,13 @@ function ActiveAttemptWorkspace({
   const fullscreenTrackingRef = useRef(createExamFullscreenTrackingState());
   const fullscreenExitAnswersRef = useRef<ExamAttemptAnswers | null>(null);
   const answerRevisionRef = useRef(initialAttempt.answerRevision);
+  const desiredFlagQuestionIdsRef = useRef(
+    new Set(initialAttempt.flaggedQuestionIds ?? []),
+  );
+  const persistedFlagQuestionIdsRef = useRef(
+    new Set(initialAttempt.flaggedQuestionIds ?? []),
+  );
+  const flagMutationInFlightRef = useRef(new Set<string>());
   const leftExamScreenRef = useRef(false);
   const intentionalFilePickerRef = useRef({
     active: false,
@@ -1064,6 +1294,114 @@ function ActiveAttemptWorkspace({
       answeredQuestions: 0,
       totalQuestions: 0,
     };
+
+  async function persistQuestionFlag(questionId: string): Promise<void> {
+    if (flagMutationInFlightRef.current.has(questionId)) {
+      return;
+    }
+
+    flagMutationInFlightRef.current.add(questionId);
+    setPendingFlagQuestionIds((currentIds) =>
+      new Set(currentIds).add(questionId),
+    );
+
+    try {
+      while (isMountedRef.current) {
+        const desiredFlagged =
+          desiredFlagQuestionIdsRef.current.has(questionId);
+        const persistedFlagged =
+          persistedFlagQuestionIdsRef.current.has(questionId);
+
+        if (desiredFlagged === persistedFlagged) {
+          setFlagError(null);
+          break;
+        }
+
+        await setStudentExamAttemptQuestionFlag(
+          exam.id,
+          initialAttempt.id,
+          questionId,
+          desiredFlagged,
+        );
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        if (desiredFlagged) {
+          persistedFlagQuestionIdsRef.current.add(questionId);
+        } else {
+          persistedFlagQuestionIdsRef.current.delete(questionId);
+        }
+
+        setContext((currentContext) => ({
+          ...currentContext,
+          attempt: {
+            ...currentContext.attempt,
+            flaggedQuestionIds: Array.from(persistedFlagQuestionIdsRef.current),
+          },
+        }));
+        setFlagError(null);
+      }
+    } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setFlagError(
+        getRequestError(
+          error,
+          "Không thể lưu câu đã đánh dấu. Vui lòng thử lại.",
+        ),
+      );
+
+      if (
+        error instanceof ApiClientError &&
+        error.code === "EXAM_ATTEMPT_LOCKED"
+      ) {
+        await adoptTerminalAttemptIfAvailable();
+      }
+    } finally {
+      flagMutationInFlightRef.current.delete(questionId);
+      if (isMountedRef.current) {
+        setPendingFlagQuestionIds((currentIds) => {
+          const nextIds = new Set(currentIds);
+          nextIds.delete(questionId);
+          return nextIds;
+        });
+      }
+    }
+  }
+
+  function toggleQuestionFlag(questionId: string) {
+    const nextIds = new Set(desiredFlagQuestionIdsRef.current);
+
+    if (nextIds.has(questionId)) {
+      nextIds.delete(questionId);
+    } else {
+      nextIds.add(questionId);
+    }
+
+    desiredFlagQuestionIdsRef.current = nextIds;
+    setFlaggedQuestionIds(nextIds);
+    setFlagError(null);
+    void persistQuestionFlag(questionId);
+  }
+
+  function retryQuestionFlags() {
+    setFlagError(null);
+    for (const questionId of new Set([
+      ...desiredFlagQuestionIdsRef.current,
+      ...persistedFlagQuestionIdsRef.current,
+    ])) {
+      if (
+        desiredFlagQuestionIdsRef.current.has(questionId) !==
+        persistedFlagQuestionIdsRef.current.has(questionId)
+      ) {
+        void persistQuestionFlag(questionId);
+      }
+    }
+  }
 
   function setPartThreeTextAnswerValidity(
     questionIndex: number,
@@ -1358,13 +1696,15 @@ function ActiveAttemptWorkspace({
     beginFullscreenExitSubmission(answers);
   });
 
-  function navigateToQuestion(targetId: string) {
+  function navigateToQuestion(targetId: string, questionId: string) {
     const answerSheet = answerSheetRef.current;
     const target = document.getElementById(targetId);
 
     if (!answerSheet || !target || !answerSheet.contains(target)) {
       return;
     }
+
+    setCurrentQuestionId(questionId);
 
     const answerSheetScrollsIndependently =
       window.getComputedStyle(answerSheet).overflowY === "auto";
@@ -2153,11 +2493,23 @@ function ActiveAttemptWorkspace({
                       />
                       Chưa trả lời
                     </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="text-amber-700 dark:text-amber-300">
+                        <FlagIcon filled />
+                      </span>
+                      Đã đánh dấu
+                    </span>
                   </div>
                 </div>
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
-                  {progress.answeredQuestions}/{progress.totalQuestions}
-                </span>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
+                    {progress.answeredQuestions}/{progress.totalQuestions}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+                    <FlagIcon filled />
+                    {flaggedQuestionIds.size} đánh dấu
+                  </span>
+                </div>
               </div>
               <div
                 className="bg-muted h-1.5 overflow-hidden rounded-full"
@@ -2178,14 +2530,35 @@ function ActiveAttemptWorkspace({
                 <DynamicQuestionOverview
                   structure={exam.structureSnapshot}
                   progress={dynamicProgress}
+                  flaggedQuestionIds={flaggedQuestionIds}
+                  currentQuestionId={currentQuestionId}
                   onQuestionSelect={navigateToQuestion}
                 />
               ) : legacyProgress ? (
                 <QuestionOverview
                   progress={legacyProgress}
+                  flaggedQuestionIds={flaggedQuestionIds}
+                  currentQuestionId={currentQuestionId}
                   onQuestionSelect={navigateToQuestion}
                 />
               ) : null}
+              {flagError && (
+                <div
+                  role="alert"
+                  className="border-destructive/30 bg-destructive/5 text-destructive flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs"
+                >
+                  <span>{flagError}</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 shrink-0 px-2"
+                    onClick={retryQuestionFlags}
+                  >
+                    Thử lại
+                  </Button>
+                </div>
+              )}
               {!canSubmitAnswers && (
                 <p role="alert" className="text-destructive text-xs leading-5">
                   Có đáp án trả lời ngắn chưa hợp lệ. Hãy hoàn thành giá trị
@@ -2228,6 +2601,9 @@ function ActiveAttemptWorkspace({
                 onEssayImageRemove={handleEssayImageRemove}
                 onFilePickerOpen={beginIntentionalFilePickerInteraction}
                 onFilePickerReturn={finishIntentionalFilePickerInteraction}
+                flaggedQuestionIds={flaggedQuestionIds}
+                pendingFlagQuestionIds={pendingFlagQuestionIds}
+                onToggleQuestionFlag={toggleQuestionFlag}
               />
             ) : legacyAnswers && legacyProgress ? (
               <AnswerSheet
@@ -2245,6 +2621,9 @@ function ActiveAttemptWorkspace({
                 progress={legacyProgress}
                 part3InputMode={exam.part3InputMode}
                 onPartThreeTextValidityChange={setPartThreeTextAnswerValidity}
+                flaggedQuestionIds={flaggedQuestionIds}
+                pendingFlagQuestionIds={pendingFlagQuestionIds}
+                onToggleQuestionFlag={toggleQuestionFlag}
               />
             ) : (
               <p role="alert" className="text-destructive p-4 text-sm">

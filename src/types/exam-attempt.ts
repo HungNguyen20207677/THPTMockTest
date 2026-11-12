@@ -172,6 +172,7 @@ export interface ExamAttempt {
   attemptNumber: number;
   status: ExamAttemptStatus;
   answerRevision: number;
+  flaggedQuestionIds: string[];
   startedAt: string;
   expiresAt: string;
   submittedAt?: string;

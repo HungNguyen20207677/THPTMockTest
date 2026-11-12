@@ -18,6 +18,7 @@ describe("ExamAttempt model indexes", () => {
     await expect(attempt.validate()).resolves.toBeUndefined();
     expect(attempt.answers).toEqual(createEmptyAttemptAnswers());
     expect(attempt.answerRevision).toBe(0);
+    expect(attempt.flaggedQuestionIds).toEqual([]);
   });
 
   it("enforces unique numbering and one active attempt per student and Exam", () => {

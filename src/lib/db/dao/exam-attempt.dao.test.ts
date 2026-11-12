@@ -35,6 +35,7 @@ import {
   removeEssayImageFromOwnedActiveExamAttempt,
   replaceTerminalExamAttemptGradings,
   saveOwnedActiveExamAttemptAnswers,
+  setOwnedActiveExamAttemptQuestionFlag,
   setTerminalManualEssayGrading,
   submitOwnedActiveExamAttempt,
 } from "@/lib/db/dao/exam-attempt.dao";
@@ -297,6 +298,42 @@ describe("ExamAttempt cascade DAO", () => {
       updatePipeline: true,
     });
     expect(JSON.stringify(update)).not.toContain("stale-public-id");
+  });
+
+  it("sets and clears a question flag without touching answers or their revision", async () => {
+    const now = new Date("2026-08-11T03:00:00.000Z");
+    const input = {
+      attemptId: "attempt-id",
+      examId: "exam-id",
+      studentId: "student-id",
+      questionId: "part-one-question-1",
+      now,
+    };
+
+    await setOwnedActiveExamAttemptQuestionFlag({ ...input, flagged: true });
+    await setOwnedActiveExamAttemptQuestionFlag({ ...input, flagged: false });
+
+    expect(mocks.findOneAndUpdate.mock.calls[0]).toEqual([
+      {
+        _id: "attempt-id",
+        examId: "exam-id",
+        studentId: "student-id",
+        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+        expiresAt: { $gt: now },
+      },
+      { $addToSet: { flaggedQuestionIds: "part-one-question-1" } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        timestamps: false,
+      },
+    ]);
+    expect(mocks.findOneAndUpdate.mock.calls[1][1]).toEqual({
+      $pull: { flaggedQuestionIds: "part-one-question-1" },
+    });
+    expect(JSON.stringify(mocks.findOneAndUpdate.mock.calls)).not.toContain(
+      "answerRevision",
+    );
   });
 
   it("guards dedicated essay image mutations by owner, lifecycle, and revision", async () => {

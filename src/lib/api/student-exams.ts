@@ -107,6 +107,18 @@ export function saveStudentExamAttemptAnswers(
   );
 }
 
+export function setStudentExamAttemptQuestionFlag(
+  examId: string,
+  attemptId: string,
+  questionId: string,
+  flagged: boolean,
+): Promise<ApiSuccessResponse<StudentExamAttemptMutationResult>> {
+  return apiRequest(
+    `${getAttemptEndpoint(examId, attemptId)}/flags`,
+    jsonRequest("PATCH", { questionId, flagged }),
+  );
+}
+
 export async function uploadStudentEssayImage(
   examId: string,
   attemptId: string,

@@ -40,6 +40,7 @@ export interface ExamAttemptPersistenceRecord {
   lastSavedAt?: Date;
   answers?: ExamAttemptAnswers;
   answerRevision: number;
+  flaggedQuestionIds: string[];
   grading?: ExamAttemptGradingSnapshot;
   manualGradingRevision?: number;
   gradedAt?: Date;
@@ -73,6 +74,15 @@ export interface MutateOwnedEssayImageInput {
   studentId: string;
   answers: ExamAttemptAnswers;
   expectedAnswerRevision: number;
+  now: Date;
+}
+
+export interface SetOwnedExamAttemptQuestionFlagInput {
+  attemptId: string;
+  examId: string;
+  studentId: string;
+  questionId: string;
+  flagged: boolean;
   now: Date;
 }
 
@@ -136,6 +146,7 @@ interface ExamAttemptDocumentData {
   lastSavedAt?: Date;
   answers?: unknown;
   answerRevision?: number;
+  flaggedQuestionIds?: unknown;
   grading?: unknown;
   manualGradingRevision?: number;
   gradedAt?: Date;
@@ -247,6 +258,17 @@ function toExamAttemptRecord(
     throw new Error("Stored ExamAttempt answers are malformed.");
   }
 
+  const flaggedQuestionIds = Array.isArray(attempt.flaggedQuestionIds)
+    ? Array.from(
+        new Set(
+          attempt.flaggedQuestionIds.filter(
+            (questionId): questionId is string =>
+              typeof questionId === "string",
+          ),
+        ),
+      )
+    : [];
+
   return {
     id: attempt._id.toString(),
     examId: attempt.examId.toString(),
@@ -260,6 +282,7 @@ function toExamAttemptRecord(
     lastSavedAt: attempt.lastSavedAt,
     answers: parsedAnswers?.data ?? createEmptyAttemptAnswers(),
     answerRevision: attempt.answerRevision ?? 0,
+    flaggedQuestionIds,
     grading: parsedGrading?.data,
     manualGradingRevision: attempt.manualGradingRevision ?? 0,
     gradedAt: attempt.gradedAt,
@@ -461,6 +484,34 @@ export async function saveOwnedActiveExamAttemptAnswers(
       ...(shouldMergeObjectiveAnswers
         ? { updatePipeline: true }
         : { runValidators: true }),
+    },
+  )
+    .lean<ExamAttemptDocumentData>()
+    .exec();
+
+  return attempt ? toExamAttemptRecord(attempt) : null;
+}
+
+export async function setOwnedActiveExamAttemptQuestionFlag(
+  input: SetOwnedExamAttemptQuestionFlagInput,
+): Promise<ExamAttemptPersistenceRecord | null> {
+  await prepareExamAttemptModel();
+
+  const attempt = await ExamAttemptModel.findOneAndUpdate(
+    {
+      _id: input.attemptId,
+      examId: input.examId,
+      studentId: input.studentId,
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      expiresAt: { $gt: input.now },
+    },
+    input.flagged
+      ? { $addToSet: { flaggedQuestionIds: input.questionId } }
+      : { $pull: { flaggedQuestionIds: input.questionId } },
+    {
+      returnDocument: "after",
+      runValidators: true,
+      timestamps: false,
     },
   )
     .lean<ExamAttemptDocumentData>()

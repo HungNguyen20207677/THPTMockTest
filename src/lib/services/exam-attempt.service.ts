@@ -20,6 +20,7 @@ import {
   listAllExamAttemptRecordsForStudent,
   removeEssayImageFromOwnedActiveExamAttempt,
   saveOwnedActiveExamAttemptAnswers,
+  setOwnedActiveExamAttemptQuestionFlag,
   setTerminalManualEssayGrading,
   setOwnedTerminalExamAttemptGradingForRevision,
   submitOwnedActiveExamAttempt,
@@ -51,7 +52,10 @@ import {
 import { withMongoTransaction } from "@/lib/db/mongoose";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { getExamAvailabilityState } from "@/lib/exam/availability";
-import { examStructureContainsQuestionType } from "@/lib/exam/structure";
+import {
+  examStructureContainsQuestionType,
+  resolveExamStructureSnapshot,
+} from "@/lib/exam/structure";
 import {
   applyManualEssayScores,
   gradeExamAttemptAnswers,
@@ -75,6 +79,7 @@ import {
   ExamAvailabilityEndedError,
   ExamAttemptLockedError,
   ExamAttemptNotFoundError,
+  ExamAttemptQuestionNotFoundError,
   ExamAttemptResultUnavailableError,
   ExamAttemptStateConflictError,
   ExamNotFoundError,
@@ -243,6 +248,7 @@ function toExamAttempt(
     attemptNumber: attempt.attemptNumber,
     status: attempt.status,
     answerRevision: attempt.answerRevision,
+    flaggedQuestionIds: attempt.flaggedQuestionIds,
     startedAt: attempt.startedAt.toISOString(),
     expiresAt: attempt.expiresAt.toISOString(),
     submittedAt: attempt.submittedAt?.toISOString(),
@@ -782,6 +788,63 @@ export async function saveExamAttemptAnswers(
     expectedAnswerRevision: answerRevision,
     now: serverNow,
     ...(essayQuestionIds.length > 0 ? { essayQuestionIds } : {}),
+  });
+
+  if (savedAttempt) {
+    return toAttemptMutationResult(
+      savedAttempt,
+      serverNow,
+      exam.structureSnapshot,
+    );
+  }
+
+  const currentAttempt = await resolveMutationRace(actor, examId, attemptId);
+
+  if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
+    throw new ExamAttemptLockedError();
+  }
+
+  throw new ExamAttemptStateConflictError();
+}
+
+export async function setExamAttemptQuestionFlag(
+  actor: AppUser,
+  examId: string,
+  attemptId: string,
+  questionId: string,
+  flagged: boolean,
+): Promise<StudentExamAttemptMutationResult> {
+  assertStudent(actor);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const serverNow = new Date();
+  const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
+
+  if (!isValidActiveAttempt(resolvedAttempt, serverNow)) {
+    throw new ExamAttemptLockedError();
+  }
+
+  const exam = await findStudentExamRecordById(examId);
+
+  if (!exam) {
+    throw new ExamNotFoundError();
+  }
+
+  const structure = resolveExamStructureSnapshot(exam.structureSnapshot);
+  const questionExists = structure.sections.some((section) =>
+    section.questions.some((question) => question.id === questionId),
+  );
+
+  if (!questionExists) {
+    throw new ExamAttemptQuestionNotFoundError();
+  }
+
+  const savedAttempt = await setOwnedActiveExamAttemptQuestionFlag({
+    attemptId,
+    examId,
+    studentId: actor.id,
+    questionId,
+    flagged,
+    now: serverNow,
   });
 
   if (savedAttempt) {

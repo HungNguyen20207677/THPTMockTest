@@ -323,6 +323,16 @@ export class ExamAttemptStateConflictError extends AppError {
   }
 }
 
+export class ExamAttemptQuestionNotFoundError extends AppError {
+  constructor() {
+    super(
+      "Câu hỏi không thuộc lượt làm bài này.",
+      "EXAM_ATTEMPT_QUESTION_NOT_FOUND",
+      404,
+    );
+  }
+}
+
 export class ExamAttemptResultUnavailableError extends AppError {
   constructor() {
     super(
