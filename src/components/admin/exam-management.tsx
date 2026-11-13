@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { ExamTable } from "@/components/admin/exam-table";
+import { BulkDeleteConfirmationDialog } from "@/components/admin/bulk-delete-confirmation-dialog";
+import { BulkSelectionToolbar } from "@/components/admin/bulk-selection-toolbar";
 import { TableSkeleton } from "@/components/shared/loading-skeletons";
 import {
   AlertDialog,
@@ -17,10 +19,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import {
+  bulkDeleteExamRecords,
   deleteExamRecord,
   fetchExams,
   updateExamRecordStatus,
 } from "@/lib/api/exams";
+import {
+  formatBulkDeletionResult,
+  getDeletedBulkItemIds,
+} from "@/lib/bulk-deletion-result";
+import { MAX_ADMIN_BULK_DELETE_ITEMS } from "@/lib/validations/bulk-deletion";
 import type { ExamStatus, ExamSummary } from "@/types/exam";
 
 function getRequestError(error: unknown): string {
@@ -45,6 +53,9 @@ export function ExamManagement() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<ExamSummary | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [bulkReport, setBulkReport] = useState<string | null>(null);
   const createLinkRef = useRef<HTMLAnchorElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const deleteButtonRef = useRef<HTMLButtonElement>(null);
@@ -56,6 +67,7 @@ export function ExamManagement() {
       .then((response) => {
         if (isCurrent) {
           setExams(response.data.exams);
+          setSelectedIds(new Set());
           setLoadError(null);
         }
       })
@@ -150,6 +162,59 @@ export function ExamManagement() {
     }
   }
 
+  function toggleSelected(examId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(examId)) next.delete(examId);
+      else next.add(examId);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelectedIds((current) => {
+      const allSelected =
+        exams.length > 0 && exams.every((exam) => current.has(exam.id));
+      return allSelected ? new Set() : new Set(exams.map((exam) => exam.id));
+    });
+  }
+
+  async function handleBulkDelete() {
+    const selected = exams.filter((exam) => selectedIds.has(exam.id));
+    if (selected.length === 0 || isMutating) return;
+    setIsMutating(true);
+    setActionError(null);
+    setBulkReport(null);
+    try {
+      const response = await bulkDeleteExamRecords(
+        selected.map((exam) => ({
+          id: exam.id,
+          expectedUpdatedAt: exam.updatedAt,
+        })),
+      );
+      const deletedIds = getDeletedBulkItemIds(response.data);
+      setExams((current) => current.filter((exam) => !deletedIds.has(exam.id)));
+      setSelectedIds(
+        new Set(
+          response.data.items
+            .filter((item) => !deletedIds.has(item.id))
+            .map((item) => item.id),
+        ),
+      );
+      setBulkReport(
+        formatBulkDeletionResult(
+          response.data,
+          new Map(selected.map((exam) => [exam.id, exam.title])),
+        ),
+      );
+      setIsBulkDeleteOpen(false);
+    } catch (error) {
+      setActionError(getRequestError(error));
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
   return (
     <div className="space-y-7">
       <div className="border-border flex flex-col gap-4 border-b pb-7 sm:flex-row sm:items-end sm:justify-between">
@@ -231,12 +296,30 @@ export function ExamManagement() {
         )}
       </AlertDialog>
 
+      <BulkDeleteConfirmationDialog
+        open={isBulkDeleteOpen}
+        count={selectedIds.size}
+        entityLabel="đề thi"
+        description="Xóa vĩnh viễn các đề đã chọn cùng lượt làm bài, PDF đề, PDF lời giải và ảnh bài tự luận liên quan?"
+        isPending={isMutating}
+        onClose={() => setIsBulkDeleteOpen(false)}
+        onConfirm={() => void handleBulkDelete()}
+      />
+
       {actionError && !deleteTarget && (
         <p
           role="alert"
           className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border px-4 py-3 text-sm"
         >
           {actionError}
+        </p>
+      )}
+      {bulkReport && (
+        <p
+          role="status"
+          className="border-border bg-muted/30 whitespace-pre-line rounded-md border px-4 py-3 text-sm"
+        >
+          {bulkReport}
         </p>
       )}
 
@@ -263,9 +346,20 @@ export function ExamManagement() {
               </p>
             </div>
           </div>
+          <BulkSelectionToolbar
+            selectedCount={selectedIds.size}
+            entityLabel="đề thi"
+            isBusy={isMutating}
+            deleteDisabled={selectedIds.size > MAX_ADMIN_BULK_DELETE_ITEMS}
+            onClear={() => setSelectedIds(new Set())}
+            onDelete={() => setIsBulkDeleteOpen(true)}
+          />
           <ExamTable
             exams={exams}
             isBusy={isMutating}
+            selectedIds={selectedIds}
+            onToggleSelected={toggleSelected}
+            onToggleAll={toggleAll}
             onStatusChange={(exam, status, trigger) =>
               void handleStatusChange(exam, status, trigger)
             }

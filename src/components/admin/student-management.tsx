@@ -7,6 +7,8 @@ import {
   EditStudentForm,
   ResetPasswordForm,
 } from "@/components/admin/student-forms";
+import { BulkDeleteConfirmationDialog } from "@/components/admin/bulk-delete-confirmation-dialog";
+import { BulkSelectionToolbar } from "@/components/admin/bulk-selection-toolbar";
 import { StudentTable } from "@/components/admin/student-table";
 import { TableSkeleton } from "@/components/shared/loading-skeletons";
 import {
@@ -21,10 +23,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import {
+  bulkDeleteStudentAccounts,
   deleteStudentAccount,
   fetchStudents,
   updateStudentAccountStatus,
 } from "@/lib/api/students";
+import {
+  formatBulkDeletionResult,
+  getDeletedBulkItemIds,
+} from "@/lib/bulk-deletion-result";
+import { MAX_ADMIN_BULK_DELETE_ITEMS } from "@/lib/validations/bulk-deletion";
 import type { StudentAccount } from "@/types/user";
 
 type ActivePanel =
@@ -63,6 +71,9 @@ export function StudentManagement() {
     string | null
   >(null);
   const [deleteTarget, setDeleteTarget] = useState<StudentAccount | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [bulkReport, setBulkReport] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const formTriggerRef = useRef<HTMLButtonElement | null>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -74,6 +85,7 @@ export function StudentManagement() {
       .then((response) => {
         if (isCurrent) {
           setStudents(response.data.students);
+          setSelectedIds(new Set());
           setLoadError(null);
         }
       })
@@ -156,6 +168,62 @@ export function StudentManagement() {
       setActivePanel(null);
       setActionError(response.data.cleanupWarning);
       refreshStudents();
+    } catch (error) {
+      setActionError(getActionError(error));
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  function toggleSelected(studentId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelectedIds((current) => {
+      const allSelected =
+        students.length > 0 &&
+        students.every((student) => current.has(student.id));
+      return allSelected
+        ? new Set()
+        : new Set(students.map((student) => student.id));
+    });
+  }
+
+  async function handleBulkDelete() {
+    const selected = students.filter((student) => selectedIds.has(student.id));
+    if (selected.length === 0 || isMutating) return;
+
+    setIsMutating(true);
+    setActionError(null);
+    setBulkReport(null);
+    try {
+      const response = await bulkDeleteStudentAccounts(
+        selected.map((student) => ({ id: student.id })),
+      );
+      const deletedIds = getDeletedBulkItemIds(response.data);
+      setStudents((current) =>
+        current.filter((student) => !deletedIds.has(student.id)),
+      );
+      setSelectedIds(
+        new Set(
+          response.data.items
+            .filter((item) => !deletedIds.has(item.id))
+            .map((item) => item.id),
+        ),
+      );
+      setBulkReport(
+        formatBulkDeletionResult(
+          response.data,
+          new Map(selected.map((student) => [student.id, student.fullName])),
+        ),
+      );
+      setIsBulkDeleteOpen(false);
     } catch (error) {
       setActionError(getActionError(error));
     } finally {
@@ -260,12 +328,30 @@ export function StudentManagement() {
         )}
       </AlertDialog>
 
+      <BulkDeleteConfirmationDialog
+        open={isBulkDeleteOpen}
+        count={selectedIds.size}
+        entityLabel="tài khoản học sinh"
+        description="Xóa vĩnh viễn các tài khoản đã chọn cùng lượt làm bài, kết quả, tham chiếu phân công và ảnh bài tự luận liên quan?"
+        isPending={isMutating}
+        onClose={() => setIsBulkDeleteOpen(false)}
+        onConfirm={() => void handleBulkDelete()}
+      />
+
       {actionError && !deleteTarget && (
         <p
           role="alert"
           className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border px-3 py-2 text-sm"
         >
           {actionError}
+        </p>
+      )}
+      {bulkReport && (
+        <p
+          role="status"
+          className="border-border bg-muted/30 whitespace-pre-line rounded-md border px-3 py-2 text-sm"
+        >
+          {bulkReport}
         </p>
       )}
 
@@ -281,28 +367,47 @@ export function StudentManagement() {
       ) : isLoading ? (
         <TableSkeleton columns={5} label="Đang tải danh sách học sinh" />
       ) : (
-        <StudentTable
-          students={students}
-          isBusy={isMutating || activePanel !== null}
-          pendingStatusStudentId={pendingStatusStudentId}
-          onEdit={(student, trigger) => {
-            formTriggerRef.current = trigger;
-            setActivePanel({ type: "edit", student });
-            setDeleteTarget(null);
-          }}
-          onResetPassword={(student, trigger) => {
-            formTriggerRef.current = trigger;
-            setActivePanel({ type: "password", student });
-            setDeleteTarget(null);
-          }}
-          onToggleStatus={(student) => void handleToggleStatus(student)}
-          onDelete={(student, trigger) => {
-            setActionError(null);
-            deleteTriggerRef.current = trigger;
-            setDeleteTarget(student);
-            setActivePanel(null);
-          }}
-        />
+        <div className="space-y-3">
+          <BulkSelectionToolbar
+            selectedCount={selectedIds.size}
+            entityLabel="học sinh"
+            isBusy={isMutating || activePanel !== null}
+            deleteDisabled={selectedIds.size > MAX_ADMIN_BULK_DELETE_ITEMS}
+            onClear={() => setSelectedIds(new Set())}
+            onDelete={() => setIsBulkDeleteOpen(true)}
+          />
+          {selectedIds.size > MAX_ADMIN_BULK_DELETE_ITEMS && (
+            <p className="text-muted-foreground text-xs">
+              Chỉ có thể xóa tối đa {MAX_ADMIN_BULK_DELETE_ITEMS} bản ghi mỗi
+              lần.
+            </p>
+          )}
+          <StudentTable
+            students={students}
+            isBusy={isMutating || activePanel !== null}
+            selectedIds={selectedIds}
+            onToggleSelected={toggleSelected}
+            onToggleAll={toggleAll}
+            pendingStatusStudentId={pendingStatusStudentId}
+            onEdit={(student, trigger) => {
+              formTriggerRef.current = trigger;
+              setActivePanel({ type: "edit", student });
+              setDeleteTarget(null);
+            }}
+            onResetPassword={(student, trigger) => {
+              formTriggerRef.current = trigger;
+              setActivePanel({ type: "password", student });
+              setDeleteTarget(null);
+            }}
+            onToggleStatus={(student) => void handleToggleStatus(student)}
+            onDelete={(student, trigger) => {
+              setActionError(null);
+              deleteTriggerRef.current = trigger;
+              setDeleteTarget(student);
+              setActivePanel(null);
+            }}
+          />
+        </div>
       )}
     </div>
   );

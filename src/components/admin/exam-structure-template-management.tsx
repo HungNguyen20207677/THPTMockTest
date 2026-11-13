@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { ExamStructureTemplateForm } from "@/components/admin/exam-structure-template-form";
 import { ExamStructureTemplateTable } from "@/components/admin/exam-structure-template-table";
+import { BulkDeleteConfirmationDialog } from "@/components/admin/bulk-delete-confirmation-dialog";
+import { BulkSelectionToolbar } from "@/components/admin/bulk-selection-toolbar";
 import { TableSkeleton } from "@/components/shared/loading-skeletons";
 import {
   AlertDialog,
@@ -17,9 +19,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { ApiClientError } from "@/lib/api/client";
 import {
+  bulkDeleteExamStructureTemplateRecords,
   deleteExamStructureTemplateRecord,
   fetchExamStructureTemplates,
 } from "@/lib/api/exam-structure-templates";
+import {
+  formatBulkDeletionResult,
+  getDeletedBulkItemIds,
+} from "@/lib/bulk-deletion-result";
+import { MAX_ADMIN_BULK_DELETE_ITEMS } from "@/lib/validations/bulk-deletion";
 import type { ExamStructureTemplate } from "@/types/exam-structure-template";
 
 type ActivePanel =
@@ -53,6 +61,9 @@ export function ExamStructureTemplateManagement() {
   const [isMutating, setIsMutating] = useState(false);
   const [deleteTarget, setDeleteTarget] =
     useState<ExamStructureTemplate | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [bulkReport, setBulkReport] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const formTriggerRef = useRef<HTMLButtonElement | null>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -64,6 +75,7 @@ export function ExamStructureTemplateManagement() {
       .then((response) => {
         if (isCurrent) {
           setTemplates(response.data.templates);
+          setSelectedIds(new Set());
           setLoadError(null);
         }
       })
@@ -127,6 +139,67 @@ export function ExamStructureTemplateManagement() {
       );
       setDeleteTarget(null);
       setActivePanel(null);
+    } catch (error) {
+      setActionError(getActionError(error));
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  function toggleSelected(templateId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(templateId)) next.delete(templateId);
+      else next.add(templateId);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    const selectable = templates.filter((template) => !template.isBuiltIn);
+    setSelectedIds((current) => {
+      const allSelected =
+        selectable.length > 0 &&
+        selectable.every((template) => current.has(template.id));
+      return allSelected
+        ? new Set()
+        : new Set(selectable.map((template) => template.id));
+    });
+  }
+
+  async function handleBulkDelete() {
+    const selected = templates.filter((template) =>
+      selectedIds.has(template.id),
+    );
+    if (selected.length === 0 || isMutating) return;
+    setIsMutating(true);
+    setActionError(null);
+    setBulkReport(null);
+    try {
+      const response = await bulkDeleteExamStructureTemplateRecords(
+        selected.map((template) => ({
+          id: template.id,
+          expectedUpdatedAt: template.updatedAt,
+        })),
+      );
+      const deletedIds = getDeletedBulkItemIds(response.data);
+      setTemplates((current) =>
+        current.filter((template) => !deletedIds.has(template.id)),
+      );
+      setSelectedIds(
+        new Set(
+          response.data.items
+            .filter((item) => !deletedIds.has(item.id))
+            .map((item) => item.id),
+        ),
+      );
+      setBulkReport(
+        formatBulkDeletionResult(
+          response.data,
+          new Map(selected.map((template) => [template.id, template.name])),
+        ),
+      );
+      setIsBulkDeleteOpen(false);
     } catch (error) {
       setActionError(getActionError(error));
     } finally {
@@ -229,12 +302,30 @@ export function ExamStructureTemplateManagement() {
         )}
       </AlertDialog>
 
+      <BulkDeleteConfirmationDialog
+        open={isBulkDeleteOpen}
+        count={selectedIds.size}
+        entityLabel="mẫu cấu trúc"
+        description="Xóa vĩnh viễn các mẫu cấu trúc tùy chỉnh đã chọn? Mẫu dựng sẵn không thể được chọn hoặc xóa."
+        isPending={isMutating}
+        onClose={() => setIsBulkDeleteOpen(false)}
+        onConfirm={() => void handleBulkDelete()}
+      />
+
       {actionError && !deleteTarget && (
         <p
           role="alert"
           className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border px-4 py-3 text-sm"
         >
           {actionError}
+        </p>
+      )}
+      {bulkReport && (
+        <p
+          role="status"
+          className="border-border bg-muted/30 whitespace-pre-line rounded-md border px-4 py-3 text-sm"
+        >
+          {bulkReport}
         </p>
       )}
 
@@ -259,9 +350,20 @@ export function ExamStructureTemplateManagement() {
               {templates.length} mẫu cấu trúc
             </p>
           </div>
+          <BulkSelectionToolbar
+            selectedCount={selectedIds.size}
+            entityLabel="mẫu cấu trúc"
+            isBusy={isMutating || activePanel !== null}
+            deleteDisabled={selectedIds.size > MAX_ADMIN_BULK_DELETE_ITEMS}
+            onClear={() => setSelectedIds(new Set())}
+            onDelete={() => setIsBulkDeleteOpen(true)}
+          />
           <ExamStructureTemplateTable
             templates={templates}
             isBusy={isMutating || activePanel !== null}
+            selectedIds={selectedIds}
+            onToggleSelected={toggleSelected}
+            onToggleAll={toggleAll}
             onEdit={(template, trigger) => {
               formTriggerRef.current = trigger;
               setActivePanel({ type: "edit", template });

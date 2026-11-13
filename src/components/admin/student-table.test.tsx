@@ -23,6 +23,9 @@ describe("StudentTable pending actions", () => {
         students={[student]}
         isBusy
         pendingStatusStudentId={student.id}
+        selectedIds={new Set()}
+        onToggleSelected={vi.fn()}
+        onToggleAll={vi.fn()}
         onEdit={vi.fn()}
         onResetPassword={vi.fn()}
         onToggleStatus={vi.fn()}
@@ -43,6 +46,9 @@ describe("StudentTable pending actions", () => {
       <StudentTable
         students={[student]}
         isBusy={false}
+        selectedIds={new Set()}
+        onToggleSelected={vi.fn()}
+        onToggleAll={vi.fn()}
         onEdit={onEdit}
         onResetPassword={vi.fn()}
         onToggleStatus={vi.fn()}
@@ -62,6 +68,34 @@ describe("StudentTable pending actions", () => {
       student,
       expect.any(HTMLButtonElement),
     );
+  });
+
+  it("selects one row or every row without invoking destructive actions", () => {
+    const onToggleSelected = vi.fn();
+    const onToggleAll = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <StudentTable
+        students={[student]}
+        isBusy={false}
+        selectedIds={new Set()}
+        onToggleSelected={onToggleSelected}
+        onToggleAll={onToggleAll}
+        onEdit={vi.fn()}
+        onResetPassword={vi.fn()}
+        onToggleStatus={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Chọn học sinh Học Sinh"));
+    fireEvent.click(
+      screen.getByLabelText("Chọn tất cả học sinh trên trang hiện tại"),
+    );
+
+    expect(onToggleSelected).toHaveBeenCalledWith(student.id);
+    expect(onToggleAll).toHaveBeenCalledTimes(1);
+    expect(onDelete).not.toHaveBeenCalled();
   });
 });
 

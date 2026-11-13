@@ -22,6 +22,9 @@ interface StudentTableProps {
   students: StudentAccount[];
   isBusy: boolean;
   pendingStatusStudentId?: string | null;
+  selectedIds: Set<string>;
+  onToggleSelected: (studentId: string) => void;
+  onToggleAll: () => void;
   onEdit: (student: StudentAccount, trigger: HTMLButtonElement) => void;
   onResetPassword: (
     student: StudentAccount,
@@ -35,12 +38,43 @@ export function StudentTable({
   students,
   isBusy,
   pendingStatusStudentId,
+  selectedIds,
+  onToggleSelected,
+  onToggleAll,
   onEdit,
   onResetPassword,
   onToggleStatus,
   onDelete,
 }: StudentTableProps) {
+  const allSelected =
+    students.length > 0 &&
+    students.every((student) => selectedIds.has(student.id));
+  const someSelected = students.some((student) => selectedIds.has(student.id));
   const columns = columnHelper.columns([
+    columnHelper.display({
+      id: "select",
+      header: () => (
+        <input
+          type="checkbox"
+          className="accent-primary size-4"
+          aria-label="Chọn tất cả học sinh trên trang hiện tại"
+          aria-checked={someSelected && !allSelected ? "mixed" : allSelected}
+          checked={allSelected}
+          disabled={isBusy || students.length === 0}
+          onChange={onToggleAll}
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          type="checkbox"
+          className="accent-primary size-4"
+          aria-label={`Chọn học sinh ${row.original.fullName}`}
+          checked={selectedIds.has(row.original.id)}
+          disabled={isBusy}
+          onChange={() => onToggleSelected(row.original.id)}
+        />
+      ),
+    }),
     columnHelper.accessor("fullName", {
       header: "Họ và tên",
       cell: ({ row, getValue }) => (
@@ -137,7 +171,7 @@ export function StudentTable({
                 <th
                   key={header.id}
                   scope="col"
-                  className="text-foreground px-4 py-3 text-left font-semibold"
+                  className="text-foreground px-4 py-3 text-left font-semibold first:w-12"
                 >
                   {header.isPlaceholder
                     ? null

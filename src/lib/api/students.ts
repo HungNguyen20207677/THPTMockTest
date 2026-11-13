@@ -8,6 +8,7 @@ import type {
 import type { ApiSuccessResponse } from "@/types/api";
 import type { StudentAccount } from "@/types/user";
 import type { HardDeleteResult } from "@/types/deletion";
+import type { BulkDeletionResult } from "@/types/bulk-deletion";
 
 const STUDENTS_ENDPOINT = "/api/admin/students";
 
@@ -69,4 +70,13 @@ export function deleteStudentAccount(
   return apiRequest(`${STUDENTS_ENDPOINT}/${studentId}`, {
     method: "DELETE",
   });
+}
+
+export function bulkDeleteStudentAccounts(
+  items: Array<{ id: string }>,
+): Promise<ApiSuccessResponse<BulkDeletionResult>> {
+  return apiRequest(
+    `${STUDENTS_ENDPOINT}/bulk-delete`,
+    jsonRequest("POST", { items }),
+  );
 }

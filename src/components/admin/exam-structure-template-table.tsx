@@ -31,6 +31,9 @@ const columnHelper = createColumnHelper<
 interface ExamStructureTemplateTableProps {
   templates: ExamStructureTemplate[];
   isBusy: boolean;
+  selectedIds: Set<string>;
+  onToggleSelected: (templateId: string) => void;
+  onToggleAll: () => void;
   onEdit: (template: ExamStructureTemplate, trigger: HTMLButtonElement) => void;
   onDelete: (
     template: ExamStructureTemplate,
@@ -41,10 +44,47 @@ interface ExamStructureTemplateTableProps {
 export function ExamStructureTemplateTable({
   templates,
   isBusy,
+  selectedIds,
+  onToggleSelected,
+  onToggleAll,
   onEdit,
   onDelete,
 }: ExamStructureTemplateTableProps) {
+  const selectableTemplates = templates.filter(
+    (template) => !template.isBuiltIn,
+  );
+  const allSelected =
+    selectableTemplates.length > 0 &&
+    selectableTemplates.every((template) => selectedIds.has(template.id));
+  const someSelected = selectableTemplates.some((template) =>
+    selectedIds.has(template.id),
+  );
   const columns = columnHelper.columns([
+    columnHelper.display({
+      id: "select",
+      header: () => (
+        <input
+          type="checkbox"
+          className="accent-primary size-4"
+          aria-label="Chọn tất cả mẫu tùy chỉnh trên trang hiện tại"
+          aria-checked={someSelected && !allSelected ? "mixed" : allSelected}
+          checked={allSelected}
+          disabled={isBusy || selectableTemplates.length === 0}
+          onChange={onToggleAll}
+        />
+      ),
+      cell: ({ row }) =>
+        row.original.isBuiltIn ? null : (
+          <input
+            type="checkbox"
+            className="accent-primary size-4"
+            aria-label={`Chọn mẫu cấu trúc ${row.original.name}`}
+            checked={selectedIds.has(row.original.id)}
+            disabled={isBusy}
+            onChange={() => onToggleSelected(row.original.id)}
+          />
+        ),
+    }),
     columnHelper.accessor("name", {
       header: "Tên mẫu",
       cell: ({ row, getValue }) => (
@@ -158,7 +198,7 @@ export function ExamStructureTemplateTable({
                 <th
                   key={header.id}
                   scope="col"
-                  className={`text-muted-foreground px-4 py-2.5 text-left text-xs font-semibold tracking-wide uppercase ${header.column.id === "actions" ? "text-right" : ""}`}
+                  className={`text-muted-foreground px-4 py-2.5 text-left text-xs font-semibold tracking-wide uppercase ${header.column.id === "actions" ? "text-right" : ""} ${header.column.id === "select" ? "w-12" : ""}`}
                 >
                   {header.isPlaceholder
                     ? null

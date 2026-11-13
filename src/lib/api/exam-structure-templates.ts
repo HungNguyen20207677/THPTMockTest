@@ -5,6 +5,7 @@ import type {
   UpsertExamStructureTemplateInput,
 } from "@/lib/validations/exam-structure-template";
 import type { ApiSuccessResponse } from "@/types/api";
+import type { BulkDeletionResult } from "@/types/bulk-deletion";
 import type { ExamStructureTemplate } from "@/types/exam-structure-template";
 
 const EXAM_STRUCTURE_TEMPLATES_ENDPOINT = "/api/admin/exam-structure-templates";
@@ -49,5 +50,14 @@ export function deleteExamStructureTemplateRecord(
   return apiRequest(
     `${EXAM_STRUCTURE_TEMPLATES_ENDPOINT}/${templateId}`,
     jsonRequest("DELETE", input),
+  );
+}
+
+export function bulkDeleteExamStructureTemplateRecords(
+  items: Array<{ id: string; expectedUpdatedAt: string }>,
+): Promise<ApiSuccessResponse<BulkDeletionResult>> {
+  return apiRequest(
+    `${EXAM_STRUCTURE_TEMPLATES_ENDPOINT}/bulk-delete`,
+    jsonRequest("POST", { items }),
   );
 }

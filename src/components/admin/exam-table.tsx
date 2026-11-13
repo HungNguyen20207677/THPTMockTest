@@ -55,6 +55,9 @@ function getAvailabilityLabel(exam: ExamSummary): string {
 interface ExamTableProps {
   exams: ExamSummary[];
   isBusy: boolean;
+  selectedIds: Set<string>;
+  onToggleSelected: (examId: string) => void;
+  onToggleAll: () => void;
   onStatusChange: (
     exam: ExamSummary,
     status: ExamStatus,
@@ -66,10 +69,40 @@ interface ExamTableProps {
 export function ExamTable({
   exams,
   isBusy,
+  selectedIds,
+  onToggleSelected,
+  onToggleAll,
   onStatusChange,
   onDelete,
 }: ExamTableProps) {
+  const allSelected =
+    exams.length > 0 && exams.every((exam) => selectedIds.has(exam.id));
+  const someSelected = exams.some((exam) => selectedIds.has(exam.id));
   const columns = columnHelper.columns([
+    columnHelper.display({
+      id: "select",
+      header: () => (
+        <input
+          type="checkbox"
+          className="accent-primary size-4"
+          aria-label="Chọn tất cả đề thi trên trang hiện tại"
+          aria-checked={someSelected && !allSelected ? "mixed" : allSelected}
+          checked={allSelected}
+          disabled={isBusy || exams.length === 0}
+          onChange={onToggleAll}
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          type="checkbox"
+          className="accent-primary size-4"
+          aria-label={`Chọn đề thi ${row.original.title}`}
+          checked={selectedIds.has(row.original.id)}
+          disabled={isBusy}
+          onChange={() => onToggleSelected(row.original.id)}
+        />
+      ),
+    }),
     columnHelper.accessor("title", {
       header: "Tên đề thi",
       cell: ({ row, getValue }) => (
@@ -198,6 +231,7 @@ export function ExamTable({
                   scope="col"
                   className={cn(
                     "text-muted-foreground px-4 py-2.5 text-left text-xs font-semibold tracking-wide uppercase",
+                    header.column.id === "select" && "w-12",
                     header.column.id === "actions" && "text-right",
                   )}
                 >

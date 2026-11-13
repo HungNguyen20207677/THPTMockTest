@@ -11,6 +11,7 @@ import type {
 import { getExamPdfValidationError } from "@/lib/validations/exam-pdf";
 import type { ApiSuccessResponse } from "@/types/api";
 import type { HardDeleteResult } from "@/types/deletion";
+import type { BulkDeletionResult } from "@/types/bulk-deletion";
 import type {
   ExamDetail,
   ExamPdfUploadReference,
@@ -301,5 +302,14 @@ export function deleteExamRecord(
   return apiRequest(
     `${EXAMS_ENDPOINT}/${examId}`,
     jsonRequest("DELETE", input),
+  );
+}
+
+export function bulkDeleteExamRecords(
+  items: Array<{ id: string; expectedUpdatedAt: string }>,
+): Promise<ApiSuccessResponse<BulkDeletionResult>> {
+  return apiRequest(
+    `${EXAMS_ENDPOINT}/bulk-delete`,
+    jsonRequest("POST", { items }),
   );
 }
