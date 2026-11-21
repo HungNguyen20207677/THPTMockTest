@@ -71,6 +71,27 @@ The application initializes declared MongoDB indexes on first access. Ensure the
 production database user can create indexes and deploy new index/schema versions
 during low traffic; do not run destructive `syncIndexes()` automatically.
 
+### Practice mode persistence rollout
+
+Exam attempts without `mode` are read as `MOCK`, and Exams without
+`practiceEnabled` are read as `false`. F.8B.1 intentionally keeps the existing
+attempt-number and active-attempt unique indexes unchanged and keeps `expiresAt`
+required for all created attempts. Before enabling Practice attempt creation:
+
+1. Backfill missing `ExamAttempt.mode` to `MOCK` and missing
+   `Exam.practiceEnabled` to `false` in bounded, idempotent batches.
+2. Verify no missing, null, or unknown modes and no duplicate target keys.
+3. Create a new unique numbering index on
+   `{ studentId: 1, examId: 1, mode: 1, attemptNumber: 1 }` under a new name.
+4. Keep `unique_active_attempt_per_student_exam` unchanged so at most one active
+   attempt exists across both modes.
+5. After verifying the new numbering index, drop only
+   `unique_attempt_number_per_student_exam`. Do not use `syncIndexes()`.
+
+Nullable Practice expiration and mode-aware lifecycle behavior are deferred to
+F.8B.2. Do not create Practice attempts or use far-future expiration values
+before that lifecycle release is deployed.
+
 ## Architecture
 
 Application features follow this dependency direction:

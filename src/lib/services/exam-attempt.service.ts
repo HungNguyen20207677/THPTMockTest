@@ -3,6 +3,7 @@ import "server-only";
 import {
   ESSAY_IMAGE_MAX_COUNT,
   EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_MODE,
   EXAM_ATTEMPT_STATUS,
   STUDENT_EXAM_STATE,
   TERMINAL_EXAM_ATTEMPT_STATUSES,
@@ -245,6 +246,7 @@ function toExamAttempt(
   return {
     id: attempt.id,
     examId: attempt.examId,
+    mode: attempt.mode,
     attemptNumber: attempt.attemptNumber,
     status: attempt.status,
     answerRevision: attempt.answerRevision,
@@ -538,6 +540,7 @@ export async function startOrResumeExamAttempt(
           {
             examId,
             studentId: actor.id,
+            mode: EXAM_ATTEMPT_MODE.MOCK,
             attemptNumber: attemptCount + 1,
             status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
             startedAt,
@@ -680,6 +683,7 @@ export async function listStudentExams(
       title: exam.title,
       description: exam.description,
       durationMinutes: EXAM_STRUCTURE.durationMinutes,
+      practiceEnabled: exam.practiceEnabled,
       availableFrom: exam.availableFrom?.toISOString() ?? null,
       availableUntil: exam.availableUntil?.toISOString() ?? null,
       assignmentDueAt: exam.assignmentDueAt?.toISOString() ?? null,

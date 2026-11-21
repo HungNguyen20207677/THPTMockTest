@@ -4,6 +4,8 @@ import { model, models, Schema, type Model, type Types } from "mongoose";
 
 import {
   EXAM_ATTEMPT_GRADING_STATUSES,
+  EXAM_ATTEMPT_MODE,
+  EXAM_ATTEMPT_MODES,
   EXAM_ATTEMPT_STATUSES,
   EXAM_ATTEMPT_STATUS,
 } from "@/lib/constants/exam-attempt";
@@ -12,6 +14,7 @@ import { examAttemptAnswersSchema } from "@/lib/validations/attempt-answers";
 import { examAttemptGradingSnapshotSchema } from "@/lib/validations/attempt-grading";
 import type {
   ExamAttemptStatus,
+  ExamAttemptMode,
   ExamAttemptAnswers,
   ExamAttemptGradingStatus,
   ExamAttemptGradingSnapshot,
@@ -20,6 +23,7 @@ import type {
 export interface ExamAttemptRecord {
   examId: Types.ObjectId;
   studentId: Types.ObjectId;
+  mode: ExamAttemptMode;
   attemptNumber: number;
   status: ExamAttemptStatus;
   gradingStatus?: ExamAttemptGradingStatus;
@@ -49,6 +53,13 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
+    },
+    mode: {
+      type: String,
+      enum: EXAM_ATTEMPT_MODES,
+      required: true,
+      default: EXAM_ATTEMPT_MODE.MOCK,
+      immutable: true,
     },
     attemptNumber: { type: Number, required: true, min: 1 },
     status: {

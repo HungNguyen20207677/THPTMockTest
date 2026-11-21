@@ -114,6 +114,7 @@ export interface ExamSummary {
   id: string;
   title: string;
   status: ExamStatus;
+  practiceEnabled: boolean;
   visibilityMode: ExamVisibilityMode;
   assignedStudentCount: number;
   availableFrom: string | null;

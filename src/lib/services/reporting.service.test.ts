@@ -72,6 +72,7 @@ vi.mock("@/lib/services/exam-attempt.service", () => ({
 }));
 
 import {
+  EXAM_ATTEMPT_MODE,
   EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
 } from "@/lib/constants/exam-attempt";
@@ -395,6 +396,7 @@ function createAttempt(
     id: "attempt-id",
     examId: "exam-id",
     studentId: studentActor.id,
+    mode: EXAM_ATTEMPT_MODE.MOCK,
     attemptNumber: 1,
     status: EXAM_ATTEMPT_STATUS.SUBMITTED,
     startedAt: new Date("2026-08-11T01:00:00.000Z"),

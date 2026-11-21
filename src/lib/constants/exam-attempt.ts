@@ -1,3 +1,13 @@
+export const EXAM_ATTEMPT_MODE = {
+  MOCK: "MOCK",
+  PRACTICE: "PRACTICE",
+} as const;
+
+export const EXAM_ATTEMPT_MODES = [
+  EXAM_ATTEMPT_MODE.MOCK,
+  EXAM_ATTEMPT_MODE.PRACTICE,
+] as const;
+
 export const EXAM_ATTEMPT_STATUS = {
   IN_PROGRESS: "IN_PROGRESS",
   SUBMITTED: "SUBMITTED",

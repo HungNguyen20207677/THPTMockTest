@@ -353,6 +353,7 @@ function createStoredExam(
 
   return {
     id: "exam-id",
+    practiceEnabled: false,
     ...inputWithoutAvailability,
     availableFrom: availableFrom ? new Date(availableFrom) : null,
     availableUntil: availableUntil ? new Date(availableUntil) : null,

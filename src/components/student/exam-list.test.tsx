@@ -34,6 +34,7 @@ function createCompletedExam(
     id: "exam-id",
     title: "Đề giới hạn lượt",
     durationMinutes: 90,
+    practiceEnabled: false,
     availableFrom: null,
     availableUntil: null,
     availabilityState: "UNRESTRICTED",

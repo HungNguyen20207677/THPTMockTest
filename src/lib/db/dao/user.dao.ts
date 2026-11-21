@@ -7,6 +7,7 @@ import { EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
 import { USER_ROLE, type UserRole } from "@/lib/constants/roles";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { ExamAttemptModel } from "@/lib/db/models/exam-attempt.model";
+import { getMockExamAttemptFilter } from "@/lib/exam/attempt-mode";
 import { UserModel } from "@/lib/db/models/user.model";
 import type { ExamVisibilityMode } from "@/types/exam";
 
@@ -290,6 +291,7 @@ export async function getExamAssignmentCompletionPage(input: {
         pipeline: [
           {
             $match: {
+              ...getMockExamAttemptFilter(),
               $expr: {
                 $and: [
                   { $eq: ["$studentId", "$$rosterStudentId"] },

@@ -86,6 +86,7 @@ vi.mock("@/lib/db/mongoose", () => ({
 }));
 
 import {
+  EXAM_ATTEMPT_MODE,
   EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
   STUDENT_EXAM_STATE,
@@ -159,6 +160,7 @@ function createStudentExam(
     title: "Đề thi thử Toán số 1",
     description: "Đề luyện tập",
     status: EXAM_STATUS.PUBLISHED,
+    practiceEnabled: false,
     part3InputMode: PART3_INPUT_MODE.BUBBLE,
     allowRetake: true,
     maxAttempts:
@@ -378,6 +380,7 @@ function createAttempt(
     id: "attempt-id",
     examId: "exam-id",
     studentId: student.id,
+    mode: EXAM_ATTEMPT_MODE.MOCK,
     attemptNumber: 1,
     status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
     startedAt: new Date("2026-08-11T02:55:00.000Z"),
@@ -526,6 +529,7 @@ describe("ExamAttempt service", () => {
       {
         examId: "exam-id",
         studentId: student.id,
+        mode: EXAM_ATTEMPT_MODE.MOCK,
         attemptNumber: 1,
         status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
         startedAt: serverNow,

@@ -41,6 +41,7 @@ export interface ExamPersistenceRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  practiceEnabled: boolean;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
   assignmentDueAt?: Date | null;
@@ -111,6 +112,7 @@ export interface StudentExamPersistenceRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  practiceEnabled: boolean;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
   assignmentDueAt?: Date | null;
@@ -178,6 +180,7 @@ interface ExamDocumentData {
   title: string;
   description?: string;
   status: ExamStatus;
+  practiceEnabled?: boolean;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
   assignmentDueAt?: Date | null;
@@ -204,6 +207,7 @@ interface StudentExamDocumentData {
   title: string;
   description?: string;
   status: ExamStatus;
+  practiceEnabled?: boolean;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
   assignmentDueAt?: Date | null;
@@ -381,6 +385,7 @@ function toExamRecord(exam: ExamDocumentData): ExamPersistenceRecord {
     title: exam.title,
     description: exam.description,
     status: exam.status,
+    practiceEnabled: exam.practiceEnabled === true,
     availableFrom: exam.availableFrom ?? null,
     availableUntil: exam.availableUntil ?? null,
     assignmentDueAt: exam.assignmentDueAt ?? null,
@@ -462,6 +467,7 @@ function toStudentExamRecord(
     title: exam.title,
     description: exam.description,
     status: exam.status,
+    practiceEnabled: exam.practiceEnabled === true,
     availableFrom: exam.availableFrom ?? null,
     availableUntil: exam.availableUntil ?? null,
     assignmentDueAt: exam.assignmentDueAt ?? null,
@@ -579,6 +585,7 @@ export async function listPublishedStudentExamRecords(
       title: 1,
       description: 1,
       status: 1,
+      practiceEnabled: 1,
       availableFrom: 1,
       availableUntil: 1,
       assignmentDueAt: 1,
@@ -625,6 +632,7 @@ export async function listStudentExamRecordsByIds(
       title: 1,
       description: 1,
       status: 1,
+      practiceEnabled: 1,
       availableFrom: 1,
       availableUntil: 1,
       assignmentDueAt: 1,
@@ -656,6 +664,7 @@ export async function findStudentExamRecordById(
     title: 1,
     description: 1,
     status: 1,
+    practiceEnabled: 1,
     availableFrom: 1,
     availableUntil: 1,
     assignmentDueAt: 1,

@@ -20,6 +20,7 @@ describe("Exam model", () => {
     expect(exam.availableFrom).toBeNull();
     expect(exam.availableUntil).toBeNull();
     expect(exam.assignmentDueAt).toBeNull();
+    expect(exam.practiceEnabled).toBe(false);
     expect(exam.structureTemplateId).toBeUndefined();
     expect(exam.structureSnapshot).toBeUndefined();
     expect(exam.toObject().questionTopicIds).toEqual(

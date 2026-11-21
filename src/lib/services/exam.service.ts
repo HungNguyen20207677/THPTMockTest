@@ -122,6 +122,7 @@ function toExamSummary(
     id: exam.id,
     title: exam.title,
     status: exam.status,
+    practiceEnabled: exam.practiceEnabled,
     availableFrom: exam.availableFrom?.toISOString() ?? null,
     availableUntil: exam.availableUntil?.toISOString() ?? null,
     assignmentDueAt: exam.assignmentDueAt?.toISOString() ?? null,

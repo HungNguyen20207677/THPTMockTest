@@ -114,6 +114,7 @@ describe("Exam DAO compatibility", () => {
     const exam = await findExamRecordById("legacy-exam-id");
 
     expect(exam?.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
+    expect(exam?.practiceEnabled).toBe(false);
     expect(exam?.answerKeyRevision).toBe(1);
     expect(exam?.visibilityMode).toBe(EXAM_VISIBILITY_MODE.ALL_STUDENTS);
     expect(exam?.settings.maxAttempts).toBeNull();
@@ -253,6 +254,7 @@ describe("Exam DAO compatibility", () => {
       expect.objectContaining({ part3InputMode: 1 }),
     );
     expect(exam?.part3InputMode).toBe(PART3_INPUT_MODE.BUBBLE);
+    expect(exam?.practiceEnabled).toBe(false);
     expect(exam?.availableFrom).toBeNull();
     expect(exam?.availableUntil).toBeNull();
     expect(exam?.assignmentDueAt).toBeNull();

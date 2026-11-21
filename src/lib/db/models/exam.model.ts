@@ -38,6 +38,7 @@ export interface ExamRecord {
   title: string;
   description?: string;
   status: ExamStatus;
+  practiceEnabled: boolean;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
   assignmentDueAt?: Date | null;
@@ -191,6 +192,7 @@ const examSchema = new Schema<ExamRecord>(
       required: true,
       index: true,
     },
+    practiceEnabled: { type: Boolean, required: true, default: false },
     availableFrom: { type: Date, default: null },
     availableUntil: { type: Date, default: null },
     assignmentDueAt: { type: Date, default: null },

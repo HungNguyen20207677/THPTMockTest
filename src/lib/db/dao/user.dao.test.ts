@@ -21,7 +21,10 @@ vi.mock("@/lib/db/models/exam-attempt.model", () => ({
   ExamAttemptModel: { collection: { name: "examattempts" } },
 }));
 
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_MODE,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import { EXAM_VISIBILITY_MODE } from "@/lib/constants/exam";
 import { getExamAssignmentCompletionPage } from "@/lib/db/dao/user.dao";
 
@@ -85,6 +88,9 @@ describe("Exam assignment completion DAO", () => {
     expect(pipeline[0].$match).toMatchObject({ role: "STUDENT" });
     expect(pipeline[0].$match._id.$in).toHaveLength(1);
     expect(pipeline[1].$lookup.from).toBe("examattempts");
+    expect(pipeline[1].$lookup.pipeline[0].$match).toMatchObject({
+      $or: [{ mode: EXAM_ATTEMPT_MODE.MOCK }, { mode: { $exists: false } }],
+    });
     expect(JSON.stringify(pipeline)).toContain("terminalAttempts");
     expect(JSON.stringify(pipeline)).toContain("firstCompletion");
     expect(result).toEqual({

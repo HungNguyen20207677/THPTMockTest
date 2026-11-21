@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   bulkWrite: vi.fn(),
   deleteMany: vi.fn(),
   find: vi.fn(),
+  findOne: vi.fn(),
   findOneAndUpdate: vi.fn(),
   init: vi.fn(),
 }));
@@ -20,6 +21,7 @@ vi.mock("@/lib/db/models/exam-attempt.model", () => ({
     countDocuments: mocks.countDocuments,
     deleteMany: mocks.deleteMany,
     find: mocks.find,
+    findOne: mocks.findOne,
     findOneAndUpdate: mocks.findOneAndUpdate,
     init: mocks.init,
   },
@@ -29,9 +31,14 @@ import {
   attachEssayImageToOwnedActiveExamAttempt,
   autoSubmitExpiredExamAttemptRecord,
   countExamAttemptRecordsForStudentExam,
+  countExamAttemptRecordsByStatus,
   deleteExamAttemptRecordsByExamId,
   deleteExamAttemptRecordsByStudentId,
+  findActiveExamAttemptRecord,
+  findExamAttemptRecordById,
+  listAllExamAttemptRecordsForStudent,
   listExamAttemptDeletionSources,
+  listTerminalExamAttemptRecordPage,
   removeEssayImageFromOwnedActiveExamAttempt,
   replaceTerminalExamAttemptGradings,
   saveOwnedActiveExamAttemptAnswers,
@@ -41,12 +48,21 @@ import {
 } from "@/lib/db/dao/exam-attempt.dao";
 import {
   EXAM_ATTEMPT_GRADING_STATUS,
+  EXAM_ATTEMPT_MODE,
   EXAM_ATTEMPT_STATUS,
   TERMINAL_EXAM_ATTEMPT_STATUSES,
 } from "@/lib/constants/exam-attempt";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 import { gradeAttemptAnswers } from "@/lib/exam/grading";
 import type { ExamAnswerKey } from "@/types/exam";
+
+const mockModeGuard = {
+  $and: [
+    {
+      $or: [{ mode: EXAM_ATTEMPT_MODE.MOCK }, { mode: { $exists: false } }],
+    },
+  ],
+};
 
 describe("ExamAttempt cascade DAO", () => {
   beforeEach(() => {
@@ -56,6 +72,7 @@ describe("ExamAttempt cascade DAO", () => {
     mocks.bulkWrite.mockReset();
     mocks.deleteMany.mockReset();
     mocks.find.mockReset();
+    mocks.findOne.mockReset();
     mocks.findOneAndUpdate.mockReset();
     mocks.findOneAndUpdate.mockReturnValue({
       lean: () => ({ exec: () => Promise.resolve(null) }),
@@ -80,6 +97,7 @@ describe("ExamAttempt cascade DAO", () => {
     expect(mocks.countDocuments).toHaveBeenCalledWith({
       studentId: "student-id",
       examId: "exam-id",
+      ...mockModeGuard,
     });
     expect(sessionQuery).toHaveBeenCalledWith(session);
   });
@@ -320,6 +338,7 @@ describe("ExamAttempt cascade DAO", () => {
         studentId: "student-id",
         status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
         expiresAt: { $gt: now },
+        ...mockModeGuard,
       },
       { $addToSet: { flaggedQuestionIds: "part-one-question-1" } },
       {
@@ -542,6 +561,7 @@ describe("ExamAttempt cascade DAO", () => {
           { manualGradingRevision: 0 },
           { manualGradingRevision: { $exists: false } },
         ],
+        ...mockModeGuard,
       },
       {
         $set: {
@@ -560,6 +580,7 @@ describe("ExamAttempt cascade DAO", () => {
         status: { $in: TERMINAL_EXAM_ATTEMPT_STATUSES },
         gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
         manualGradingRevision: 3,
+        ...mockModeGuard,
       },
       {
         $set: {
@@ -616,6 +637,7 @@ describe("ExamAttempt cascade DAO", () => {
           EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED,
         ],
       },
+      ...mockModeGuard,
     });
     expect(operations[0].updateOne.update).toEqual({
       $set: {
@@ -625,5 +647,90 @@ describe("ExamAttempt cascade DAO", () => {
         updatedAt: gradedAt,
       },
     });
+  });
+
+  it("maps a legacy missing mode to MOCK and scopes the ID query in MongoDB", async () => {
+    const legacyAttempt = {
+      _id: { toString: () => "attempt-id" },
+      examId: { toString: () => "exam-id" },
+      studentId: { toString: () => "student-id" },
+      attemptNumber: 1,
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      startedAt: new Date("2026-08-11T01:00:00.000Z"),
+      expiresAt: new Date("2026-08-11T02:30:00.000Z"),
+      submittedAt: new Date("2026-08-11T02:00:00.000Z"),
+      createdAt: new Date("2026-08-11T01:00:00.000Z"),
+      updatedAt: new Date("2026-08-11T02:00:00.000Z"),
+    };
+    mocks.findOne.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve(legacyAttempt) }),
+    });
+
+    const attempt = await findExamAttemptRecordById("attempt-id");
+
+    expect(attempt?.mode).toBe(EXAM_ATTEMPT_MODE.MOCK);
+    expect(mocks.findOne).toHaveBeenCalledWith({
+      _id: "attempt-id",
+      ...mockModeGuard,
+    });
+  });
+
+  it("isolates active state and student Exam-list inputs before service counting", async () => {
+    mocks.findOne.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve(null) }),
+    });
+    mocks.find.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve([]) }),
+    });
+
+    await findActiveExamAttemptRecord("student-id", "exam-id");
+    await listAllExamAttemptRecordsForStudent("student-id");
+
+    expect(mocks.findOne).toHaveBeenCalledWith({
+      studentId: "student-id",
+      examId: "exam-id",
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      ...mockModeGuard,
+    });
+    expect(mocks.find).toHaveBeenCalledWith({
+      studentId: "student-id",
+      ...mockModeGuard,
+    });
+  });
+
+  it("applies the same MOCK-only filter before result pagination and count", async () => {
+    const pageExec = vi.fn().mockResolvedValue([]);
+    const lean = vi.fn().mockReturnValue({ exec: pageExec });
+    const limit = vi.fn().mockReturnValue({ lean });
+    const skip = vi.fn().mockReturnValue({ limit });
+    const sort = vi.fn().mockReturnValue({ skip });
+    mocks.find.mockReturnValue({ sort });
+    const countExec = vi.fn().mockResolvedValue(0);
+    mocks.countDocuments.mockReturnValue({ exec: countExec });
+
+    await listTerminalExamAttemptRecordPage({}, 2, 20);
+
+    const query = mocks.find.mock.calls[0][0];
+    expect(query).toMatchObject(mockModeGuard);
+    expect(mocks.countDocuments).toHaveBeenCalledWith(query);
+    expect(sort).toHaveBeenCalledWith({ submittedAt: -1, _id: -1 });
+    expect(skip).toHaveBeenCalledWith(20);
+    expect(limit).toHaveBeenCalledWith(20);
+  });
+
+  it("isolates every dashboard status aggregate to MOCK and legacy attempts", async () => {
+    mocks.countDocuments
+      .mockReturnValueOnce({ exec: () => Promise.resolve(1) })
+      .mockReturnValueOnce({ exec: () => Promise.resolve(2) })
+      .mockReturnValueOnce({ exec: () => Promise.resolve(3) });
+
+    await expect(countExamAttemptRecordsByStatus()).resolves.toEqual({
+      inProgress: 1,
+      submitted: 2,
+      autoSubmitted: 3,
+    });
+    for (const [query] of mocks.countDocuments.mock.calls) {
+      expect(query).toMatchObject(mockModeGuard);
+    }
   });
 });

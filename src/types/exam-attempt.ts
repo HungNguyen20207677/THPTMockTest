@@ -1,5 +1,6 @@
 import type {
   ESSAY_IMAGE_ALLOWED_FORMATS,
+  EXAM_ATTEMPT_MODE,
   EXAM_ATTEMPT_GRADING_STATUS,
   EXAM_ATTEMPT_STATUS,
   STUDENT_EXAM_STATE,
@@ -19,6 +20,8 @@ export type ExamAttemptGradingStatus =
   (typeof EXAM_ATTEMPT_GRADING_STATUS)[keyof typeof EXAM_ATTEMPT_GRADING_STATUS];
 export type StudentExamState =
   (typeof STUDENT_EXAM_STATE)[keyof typeof STUDENT_EXAM_STATE];
+export type ExamAttemptMode =
+  (typeof EXAM_ATTEMPT_MODE)[keyof typeof EXAM_ATTEMPT_MODE];
 
 export interface AttemptPartTwoAnswer {
   a: boolean | null;
@@ -169,6 +172,7 @@ export type ExamAttemptGradingSnapshot =
 export interface ExamAttempt {
   id: string;
   examId: string;
+  mode: ExamAttemptMode;
   attemptNumber: number;
   status: ExamAttemptStatus;
   answerRevision: number;
@@ -185,6 +189,7 @@ export interface StudentExamSummary {
   title: string;
   description?: string;
   durationMinutes: number;
+  practiceEnabled: boolean;
   availableFrom: string | null;
   availableUntil: string | null;
   assignmentDueAt: string | null;

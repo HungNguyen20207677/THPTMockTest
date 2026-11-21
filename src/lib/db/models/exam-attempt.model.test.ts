@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_MODE,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import { ExamAttemptModel } from "@/lib/db/models/exam-attempt.model";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
 
@@ -17,8 +20,36 @@ describe("ExamAttempt model indexes", () => {
 
     await expect(attempt.validate()).resolves.toBeUndefined();
     expect(attempt.answers).toEqual(createEmptyAttemptAnswers());
+    expect(attempt.mode).toBe(EXAM_ATTEMPT_MODE.MOCK);
     expect(attempt.answerRevision).toBe(0);
     expect(attempt.flaggedQuestionIds).toEqual([]);
+  });
+
+  it("keeps attempt mode immutable while retaining current production indexes", () => {
+    expect(ExamAttemptModel.schema.path("mode").options).toMatchObject({
+      immutable: true,
+      default: EXAM_ATTEMPT_MODE.MOCK,
+    });
+    const persistedAttempt = new ExamAttemptModel({
+      mode: EXAM_ATTEMPT_MODE.MOCK,
+    });
+    persistedAttempt.isNew = false;
+    persistedAttempt.mode = EXAM_ATTEMPT_MODE.PRACTICE;
+    expect(persistedAttempt.mode).toBe(EXAM_ATTEMPT_MODE.MOCK);
+
+    const indexes = ExamAttemptModel.schema.indexes();
+    expect(
+      indexes.find(
+        ([, options]) =>
+          options.name === "unique_attempt_number_per_student_exam",
+      )?.[0],
+    ).toEqual({ studentId: 1, examId: 1, attemptNumber: 1 });
+    expect(
+      indexes.find(
+        ([, options]) =>
+          options.name === "unique_active_attempt_per_student_exam",
+      )?.[0],
+    ).toEqual({ studentId: 1, examId: 1 });
   });
 
   it("enforces unique numbering and one active attempt per student and Exam", () => {
