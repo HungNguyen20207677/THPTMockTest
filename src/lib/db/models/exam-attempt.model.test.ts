@@ -25,7 +25,38 @@ describe("ExamAttempt model indexes", () => {
     expect(attempt.flaggedQuestionIds).toEqual([]);
   });
 
-  it("keeps attempt mode immutable while retaining current production indexes", () => {
+  it("requires finite Mock expiration and null Practice expiration", async () => {
+    const common = {
+      examId: "507f1f77bcf86cd799439011",
+      studentId: "507f191e810c19729de860ea",
+      attemptNumber: 1,
+      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+      startedAt: new Date("2026-08-11T03:00:00.000Z"),
+    };
+
+    await expect(
+      new ExamAttemptModel({
+        ...common,
+        mode: EXAM_ATTEMPT_MODE.PRACTICE,
+        expiresAt: null,
+      }).validate(),
+    ).resolves.toBeUndefined();
+    await expect(
+      new ExamAttemptModel({
+        ...common,
+        mode: EXAM_ATTEMPT_MODE.PRACTICE,
+        expiresAt: new Date("2026-08-11T04:30:00.000Z"),
+      }).validate(),
+    ).rejects.toMatchObject({ name: "ValidationError" });
+    await expect(
+      new ExamAttemptModel({
+        ...common,
+        mode: EXAM_ATTEMPT_MODE.MOCK,
+      }).validate(),
+    ).rejects.toMatchObject({ name: "ValidationError" });
+  });
+
+  it("keeps attempt mode immutable without managing the migrated numbering index", () => {
     expect(ExamAttemptModel.schema.path("mode").options).toMatchObject({
       immutable: true,
       default: EXAM_ATTEMPT_MODE.MOCK,
@@ -39,11 +70,10 @@ describe("ExamAttempt model indexes", () => {
 
     const indexes = ExamAttemptModel.schema.indexes();
     expect(
-      indexes.find(
-        ([, options]) =>
-          options.name === "unique_attempt_number_per_student_exam",
-      )?.[0],
-    ).toEqual({ studentId: 1, examId: 1, attemptNumber: 1 });
+      indexes.find(([, options]) =>
+        options.name?.startsWith("unique_attempt_number_per_student_exam"),
+      ),
+    ).toBeUndefined();
     expect(
       indexes.find(
         ([, options]) =>
@@ -52,21 +82,13 @@ describe("ExamAttempt model indexes", () => {
     ).toEqual({ studentId: 1, examId: 1 });
   });
 
-  it("enforces unique numbering and one active attempt per student and Exam", () => {
+  it("keeps one active attempt per student and Exam across modes", () => {
     const indexes = ExamAttemptModel.schema.indexes();
-    const attemptNumberIndex = indexes.find(
-      ([, options]) =>
-        options.name === "unique_attempt_number_per_student_exam",
-    );
     const activeAttemptIndex = indexes.find(
       ([, options]) =>
         options.name === "unique_active_attempt_per_student_exam",
     );
 
-    expect(attemptNumberIndex).toEqual([
-      { studentId: 1, examId: 1, attemptNumber: 1 },
-      expect.objectContaining({ unique: true }),
-    ]);
     expect(activeAttemptIndex).toEqual([
       { studentId: 1, examId: 1 },
       expect.objectContaining({

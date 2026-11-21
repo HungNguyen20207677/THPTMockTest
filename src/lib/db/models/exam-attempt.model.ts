@@ -28,7 +28,7 @@ export interface ExamAttemptRecord {
   status: ExamAttemptStatus;
   gradingStatus?: ExamAttemptGradingStatus;
   startedAt: Date;
-  expiresAt: Date;
+  expiresAt: Date | null;
   submittedAt?: Date;
   lastSavedAt?: Date;
   answers: ExamAttemptAnswers;
@@ -69,7 +69,10 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
     },
     gradingStatus: { type: String, enum: EXAM_ATTEMPT_GRADING_STATUSES },
     startedAt: { type: Date, required: true },
-    expiresAt: { type: Date, required: true },
+    expiresAt: {
+      type: Date,
+      default: null,
+    },
     submittedAt: { type: Date },
     lastSavedAt: { type: Date },
     answers: {
@@ -105,10 +108,16 @@ const examAttemptSchema = new Schema<ExamAttemptRecord>(
   },
 );
 
-examAttemptSchema.index(
-  { studentId: 1, examId: 1, attemptNumber: 1 },
-  { unique: true, name: "unique_attempt_number_per_student_exam" },
-);
+examAttemptSchema.pre("validate", function () {
+  const validExpiration =
+    this.mode === EXAM_ATTEMPT_MODE.PRACTICE
+      ? this.expiresAt === null
+      : this.expiresAt instanceof Date;
+  if (!validExpiration) {
+    this.invalidate("expiresAt", "Attempt expiration does not match its mode.");
+  }
+});
+
 examAttemptSchema.index(
   { studentId: 1, examId: 1 },
   {

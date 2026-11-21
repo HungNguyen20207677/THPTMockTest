@@ -74,23 +74,41 @@ during low traffic; do not run destructive `syncIndexes()` automatically.
 ### Practice mode persistence rollout
 
 Exam attempts without `mode` are read as `MOCK`, and Exams without
-`practiceEnabled` are read as `false`. F.8B.1 intentionally keeps the existing
-attempt-number and active-attempt unique indexes unchanged and keeps `expiresAt`
-required for all created attempts. Before enabling Practice attempt creation:
+`practiceEnabled` are read as `false`. Practice creation remains server-side only
+and is blocked until the explicit migration verifies the database. The Mongoose
+schema deliberately does not declare either attempt-number index, preventing
+application startup from changing their production migration state.
 
-1. Backfill missing `ExamAttempt.mode` to `MOCK` and missing
-   `Exam.practiceEnabled` to `false` in bounded, idempotent batches.
-2. Verify no missing, null, or unknown modes and no duplicate target keys.
-3. Create a new unique numbering index on
-   `{ studentId: 1, examId: 1, mode: 1, attemptNumber: 1 }` under a new name.
-4. Keep `unique_active_attempt_per_student_exam` unchanged so at most one active
-   attempt exists across both modes.
-5. After verifying the new numbering index, drop only
-   `unique_attempt_number_per_student_exam`. Do not use `syncIndexes()`.
+Run the dry-run against the target database first:
 
-Nullable Practice expiration and mode-aware lifecycle behavior are deferred to
-F.8B.2. Do not create Practice attempts or use far-future expiration values
-before that lifecycle release is deployed.
+```bash
+npm run db:migrate:practice-attempts -- --dry-run
+```
+
+During a low-traffic deployment window, apply and then independently verify:
+
+```bash
+npm run db:migrate:practice-attempts -- --apply
+npm run db:migrate:practice-attempts -- --verify
+```
+
+The idempotent apply command performs bounded backfills for missing attempt
+`mode` and Exam `practiceEnabled`, checks mode and expiration invariants, rejects
+duplicate target keys, verifies the unchanged cross-mode active-attempt index,
+creates `unique_attempt_number_per_student_exam_mode`, verifies it, and only then
+drops `unique_attempt_number_per_student_exam`. It never calls `syncIndexes()`.
+
+Rollback is safe only before cross-mode attempt-number collisions exist. Disable
+Practice creation first, then run:
+
+```bash
+npm run db:migrate:practice-attempts -- --rollback
+```
+
+The rollback refuses to proceed if Mock and Practice records share an attempt
+number for the same student and Exam. In that case, retain the new index or first
+remove or renumber Practice data through an audited data repair. Practice records
+store `expiresAt: null`; Mock records must retain a finite expiration.
 
 ## Architecture
 

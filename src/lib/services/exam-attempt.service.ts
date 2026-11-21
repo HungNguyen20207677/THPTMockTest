@@ -14,10 +14,12 @@ import {
   attachEssayImageToOwnedActiveExamAttempt,
   autoSubmitExpiredExamAttemptRecord,
   countExamAttemptRecordsForStudentExam,
+  countExamAttemptRecordsForStudentExamMode,
   createExamAttemptRecord,
-  findActiveExamAttemptRecord,
+  findAnyActiveExamAttemptRecord,
   findExamAttemptRecordById,
   findOwnedExamAttemptRecord,
+  findOwnedExamAttemptRecordByMode,
   listAllExamAttemptRecordsForStudent,
   removeEssayImageFromOwnedActiveExamAttempt,
   saveOwnedActiveExamAttemptAnswers,
@@ -27,6 +29,7 @@ import {
   submitOwnedActiveExamAttempt,
   type ExamAttemptPersistenceRecord,
 } from "@/lib/db/dao/exam-attempt.dao";
+import { verifyPracticeAttemptMigration } from "@/lib/db/migrations/practice-attempt-indexes";
 import {
   createEssayImageUploadTicket,
   deleteEssayImage,
@@ -102,6 +105,7 @@ import type {
   ExamAttempt,
   ExamAttemptAnswers,
   ExamAttemptGradingStatus,
+  ExamAttemptMode,
   EssayImage,
   EssayImageAnswer,
   EssayImageUploadReference,
@@ -131,6 +135,7 @@ const ATTEMPT_DURATION_MS = EXAM_STRUCTURE.durationMinutes * 60 * 1000;
 const START_ATTEMPT_MAX_RETRIES = 3;
 const ESSAY_IMAGE_MUTATION_MAX_RETRIES = 3;
 const SUBMIT_ATTEMPT_MAX_RETRIES = 3;
+let practiceMigrationReadyPromise: Promise<void> | null = null;
 
 class AttemptFinalizationRaceError extends Error {}
 const EXAM_STATE_ORDER: Record<StudentExamState, number> = {
@@ -149,6 +154,18 @@ function assertAdmin(actor: AppUser): void {
   if (actor.role !== USER_ROLE.ADMIN) {
     throw new ForbiddenError();
   }
+}
+
+async function assertPracticeAttemptCreationReady(): Promise<void> {
+  if (!practiceMigrationReadyPromise) {
+    practiceMigrationReadyPromise = verifyPracticeAttemptMigration()
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        practiceMigrationReadyPromise = null;
+        throw error;
+      });
+  }
+  await practiceMigrationReadyPromise;
 }
 
 function structureContainsEssayImage(
@@ -252,7 +269,7 @@ function toExamAttempt(
     answerRevision: attempt.answerRevision,
     flaggedQuestionIds: attempt.flaggedQuestionIds,
     startedAt: attempt.startedAt.toISOString(),
-    expiresAt: attempt.expiresAt.toISOString(),
+    expiresAt: attempt.expiresAt?.toISOString() ?? null,
     submittedAt: attempt.submittedAt?.toISOString(),
     lastSavedAt: attempt.lastSavedAt?.toISOString(),
     answers: getAttemptAnswers(attempt, structure),
@@ -305,6 +322,15 @@ export async function resolveAttemptExpiration(
   serverNow: Date,
   retryCount = 0,
 ): Promise<ExamAttemptPersistenceRecord> {
+  if (attempt.mode === EXAM_ATTEMPT_MODE.PRACTICE) {
+    if (attempt.expiresAt !== null) {
+      throw new ExamAttemptStateConflictError();
+    }
+    return attempt;
+  }
+  if (attempt.expiresAt === null) {
+    throw new ExamAttemptStateConflictError();
+  }
   if (
     attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS ||
     serverNow.getTime() < attempt.expiresAt.getTime()
@@ -362,6 +388,7 @@ export async function resolveAttemptExpiration(
 
   if (
     currentAttempt?.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
+    currentAttempt.expiresAt !== null &&
     serverNow.getTime() >= currentAttempt.expiresAt.getTime()
   ) {
     if (retryCount >= 2) {
@@ -401,7 +428,10 @@ function isValidActiveAttempt(
 ): boolean {
   return (
     attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
-    serverNow.getTime() < attempt.expiresAt.getTime()
+    (attempt.mode === EXAM_ATTEMPT_MODE.PRACTICE
+      ? attempt.expiresAt === null
+      : attempt.expiresAt !== null &&
+        serverNow.getTime() < attempt.expiresAt.getTime())
   );
 }
 
@@ -413,12 +443,17 @@ export function isTerminalExamAttemptStatus(
   );
 }
 
-export async function startOrResumeExamAttempt(
+async function startOrResumeExamAttemptForMode(
   actor: AppUser,
   examId: string,
+  mode: ExamAttemptMode,
   resumeAttemptId?: string,
 ): Promise<StudentExamAttemptContext> {
   assertStudent(actor);
+
+  if (mode === EXAM_ATTEMPT_MODE.PRACTICE && !resumeAttemptId) {
+    await assertPracticeAttemptCreationReady();
+  }
 
   if (resumeAttemptId) {
     const exam = await findStudentExamRecordById(examId);
@@ -431,11 +466,15 @@ export async function startOrResumeExamAttempt(
       throw new ForbiddenError("Tài khoản học sinh không còn hoạt động.");
     }
 
-    const attempt = await findOwnedExamAttemptRecord(
-      resumeAttemptId,
-      examId,
-      actor.id,
-    );
+    const attempt =
+      mode === EXAM_ATTEMPT_MODE.MOCK
+        ? await findOwnedExamAttemptRecord(resumeAttemptId, examId, actor.id)
+        : await findOwnedExamAttemptRecordByMode(
+            resumeAttemptId,
+            examId,
+            actor.id,
+            mode,
+          );
 
     if (!attempt) {
       throw new ExamAttemptNotFoundError();
@@ -455,6 +494,10 @@ export async function startOrResumeExamAttempt(
 
     if (currentExam.status !== EXAM_STATUS.PUBLISHED) {
       throw new ExamNotPublishedError();
+    }
+
+    if (mode === EXAM_ATTEMPT_MODE.PRACTICE && !currentExam.practiceEnabled) {
+      throw new ForbiddenError("Đề thi chưa bật chế độ luyện tập.");
     }
 
     if (!(await isPublishedExamAvailableToStudent(examId, actor.id))) {
@@ -480,7 +523,10 @@ export async function startOrResumeExamAttempt(
 
   for (let retry = 0; retry < START_ATTEMPT_MAX_RETRIES; retry += 1) {
     const serverNow = new Date();
-    const activeAttempt = await findActiveExamAttemptRecord(actor.id, examId);
+    const activeAttempt = await findAnyActiveExamAttemptRecord(
+      actor.id,
+      examId,
+    );
 
     if (activeAttempt) {
       const resolvedAttempt = await resolveAttemptExpiration(
@@ -489,7 +535,10 @@ export async function startOrResumeExamAttempt(
       );
 
       if (isValidActiveAttempt(resolvedAttempt, serverNow)) {
-        return toFreshAttemptContext(exam, resolvedAttempt);
+        if (resolvedAttempt.mode === mode) {
+          return toFreshAttemptContext(exam, resolvedAttempt);
+        }
+        throw new ExamAttemptConflictError();
       }
     }
 
@@ -509,50 +558,73 @@ export async function startOrResumeExamAttempt(
           throw new ExamNotPublishedError();
         }
 
+        if (
+          mode === EXAM_ATTEMPT_MODE.PRACTICE &&
+          !reservedExam.practiceEnabled
+        ) {
+          throw new ForbiddenError("Đề thi chưa bật chế độ luyện tập.");
+        }
+
         const startedAt = new Date();
-        const availabilityState = getExamAvailabilityState(
-          reservedExam.availableFrom,
-          reservedExam.availableUntil,
-          startedAt,
-        );
+        if (mode === EXAM_ATTEMPT_MODE.MOCK) {
+          const availabilityState = getExamAvailabilityState(
+            reservedExam.availableFrom,
+            reservedExam.availableUntil,
+            startedAt,
+          );
 
-        if (availabilityState === "UPCOMING") {
-          throw new ExamNotYetAvailableError();
-        }
-        if (availabilityState === "CLOSED") {
-          throw new ExamAvailabilityEndedError();
+          if (availabilityState === "UPCOMING") {
+            throw new ExamNotYetAvailableError();
+          }
+          if (availabilityState === "CLOSED") {
+            throw new ExamAvailabilityEndedError();
+          }
         }
 
-        const attemptCount = await countExamAttemptRecordsForStudentExam(
-          actor.id,
-          examId,
-          session,
-        );
+        const attemptCount =
+          mode === EXAM_ATTEMPT_MODE.MOCK
+            ? await countExamAttemptRecordsForStudentExam(
+                actor.id,
+                examId,
+                session,
+              )
+            : await countExamAttemptRecordsForStudentExamMode(
+                actor.id,
+                examId,
+                mode,
+                session,
+              );
 
         if (
+          mode === EXAM_ATTEMPT_MODE.MOCK &&
           reservedExam.maxAttempts !== null &&
           attemptCount >= reservedExam.maxAttempts
         ) {
           throw new ExamRetakeNotAllowedError();
         }
 
+        const commonInput = {
+          examId,
+          studentId: actor.id,
+          attemptNumber: attemptCount + 1,
+          status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+          startedAt,
+          ...(reservedExam.structureSnapshot
+            ? {
+                answers: createEmptyAttemptAnswers(
+                  reservedExam.structureSnapshot,
+                ),
+              }
+            : {}),
+        } as const;
         const attempt = await createExamAttemptRecord(
-          {
-            examId,
-            studentId: actor.id,
-            mode: EXAM_ATTEMPT_MODE.MOCK,
-            attemptNumber: attemptCount + 1,
-            status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-            startedAt,
-            expiresAt: new Date(startedAt.getTime() + ATTEMPT_DURATION_MS),
-            ...(reservedExam.structureSnapshot
-              ? {
-                  answers: createEmptyAttemptAnswers(
-                    reservedExam.structureSnapshot,
-                  ),
-                }
-              : {}),
-          },
+          mode === EXAM_ATTEMPT_MODE.MOCK
+            ? {
+                ...commonInput,
+                mode,
+                expiresAt: new Date(startedAt.getTime() + ATTEMPT_DURATION_MS),
+              }
+            : { ...commonInput, mode, expiresAt: null },
           session,
         );
 
@@ -565,7 +637,7 @@ export async function startOrResumeExamAttempt(
         throw error;
       }
 
-      const concurrentAttempt = await findActiveExamAttemptRecord(
+      const concurrentAttempt = await findAnyActiveExamAttemptRecord(
         actor.id,
         examId,
       );
@@ -578,13 +650,42 @@ export async function startOrResumeExamAttempt(
         );
 
         if (isValidActiveAttempt(resolvedAttempt, recoveryNow)) {
-          return toFreshAttemptContext(exam, resolvedAttempt);
+          if (resolvedAttempt.mode === mode) {
+            return toFreshAttemptContext(exam, resolvedAttempt);
+          }
+          throw new ExamAttemptConflictError();
         }
       }
     }
   }
 
   throw new ExamAttemptConflictError();
+}
+
+export async function startOrResumeExamAttempt(
+  actor: AppUser,
+  examId: string,
+  resumeAttemptId?: string,
+): Promise<StudentExamAttemptContext> {
+  return startOrResumeExamAttemptForMode(
+    actor,
+    examId,
+    EXAM_ATTEMPT_MODE.MOCK,
+    resumeAttemptId,
+  );
+}
+
+export async function startOrResumePracticeExamAttempt(
+  actor: AppUser,
+  examId: string,
+  resumeAttemptId?: string,
+): Promise<StudentExamAttemptContext> {
+  return startOrResumeExamAttemptForMode(
+    actor,
+    examId,
+    EXAM_ATTEMPT_MODE.PRACTICE,
+    resumeAttemptId,
+  );
 }
 
 export async function listStudentExams(
@@ -612,6 +713,7 @@ export async function listStudentExams(
   const attempts = await Promise.all(
     storedAttempts.map((attempt) =>
       attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
+      attempt.expiresAt !== null &&
       serverNow.getTime() >= attempt.expiresAt.getTime()
         ? resolveAttemptExpiration(attempt, serverNow)
         : attempt,
@@ -765,8 +867,17 @@ async function getOwnedAttemptOrThrow(
   actor: AppUser,
   examId: string,
   attemptId: string,
+  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
 ): Promise<ExamAttemptPersistenceRecord> {
-  const attempt = await findOwnedExamAttemptRecord(attemptId, examId, actor.id);
+  const attempt =
+    mode === EXAM_ATTEMPT_MODE.MOCK
+      ? await findOwnedExamAttemptRecord(attemptId, examId, actor.id)
+      : await findOwnedExamAttemptRecordByMode(
+          attemptId,
+          examId,
+          actor.id,
+          mode,
+        );
 
   if (!attempt) {
     throw new ExamAttemptNotFoundError();
@@ -779,8 +890,14 @@ async function resolveMutationRace(
   actor: AppUser,
   examId: string,
   attemptId: string,
+  mode: ExamAttemptMode,
 ): Promise<ExamAttemptPersistenceRecord> {
-  const currentAttempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const currentAttempt = await getOwnedAttemptOrThrow(
+    actor,
+    examId,
+    attemptId,
+    mode,
+  );
   return resolveAttemptExpiration(currentAttempt, new Date());
 }
 
@@ -790,9 +907,10 @@ export async function saveExamAttemptAnswers(
   attemptId: string,
   answers: ExamAttemptAnswers,
   answerRevision: number,
+  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
   const serverNow = new Date();
   const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
 
@@ -824,6 +942,9 @@ export async function saveExamAttemptAnswers(
     answers: validatedAnswers,
     expectedAnswerRevision: answerRevision,
     now: serverNow,
+    ...(resolvedAttempt.mode === EXAM_ATTEMPT_MODE.PRACTICE
+      ? { mode: resolvedAttempt.mode }
+      : {}),
     ...(essayQuestionIds.length > 0 ? { essayQuestionIds } : {}),
   });
 
@@ -835,7 +956,12 @@ export async function saveExamAttemptAnswers(
     );
   }
 
-  const currentAttempt = await resolveMutationRace(actor, examId, attemptId);
+  const currentAttempt = await resolveMutationRace(
+    actor,
+    examId,
+    attemptId,
+    mode,
+  );
 
   if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
     throw new ExamAttemptLockedError();
@@ -850,9 +976,10 @@ export async function setExamAttemptQuestionFlag(
   attemptId: string,
   questionId: string,
   flagged: boolean,
+  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
   const serverNow = new Date();
   const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
 
@@ -882,6 +1009,9 @@ export async function setExamAttemptQuestionFlag(
     questionId,
     flagged,
     now: serverNow,
+    ...(resolvedAttempt.mode === EXAM_ATTEMPT_MODE.PRACTICE
+      ? { mode: resolvedAttempt.mode }
+      : {}),
   });
 
   if (savedAttempt) {
@@ -892,7 +1022,12 @@ export async function setExamAttemptQuestionFlag(
     );
   }
 
-  const currentAttempt = await resolveMutationRace(actor, examId, attemptId);
+  const currentAttempt = await resolveMutationRace(
+    actor,
+    examId,
+    attemptId,
+    mode,
+  );
 
   if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
     throw new ExamAttemptLockedError();
@@ -911,9 +1046,10 @@ async function getEssayImageAttemptContext(
   examId: string,
   attemptId: string,
   questionId: string,
+  mode: ExamAttemptMode,
 ): Promise<EssayImageAttemptContext> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
   const serverNow = new Date();
 
   if (!isValidActiveAttempt(attempt, serverNow)) {
@@ -1037,12 +1173,14 @@ export async function issueEssayImageUploadTicket(
   attemptId: string,
   questionId: string,
   intent: EssayImageUploadIntent,
+  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
 ): Promise<EssayImageUploadTicket> {
   const { attempt, exam } = await getEssayImageAttemptContext(
     actor,
     examId,
     attemptId,
     questionId,
+    mode,
   );
   const structure = exam.structureSnapshot;
 
@@ -1069,12 +1207,14 @@ export async function attachEssayImage(
   attemptId: string,
   questionId: string,
   upload: EssayImageUploadReference,
+  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
 ): Promise<StudentExamAttemptMutationResult> {
   const { attempt, exam } = await getEssayImageAttemptContext(
     actor,
     examId,
     attemptId,
     questionId,
+    mode,
   );
   const structure = exam.structureSnapshot;
 
@@ -1124,13 +1264,21 @@ export async function attachEssayImage(
       answers,
       expectedAnswerRevision: currentAttempt.answerRevision,
       now: mutationNow,
+      ...(currentAttempt.mode === EXAM_ATTEMPT_MODE.PRACTICE
+        ? { mode: currentAttempt.mode }
+        : {}),
     });
 
     if (savedAttempt) {
       return toAttemptMutationResult(savedAttempt, mutationNow, structure);
     }
 
-    currentAttempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+    currentAttempt = await getOwnedAttemptOrThrow(
+      actor,
+      examId,
+      attemptId,
+      mode,
+    );
   }
 
   if (!isValidActiveAttempt(currentAttempt, new Date())) {
@@ -1146,12 +1294,14 @@ export async function removeEssayImage(
   attemptId: string,
   questionId: string,
   publicId: string,
+  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
 ): Promise<StudentExamAttemptMutationResult> {
   const { attempt, exam } = await getEssayImageAttemptContext(
     actor,
     examId,
     attemptId,
     questionId,
+    mode,
   );
   const structure = exam.structureSnapshot;
 
@@ -1181,6 +1331,9 @@ export async function removeEssayImage(
       answers,
       expectedAnswerRevision: currentAttempt.answerRevision,
       now: mutationNow,
+      ...(currentAttempt.mode === EXAM_ATTEMPT_MODE.PRACTICE
+        ? { mode: currentAttempt.mode }
+        : {}),
     });
 
     if (savedAttempt) {
@@ -1196,7 +1349,12 @@ export async function removeEssayImage(
       return toAttemptMutationResult(savedAttempt, mutationNow, structure);
     }
 
-    currentAttempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+    currentAttempt = await getOwnedAttemptOrThrow(
+      actor,
+      examId,
+      attemptId,
+      mode,
+    );
   }
 
   if (!isValidActiveAttempt(currentAttempt, new Date())) {
@@ -1212,9 +1370,10 @@ export async function submitExamAttempt(
   attemptId: string,
   answers: ExamAttemptAnswers,
   answerRevision: number,
+  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
   const serverNow = new Date();
   const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
 
@@ -1275,6 +1434,9 @@ export async function submitExamAttempt(
             expectedAnswerRevision: currentAttempt.answerRevision,
             grading,
             gradingStatus,
+            ...(currentAttempt.mode === EXAM_ATTEMPT_MODE.PRACTICE
+              ? { mode: currentAttempt.mode }
+              : {}),
             ...(essayQuestionIds.length > 0 ? { essayQuestionIds } : {}),
             now: mutationNow,
           },
@@ -1297,7 +1459,7 @@ export async function submitExamAttempt(
       return toAttemptMutationResult(submittedAttempt, mutationNow);
     }
 
-    currentAttempt = await resolveMutationRace(actor, examId, attemptId);
+    currentAttempt = await resolveMutationRace(actor, examId, attemptId, mode);
 
     if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
       return toAttemptMutationResult(currentAttempt, new Date());
@@ -1311,9 +1473,10 @@ export async function finalizeExpiredExamAttempt(
   actor: AppUser,
   examId: string,
   attemptId: string,
+  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId);
+  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
   const serverNow = new Date();
   const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
 
@@ -1634,7 +1797,7 @@ export function buildExamAttemptResult(
   const grading = attempt.grading;
   const submittedAt = attempt.submittedAt;
 
-  if (!submittedAt) {
+  if (!submittedAt || attempt.expiresAt === null) {
     throw new ExamAttemptStateConflictError();
   }
 

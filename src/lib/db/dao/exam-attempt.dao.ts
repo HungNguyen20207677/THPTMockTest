@@ -11,7 +11,10 @@ import {
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { ExamAttemptModel } from "@/lib/db/models/exam-attempt.model";
 import { createEmptyAttemptAnswers } from "@/lib/exam/attempt-answers";
-import { withMockExamAttemptFilter } from "@/lib/exam/attempt-mode";
+import {
+  withExamAttemptModeFilter,
+  withMockExamAttemptFilter,
+} from "@/lib/exam/attempt-mode";
 import {
   hasFinalTotalScore,
   isDynamicAttemptGradingSnapshot,
@@ -39,7 +42,7 @@ export interface ExamAttemptPersistenceRecord {
   status: ExamAttemptStatus;
   gradingStatus?: ExamAttemptGradingStatus;
   startedAt: Date;
-  expiresAt: Date;
+  expiresAt: Date | null;
   submittedAt?: Date;
   lastSavedAt?: Date;
   answers?: ExamAttemptAnswers;
@@ -52,16 +55,20 @@ export interface ExamAttemptPersistenceRecord {
   updatedAt: Date;
 }
 
-export interface CreateExamAttemptRecordInput {
+interface CreateExamAttemptRecordInputBase {
   examId: string;
   studentId: string;
-  mode: typeof EXAM_ATTEMPT_MODE.MOCK;
   attemptNumber: number;
   status: typeof EXAM_ATTEMPT_STATUS.IN_PROGRESS;
   startedAt: Date;
-  expiresAt: Date;
   answers?: ExamAttemptAnswers;
 }
+
+export type CreateExamAttemptRecordInput = CreateExamAttemptRecordInputBase &
+  (
+    | { mode: typeof EXAM_ATTEMPT_MODE.MOCK; expiresAt: Date }
+    | { mode: typeof EXAM_ATTEMPT_MODE.PRACTICE; expiresAt: null }
+  );
 
 export interface MutateOwnedExamAttemptInput {
   attemptId: string;
@@ -70,6 +77,7 @@ export interface MutateOwnedExamAttemptInput {
   answers: ExamAttemptAnswers;
   expectedAnswerRevision: number;
   now: Date;
+  mode?: ExamAttemptMode;
   essayQuestionIds?: string[];
 }
 
@@ -80,6 +88,7 @@ export interface MutateOwnedEssayImageInput {
   answers: ExamAttemptAnswers;
   expectedAnswerRevision: number;
   now: Date;
+  mode?: ExamAttemptMode;
 }
 
 export interface SetOwnedExamAttemptQuestionFlagInput {
@@ -89,6 +98,7 @@ export interface SetOwnedExamAttemptQuestionFlagInput {
   questionId: string;
   flagged: boolean;
   now: Date;
+  mode?: ExamAttemptMode;
 }
 
 export interface FinalizeOwnedExamAttemptInput extends MutateOwnedExamAttemptInput {
@@ -147,7 +157,7 @@ interface ExamAttemptDocumentData {
   status: ExamAttemptStatus;
   gradingStatus?: ExamAttemptGradingStatus;
   startedAt: Date;
-  expiresAt: Date;
+  expiresAt: Date | null;
   submittedAt?: Date;
   lastSavedAt?: Date;
   answers?: unknown;
@@ -214,6 +224,15 @@ function getExpectedAnswerRevisionFilter(
         $or: [{ answerRevision: 0 }, { answerRevision: { $exists: false } }],
       }
     : { answerRevision: expectedAnswerRevision };
+}
+
+function getActiveAttemptFilter(
+  mode: ExamAttemptMode,
+  now: Date,
+): Record<string, unknown> {
+  return mode === EXAM_ATTEMPT_MODE.MOCK
+    ? { expiresAt: { $gt: now } }
+    : { expiresAt: null };
 }
 
 function getExpectedManualGradingRevisionFilter(
@@ -337,6 +356,23 @@ export async function findActiveExamAttemptRecord(
   return attempt ? toExamAttemptRecord(attempt) : null;
 }
 
+export async function findAnyActiveExamAttemptRecord(
+  studentId: string,
+  examId: string,
+): Promise<ExamAttemptPersistenceRecord | null> {
+  await prepareExamAttemptModel();
+
+  const attempt = await ExamAttemptModel.findOne({
+    studentId,
+    examId,
+    status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+  })
+    .lean<ExamAttemptDocumentData>()
+    .exec();
+
+  return attempt ? toExamAttemptRecord(attempt) : null;
+}
+
 export async function findLatestExamAttemptRecord(
   studentId: string,
   examId: string,
@@ -397,6 +433,27 @@ export async function findOwnedExamAttemptRecord(
   return attempt ? toExamAttemptRecord(attempt) : null;
 }
 
+export async function findOwnedExamAttemptRecordByMode(
+  attemptId: string,
+  examId: string,
+  studentId: string,
+  mode: ExamAttemptMode,
+  session?: ClientSession,
+): Promise<ExamAttemptPersistenceRecord | null> {
+  await prepareExamAttemptModel();
+
+  let query = ExamAttemptModel.findOne(
+    withExamAttemptModeFilter({ _id: attemptId, examId, studentId }, mode),
+  );
+
+  if (session) {
+    query = query.session(session);
+  }
+
+  const attempt = await query.lean<ExamAttemptDocumentData>().exec();
+  return attempt ? toExamAttemptRecord(attempt) : null;
+}
+
 export async function listAllExamAttemptRecordsForStudent(
   studentId: string,
 ): Promise<ExamAttemptPersistenceRecord[]> {
@@ -436,10 +493,26 @@ export async function countExamAttemptRecordsForStudentExam(
     .exec();
 }
 
+export async function countExamAttemptRecordsForStudentExamMode(
+  studentId: string,
+  examId: string,
+  mode: ExamAttemptMode,
+  session: ClientSession,
+): Promise<number> {
+  await prepareExamAttemptModel();
+
+  return ExamAttemptModel.countDocuments(
+    withExamAttemptModeFilter({ studentId, examId }, mode),
+  )
+    .session(session)
+    .exec();
+}
+
 export async function saveOwnedActiveExamAttemptAnswers(
   input: MutateOwnedExamAttemptInput,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
+  const mode = input.mode ?? EXAM_ATTEMPT_MODE.MOCK;
 
   const essayQuestionIds = new Set(input.essayQuestionIds ?? []);
   const dynamicAnswers = isDynamicAttemptAnswers(input.answers)
@@ -491,14 +564,17 @@ export async function saveOwnedActiveExamAttemptAnswers(
       };
 
   const attempt = await ExamAttemptModel.findOneAndUpdate(
-    withMockExamAttemptFilter({
-      _id: input.attemptId,
-      examId: input.examId,
-      studentId: input.studentId,
-      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-      expiresAt: { $gt: input.now },
-      ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
-    }),
+    withExamAttemptModeFilter(
+      {
+        _id: input.attemptId,
+        examId: input.examId,
+        studentId: input.studentId,
+        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+        ...getActiveAttemptFilter(mode, input.now),
+        ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
+      },
+      mode,
+    ),
     update,
     {
       returnDocument: "after",
@@ -517,15 +593,19 @@ export async function setOwnedActiveExamAttemptQuestionFlag(
   input: SetOwnedExamAttemptQuestionFlagInput,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
+  const mode = input.mode ?? EXAM_ATTEMPT_MODE.MOCK;
 
   const attempt = await ExamAttemptModel.findOneAndUpdate(
-    withMockExamAttemptFilter({
-      _id: input.attemptId,
-      examId: input.examId,
-      studentId: input.studentId,
-      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-      expiresAt: { $gt: input.now },
-    }),
+    withExamAttemptModeFilter(
+      {
+        _id: input.attemptId,
+        examId: input.examId,
+        studentId: input.studentId,
+        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+        ...getActiveAttemptFilter(mode, input.now),
+      },
+      mode,
+    ),
     input.flagged
       ? { $addToSet: { flaggedQuestionIds: input.questionId } }
       : { $pull: { flaggedQuestionIds: input.questionId } },
@@ -545,16 +625,20 @@ async function mutateOwnedActiveEssayImageAnswer(
   input: MutateOwnedEssayImageInput,
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
+  const mode = input.mode ?? EXAM_ATTEMPT_MODE.MOCK;
 
   const attempt = await ExamAttemptModel.findOneAndUpdate(
-    withMockExamAttemptFilter({
-      _id: input.attemptId,
-      examId: input.examId,
-      studentId: input.studentId,
-      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-      expiresAt: { $gt: input.now },
-      ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
-    }),
+    withExamAttemptModeFilter(
+      {
+        _id: input.attemptId,
+        examId: input.examId,
+        studentId: input.studentId,
+        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+        ...getActiveAttemptFilter(mode, input.now),
+        ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
+      },
+      mode,
+    ),
     {
       $set: {
         answers: input.answers,
@@ -588,6 +672,7 @@ export async function submitOwnedActiveExamAttempt(
 ): Promise<ExamAttemptPersistenceRecord | null> {
   await prepareExamAttemptModel();
   assertValidGradingState(input.gradingStatus, input.grading);
+  const mode = input.mode ?? EXAM_ATTEMPT_MODE.MOCK;
 
   const essayQuestionIds = new Set(input.essayQuestionIds ?? []);
   const dynamicAnswers = isDynamicAttemptAnswers(input.answers)
@@ -646,14 +731,17 @@ export async function submitOwnedActiveExamAttempt(
       };
 
   const attempt = await ExamAttemptModel.findOneAndUpdate(
-    withMockExamAttemptFilter({
-      _id: input.attemptId,
-      examId: input.examId,
-      studentId: input.studentId,
-      status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-      expiresAt: { $gt: input.now },
-      ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
-    }),
+    withExamAttemptModeFilter(
+      {
+        _id: input.attemptId,
+        examId: input.examId,
+        studentId: input.studentId,
+        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+        ...getActiveAttemptFilter(mode, input.now),
+        ...getExpectedAnswerRevisionFilter(input.expectedAnswerRevision),
+      },
+      mode,
+    ),
     update,
     {
       returnDocument: "after",

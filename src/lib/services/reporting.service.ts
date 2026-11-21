@@ -97,6 +97,7 @@ interface PreparedTerminalAttempt extends ExamAttemptPersistenceRecord {
   grading: ExamAttemptGradingSnapshot;
   gradingStatus: ExamAttemptGradingStatus;
   submittedAt: Date;
+  expiresAt: Date;
 }
 
 const REPORTING_WRITE_BATCH_SIZE = 20;
@@ -182,7 +183,7 @@ function toPreparedTerminalAttempt(
   attempt: ExamAttemptPersistenceRecord,
   exam: Pick<ExamReportingPersistenceRecord, "structureSnapshot">,
 ): PreparedTerminalAttempt {
-  if (!attempt.grading || !attempt.submittedAt) {
+  if (!attempt.grading || !attempt.submittedAt || !attempt.expiresAt) {
     throw new ExamAttemptStateConflictError();
   }
 
@@ -214,6 +215,7 @@ function toPreparedTerminalAttempt(
     grading: attempt.grading,
     gradingStatus,
     submittedAt: attempt.submittedAt,
+    expiresAt: attempt.expiresAt,
   };
 }
 
@@ -539,11 +541,15 @@ export async function getAdminAttemptDetail(
   const exam = await findExamReportingRecordById(storedAttempt.examId);
   const resolvedAttempt =
     storedAttempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
+    storedAttempt.expiresAt !== null &&
     now.getTime() >= storedAttempt.expiresAt.getTime()
       ? await resolveAttemptExpiration(storedAttempt, now)
       : storedAttempt;
   const studentMap = await getStudentMap([resolvedAttempt.studentId]);
   const student = studentMap.get(resolvedAttempt.studentId);
+  if (resolvedAttempt.expiresAt === null) {
+    throw new ExamAttemptStateConflictError();
+  }
   const detail: AdminAttemptDetail = {
     student: student ? toStudentIdentity(student) : null,
     exam: exam ? toExamIdentity(exam) : null,

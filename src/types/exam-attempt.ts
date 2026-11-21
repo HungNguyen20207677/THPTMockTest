@@ -178,7 +178,7 @@ export interface ExamAttempt {
   answerRevision: number;
   flaggedQuestionIds: string[];
   startedAt: string;
-  expiresAt: string;
+  expiresAt: string | null;
   submittedAt?: string;
   lastSavedAt?: string;
   answers: ExamAttemptAnswers;

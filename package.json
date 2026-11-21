@@ -17,6 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "admin:create": "node --conditions=react-server --import=tsx scripts/create-admin.ts",
+    "db:migrate:practice-attempts": "node --conditions=react-server --import=tsx scripts/migrate-practice-attempts.ts",
     "prepare": "husky"
   },
   "dependencies": {

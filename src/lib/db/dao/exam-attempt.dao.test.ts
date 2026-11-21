@@ -251,6 +251,50 @@ describe("ExamAttempt cascade DAO", () => {
     expect(mocks.findOneAndUpdate.mock.calls[1][2]).toMatchObject({ session });
   });
 
+  it("uses null expiration and exact mode guards for Practice mutations", async () => {
+    const now = new Date("2026-08-11T03:00:00.000Z");
+    const answers = createEmptyAttemptAnswers();
+    const answerKey: ExamAnswerKey = {
+      partOne: Array.from({ length: 12 }, () => "A" as const),
+      partTwo: Array.from({ length: 4 }, () => ({
+        a: true,
+        b: false,
+        c: true,
+        d: false,
+      })),
+      partThree: ["1", "2", "3", "4", "5", "6"],
+    };
+    const mutation = {
+      attemptId: "practice-attempt-id",
+      examId: "exam-id",
+      studentId: "student-id",
+      mode: EXAM_ATTEMPT_MODE.PRACTICE,
+      answers,
+      expectedAnswerRevision: 0,
+      now,
+    };
+
+    await saveOwnedActiveExamAttemptAnswers(mutation);
+    await submitOwnedActiveExamAttempt(
+      {
+        ...mutation,
+        grading: gradeAttemptAnswers(answers, answerKey),
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.COMPLETED,
+      },
+      { id: "practice-session" } as never,
+    );
+
+    for (const call of mocks.findOneAndUpdate.mock.calls) {
+      expect(call[0]).toMatchObject({
+        _id: "practice-attempt-id",
+        mode: EXAM_ATTEMPT_MODE.PRACTICE,
+        status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+        expiresAt: null,
+      });
+      expect(call[0]).not.toHaveProperty("$and");
+    }
+  });
+
   it("atomically merges objective autosave fields without replacing essay images", async () => {
     const now = new Date("2026-08-11T03:00:00.000Z");
     const staleImage = {

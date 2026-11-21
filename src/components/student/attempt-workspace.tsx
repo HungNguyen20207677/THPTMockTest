@@ -1806,7 +1806,10 @@ function ActiveAttemptWorkspace({
         return;
       }
 
-      if (result.attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
+      if (
+        result.attempt.status === EXAM_ATTEMPT_STATUS.IN_PROGRESS &&
+        result.attempt.expiresAt
+      ) {
         const authoritativeRemaining = Math.max(
           0,
           new Date(result.attempt.expiresAt).getTime() -
@@ -2271,19 +2274,21 @@ function ActiveAttemptWorkspace({
                 <span className="text-muted-foreground hidden text-xs sm:inline">
                   Còn lại
                 </span>
-                <CountdownTimer
-                  expiresAt={context.attempt.expiresAt}
-                  serverNow={context.serverNow}
-                  onRemainingChange={(remainingMilliseconds) => {
-                    if (
-                      remainingMilliseconds > 0 &&
-                      remainingMilliseconds <= 3000
-                    ) {
-                      void autosave.flush().catch(() => undefined);
-                    }
-                  }}
-                  onExpired={handleCountdownExpired}
-                />
+                {context.attempt.expiresAt ? (
+                  <CountdownTimer
+                    expiresAt={context.attempt.expiresAt}
+                    serverNow={context.serverNow}
+                    onRemainingChange={(remainingMilliseconds) => {
+                      if (
+                        remainingMilliseconds > 0 &&
+                        remainingMilliseconds <= 3000
+                      ) {
+                        void autosave.flush().catch(() => undefined);
+                      }
+                    }}
+                    onExpired={handleCountdownExpired}
+                  />
+                ) : null}
               </div>
               <AutosaveIndicator status={autosave.status} />
               <Button

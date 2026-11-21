@@ -1,4 +1,5 @@
 import { EXAM_ATTEMPT_MODE } from "@/lib/constants/exam-attempt";
+import type { ExamAttemptMode } from "@/types/exam-attempt";
 
 export function getMockExamAttemptFilter(): Record<string, unknown> {
   return {
@@ -10,4 +11,13 @@ export function withMockExamAttemptFilter(
   filter: Record<string, unknown>,
 ): Record<string, unknown> {
   return { ...filter, $and: [getMockExamAttemptFilter()] };
+}
+
+export function withExamAttemptModeFilter(
+  filter: Record<string, unknown>,
+  mode: ExamAttemptMode,
+): Record<string, unknown> {
+  return mode === EXAM_ATTEMPT_MODE.MOCK
+    ? withMockExamAttemptFilter(filter)
+    : { ...filter, mode: EXAM_ATTEMPT_MODE.PRACTICE };
 }

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   countExamAttemptRecordsForStudentExam: vi.fn(),
   createExamAttemptRecord: vi.fn(),
   findActiveExamAttemptRecord: vi.fn(),
+  verifyPracticeAttemptMigration: vi.fn(),
   findExamAttemptRecordById: vi.fn(),
   findLatestExamAttemptRecord: vi.fn(),
   findOwnedExamAttemptRecord: vi.fn(),
@@ -42,9 +43,13 @@ vi.mock("@/lib/db/dao/exam-attempt.dao", () => ({
     mocks.countExamAttemptRecordsForStudentExam,
   createExamAttemptRecord: mocks.createExamAttemptRecord,
   findActiveExamAttemptRecord: mocks.findActiveExamAttemptRecord,
+  findAnyActiveExamAttemptRecord: mocks.findActiveExamAttemptRecord,
   findExamAttemptRecordById: mocks.findExamAttemptRecordById,
   findLatestExamAttemptRecord: mocks.findLatestExamAttemptRecord,
   findOwnedExamAttemptRecord: mocks.findOwnedExamAttemptRecord,
+  findOwnedExamAttemptRecordByMode: mocks.findOwnedExamAttemptRecord,
+  countExamAttemptRecordsForStudentExamMode:
+    mocks.countExamAttemptRecordsForStudentExam,
   listAllExamAttemptRecordsForStudent:
     mocks.listAllExamAttemptRecordsForStudent,
   removeEssayImageFromOwnedActiveExamAttempt:
@@ -83,6 +88,10 @@ vi.mock("@/lib/db/dao/user.dao", () => ({
 
 vi.mock("@/lib/db/mongoose", () => ({
   withMongoTransaction: mocks.withMongoTransaction,
+}));
+
+vi.mock("@/lib/db/migrations/practice-attempt-indexes", () => ({
+  verifyPracticeAttemptMigration: mocks.verifyPracticeAttemptMigration,
 }));
 
 import {
@@ -124,6 +133,7 @@ import {
   saveExamAttemptAnswers,
   setExamAttemptQuestionFlag,
   startOrResumeExamAttempt,
+  startOrResumePracticeExamAttempt,
   submitExamAttempt,
   updateManualEssayGrading,
 } from "@/lib/services/exam-attempt.service";
@@ -447,6 +457,7 @@ function mockAttemptCreation(): void {
           id: `attempt-${input.attemptNumber}`,
           examId: input.examId,
           studentId: input.studentId,
+          mode: input.mode,
           attemptNumber: input.attemptNumber,
           status: input.status,
           startedAt: input.startedAt,
@@ -477,6 +488,7 @@ describe("ExamAttempt service", () => {
     mocks.findActiveExamAttemptRecord.mockResolvedValue(null);
     mocks.findLatestExamAttemptRecord.mockResolvedValue(null);
     mocks.findExamAttemptRecordById.mockResolvedValue(null);
+    mocks.verifyPracticeAttemptMigration.mockResolvedValue({});
     mocks.isPublishedExamAvailableToStudent.mockResolvedValue(true);
     mocks.markExamAttemptsStarted.mockResolvedValue(true);
     mocks.markStudentAttemptsStarted.mockResolvedValue(true);
@@ -555,10 +567,149 @@ describe("ExamAttempt service", () => {
       answers: createEmptyAttemptAnswers(),
     });
     expect(
-      new Date(result.attempt.expiresAt).getTime() -
+      new Date(result.attempt.expiresAt!).getTime() -
         new Date(result.attempt.startedAt).getTime(),
     ).toBe(90 * 60 * 1000);
     expect(result.serverNow).toBe(serverNow.toISOString());
+  });
+
+  it("starts Practice with null expiration outside Mock limits and windows", async () => {
+    const closedExam = createStudentExam({
+      practiceEnabled: true,
+      availableUntil: new Date(serverNow.getTime() - 1),
+      maxAttempts: 0,
+    });
+    mocks.findStudentExamRecordById.mockResolvedValue(closedExam);
+    mocks.countExamAttemptRecordsForStudentExam.mockResolvedValue(2);
+
+    const result = await startOrResumePracticeExamAttempt(student, "exam-id");
+
+    expect(mocks.verifyPracticeAttemptMigration).toHaveBeenCalledOnce();
+    expect(mocks.createExamAttemptRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: EXAM_ATTEMPT_MODE.PRACTICE,
+        attemptNumber: 3,
+        expiresAt: null,
+      }),
+      mocks.transactionSession,
+    );
+    expect(result.attempt).toMatchObject({
+      mode: EXAM_ATTEMPT_MODE.PRACTICE,
+      attemptNumber: 3,
+      expiresAt: null,
+    });
+  });
+
+  it("does not create Practice when the Exam has not enabled it", async () => {
+    await expect(
+      startOrResumePracticeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
+  it("blocks concurrent active attempts across Mock and Practice", async () => {
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({ practiceEnabled: true }),
+    );
+    mocks.findActiveExamAttemptRecord.mockResolvedValue(createAttempt());
+
+    await expect(
+      startOrResumePracticeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_CONFLICT" });
+
+    mocks.findActiveExamAttemptRecord.mockResolvedValue(
+      createAttempt({ mode: EXAM_ATTEMPT_MODE.PRACTICE, expiresAt: null }),
+    );
+    await expect(
+      startOrResumeExamAttempt(student, "exam-id"),
+    ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_CONFLICT" });
+    expect(mocks.createExamAttemptRecord).not.toHaveBeenCalled();
+  });
+
+  it("autosaves active Practice without lazy expiration", async () => {
+    const practiceAttempt = createAttempt({
+      mode: EXAM_ATTEMPT_MODE.PRACTICE,
+      expiresAt: null,
+    });
+    const savedAttempt = createAttempt({
+      ...practiceAttempt,
+      answerRevision: 1,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(practiceAttempt);
+    mocks.saveOwnedActiveExamAttemptAnswers.mockResolvedValue(savedAttempt);
+
+    const result = await saveExamAttemptAnswers(
+      student,
+      "exam-id",
+      practiceAttempt.id,
+      practiceAttempt.answers!,
+      0,
+      EXAM_ATTEMPT_MODE.PRACTICE,
+    );
+
+    expect(mocks.autoSubmitExpiredExamAttemptRecord).not.toHaveBeenCalled();
+    expect(mocks.saveOwnedActiveExamAttemptAnswers).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: EXAM_ATTEMPT_MODE.PRACTICE }),
+    );
+    expect(result).toMatchObject({
+      attempt: { mode: EXAM_ATTEMPT_MODE.PRACTICE, expiresAt: null },
+      canEditAnswers: true,
+    });
+  });
+
+  it("submits Practice essay answers without expiration auto-submission", async () => {
+    const practiceAttempt = createEssayAttempt([], {
+      mode: EXAM_ATTEMPT_MODE.PRACTICE,
+      expiresAt: null,
+    });
+    mocks.findOwnedExamAttemptRecord.mockResolvedValue(practiceAttempt);
+    mocks.findStudentExamRecordById.mockResolvedValue(
+      createStudentExam({
+        practiceEnabled: true,
+        structureSnapshot: essayStructure,
+      }),
+    );
+    mocks.reserveExamForAttemptGrading.mockResolvedValue(
+      createEssayGradingExam(),
+    );
+    mocks.submitOwnedActiveExamAttempt.mockImplementation(
+      (input: {
+        grading: ExamAttemptPersistenceRecord["grading"];
+        gradingStatus: ExamAttemptPersistenceRecord["gradingStatus"];
+      }) =>
+        Promise.resolve(
+          createEssayAttempt([], {
+            ...practiceAttempt,
+            status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+            submittedAt: serverNow,
+            grading: input.grading,
+            gradingStatus: input.gradingStatus,
+          }),
+        ),
+    );
+
+    const result = await submitExamAttempt(
+      student,
+      "exam-id",
+      practiceAttempt.id,
+      practiceAttempt.answers!,
+      practiceAttempt.answerRevision,
+      EXAM_ATTEMPT_MODE.PRACTICE,
+    );
+
+    expect(mocks.autoSubmitExpiredExamAttemptRecord).not.toHaveBeenCalled();
+    expect(mocks.submitOwnedActiveExamAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: EXAM_ATTEMPT_MODE.PRACTICE,
+        gradingStatus: EXAM_ATTEMPT_GRADING_STATUS.PENDING_MANUAL,
+      }),
+      mocks.transactionSession,
+    );
+    expect(result.attempt).toMatchObject({
+      mode: EXAM_ATTEMPT_MODE.PRACTICE,
+      status: EXAM_ATTEMPT_STATUS.SUBMITTED,
+      expiresAt: null,
+    });
   });
 
   it("allows a new attempt at the exact opening timestamp", async () => {
