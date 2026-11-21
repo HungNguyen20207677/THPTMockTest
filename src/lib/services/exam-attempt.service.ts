@@ -846,11 +846,11 @@ export async function getOwnedExamAttemptContext(
   attemptId: string,
 ): Promise<StudentExamAttemptContext> {
   assertStudent(actor);
-  const attempt = await findOwnedExamAttemptRecord(attemptId, examId, actor.id);
-
-  if (!attempt) {
-    throw new ExamAttemptNotFoundError();
-  }
+  const attempt = await getOwnedWorkspaceAttemptOrThrow(
+    actor,
+    examId,
+    attemptId,
+  );
 
   const serverNow = new Date();
   const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
@@ -886,6 +886,28 @@ async function getOwnedAttemptOrThrow(
   return attempt;
 }
 
+async function getOwnedWorkspaceAttemptOrThrow(
+  actor: AppUser,
+  examId: string,
+  attemptId: string,
+): Promise<ExamAttemptPersistenceRecord> {
+  const mockAttempt = await findOwnedExamAttemptRecord(
+    attemptId,
+    examId,
+    actor.id,
+  );
+  if (mockAttempt) {
+    return mockAttempt;
+  }
+
+  return getOwnedAttemptOrThrow(
+    actor,
+    examId,
+    attemptId,
+    EXAM_ATTEMPT_MODE.PRACTICE,
+  );
+}
+
 async function resolveMutationRace(
   actor: AppUser,
   examId: string,
@@ -907,10 +929,12 @@ export async function saveExamAttemptAnswers(
   attemptId: string,
   answers: ExamAttemptAnswers,
   answerRevision: number,
-  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
+  mode?: ExamAttemptMode,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
+  const attempt = mode
+    ? await getOwnedAttemptOrThrow(actor, examId, attemptId, mode)
+    : await getOwnedWorkspaceAttemptOrThrow(actor, examId, attemptId);
   const serverNow = new Date();
   const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
 
@@ -960,7 +984,7 @@ export async function saveExamAttemptAnswers(
     actor,
     examId,
     attemptId,
-    mode,
+    attempt.mode,
   );
 
   if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
@@ -976,10 +1000,12 @@ export async function setExamAttemptQuestionFlag(
   attemptId: string,
   questionId: string,
   flagged: boolean,
-  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
+  mode?: ExamAttemptMode,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
+  const attempt = mode
+    ? await getOwnedAttemptOrThrow(actor, examId, attemptId, mode)
+    : await getOwnedWorkspaceAttemptOrThrow(actor, examId, attemptId);
   const serverNow = new Date();
   const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
 
@@ -1026,7 +1052,7 @@ export async function setExamAttemptQuestionFlag(
     actor,
     examId,
     attemptId,
-    mode,
+    attempt.mode,
   );
 
   if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
@@ -1046,10 +1072,12 @@ async function getEssayImageAttemptContext(
   examId: string,
   attemptId: string,
   questionId: string,
-  mode: ExamAttemptMode,
+  mode?: ExamAttemptMode,
 ): Promise<EssayImageAttemptContext> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
+  const attempt = mode
+    ? await getOwnedAttemptOrThrow(actor, examId, attemptId, mode)
+    : await getOwnedWorkspaceAttemptOrThrow(actor, examId, attemptId);
   const serverNow = new Date();
 
   if (!isValidActiveAttempt(attempt, serverNow)) {
@@ -1173,7 +1201,7 @@ export async function issueEssayImageUploadTicket(
   attemptId: string,
   questionId: string,
   intent: EssayImageUploadIntent,
-  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
+  mode?: ExamAttemptMode,
 ): Promise<EssayImageUploadTicket> {
   const { attempt, exam } = await getEssayImageAttemptContext(
     actor,
@@ -1207,7 +1235,7 @@ export async function attachEssayImage(
   attemptId: string,
   questionId: string,
   upload: EssayImageUploadReference,
-  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
+  mode?: ExamAttemptMode,
 ): Promise<StudentExamAttemptMutationResult> {
   const { attempt, exam } = await getEssayImageAttemptContext(
     actor,
@@ -1277,7 +1305,7 @@ export async function attachEssayImage(
       actor,
       examId,
       attemptId,
-      mode,
+      currentAttempt.mode,
     );
   }
 
@@ -1294,7 +1322,7 @@ export async function removeEssayImage(
   attemptId: string,
   questionId: string,
   publicId: string,
-  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
+  mode?: ExamAttemptMode,
 ): Promise<StudentExamAttemptMutationResult> {
   const { attempt, exam } = await getEssayImageAttemptContext(
     actor,
@@ -1353,7 +1381,7 @@ export async function removeEssayImage(
       actor,
       examId,
       attemptId,
-      mode,
+      currentAttempt.mode,
     );
   }
 
@@ -1370,10 +1398,12 @@ export async function submitExamAttempt(
   attemptId: string,
   answers: ExamAttemptAnswers,
   answerRevision: number,
-  mode: ExamAttemptMode = EXAM_ATTEMPT_MODE.MOCK,
+  mode?: ExamAttemptMode,
 ): Promise<StudentExamAttemptMutationResult> {
   assertStudent(actor);
-  const attempt = await getOwnedAttemptOrThrow(actor, examId, attemptId, mode);
+  const attempt = mode
+    ? await getOwnedAttemptOrThrow(actor, examId, attemptId, mode)
+    : await getOwnedWorkspaceAttemptOrThrow(actor, examId, attemptId);
   const serverNow = new Date();
   const resolvedAttempt = await resolveAttemptExpiration(attempt, serverNow);
 
@@ -1459,7 +1489,12 @@ export async function submitExamAttempt(
       return toAttemptMutationResult(submittedAttempt, mutationNow);
     }
 
-    currentAttempt = await resolveMutationRace(actor, examId, attemptId, mode);
+    currentAttempt = await resolveMutationRace(
+      actor,
+      examId,
+      attemptId,
+      attempt.mode,
+    );
 
     if (currentAttempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
       return toAttemptMutationResult(currentAttempt, new Date());

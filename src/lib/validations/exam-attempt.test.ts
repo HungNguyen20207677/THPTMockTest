@@ -18,4 +18,10 @@ describe("start attempt validation", () => {
         .success,
     ).toBe(false);
   });
+
+  it("rejects a client-supplied attempt mode", () => {
+    expect(
+      startAttemptMutationSchema.safeParse({ mode: "PRACTICE" }).success,
+    ).toBe(false);
+  });
 });

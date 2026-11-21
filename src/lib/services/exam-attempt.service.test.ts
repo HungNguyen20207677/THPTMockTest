@@ -635,7 +635,9 @@ describe("ExamAttempt service", () => {
       ...practiceAttempt,
       answerRevision: 1,
     });
-    mocks.findOwnedExamAttemptRecord.mockResolvedValue(practiceAttempt);
+    mocks.findOwnedExamAttemptRecord
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(practiceAttempt);
     mocks.saveOwnedActiveExamAttemptAnswers.mockResolvedValue(savedAttempt);
 
     const result = await saveExamAttemptAnswers(
@@ -644,7 +646,6 @@ describe("ExamAttempt service", () => {
       practiceAttempt.id,
       practiceAttempt.answers!,
       0,
-      EXAM_ATTEMPT_MODE.PRACTICE,
     );
 
     expect(mocks.autoSubmitExpiredExamAttemptRecord).not.toHaveBeenCalled();
@@ -662,7 +663,9 @@ describe("ExamAttempt service", () => {
       mode: EXAM_ATTEMPT_MODE.PRACTICE,
       expiresAt: null,
     });
-    mocks.findOwnedExamAttemptRecord.mockResolvedValue(practiceAttempt);
+    mocks.findOwnedExamAttemptRecord
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(practiceAttempt);
     mocks.findStudentExamRecordById.mockResolvedValue(
       createStudentExam({
         practiceEnabled: true,
@@ -694,7 +697,6 @@ describe("ExamAttempt service", () => {
       practiceAttempt.id,
       practiceAttempt.answers!,
       practiceAttempt.answerRevision,
-      EXAM_ATTEMPT_MODE.PRACTICE,
     );
 
     expect(mocks.autoSubmitExpiredExamAttemptRecord).not.toHaveBeenCalled();
@@ -710,6 +712,40 @@ describe("ExamAttempt service", () => {
       status: EXAM_ATTEMPT_STATUS.SUBMITTED,
       expiresAt: null,
     });
+  });
+
+  it("loads owned Practice workspace context without exposing result or solution access", async () => {
+    const practiceAttempt = createAttempt({
+      mode: EXAM_ATTEMPT_MODE.PRACTICE,
+      expiresAt: null,
+    });
+    mocks.findOwnedExamAttemptRecord
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(practiceAttempt);
+
+    await expect(
+      getOwnedExamAttemptContext(student, "exam-id", practiceAttempt.id),
+    ).resolves.toMatchObject({
+      attempt: { mode: EXAM_ATTEMPT_MODE.PRACTICE, expiresAt: null },
+    });
+
+    mocks.findOwnedExamAttemptRecord.mockReset();
+    mocks.findOwnedExamAttemptRecord
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(practiceAttempt);
+    await expect(
+      getStudentExamAttemptResult(student, "exam-id", practiceAttempt.id),
+    ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_NOT_FOUND" });
+    expect(mocks.findOwnedExamAttemptRecord).toHaveBeenCalledTimes(1);
+
+    mocks.findOwnedExamAttemptRecord.mockReset();
+    mocks.findOwnedExamAttemptRecord
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(practiceAttempt);
+    await expect(
+      getStudentExamAttemptSolutionPdf(student, "exam-id", practiceAttempt.id),
+    ).rejects.toMatchObject({ code: "EXAM_ATTEMPT_NOT_FOUND" });
+    expect(mocks.findOwnedExamAttemptRecord).toHaveBeenCalledTimes(1);
   });
 
   it("allows a new attempt at the exact opening timestamp", async () => {

@@ -264,6 +264,7 @@ const examBaseFields = {
   title: titleSchema,
   description: descriptionSchema,
   status: examStatusSchema,
+  practiceEnabled: z.boolean().default(false),
   availableFrom: optionalExamDateSchema,
   availableUntil: optionalExamDateSchema,
   assignmentDueAt: optionalExamDateSchema,

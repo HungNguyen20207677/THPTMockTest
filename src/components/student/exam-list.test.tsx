@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   fetchStudentExams: vi.fn(),
   push: vi.fn(),
+  startStudentExamAttempt: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -14,7 +21,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api/student-exams", () => ({
   fetchStudentExams: mocks.fetchStudentExams,
-  startStudentExamAttempt: vi.fn(),
+  startStudentExamAttempt: mocks.startStudentExamAttempt,
 }));
 
 vi.mock("@/lib/fullscreen", () => ({
@@ -63,6 +70,7 @@ describe("Student Exam list attempt limits", () => {
     cleanup();
     mocks.fetchStudentExams.mockReset();
     mocks.push.mockReset();
+    mocks.startStudentExamAttempt.mockReset();
   });
 
   it("shows an exhausted finite limit without offering another attempt", async () => {
@@ -80,7 +88,7 @@ describe("Student Exam list attempt limits", () => {
     );
     expect(screen.getByText(/2\/2 lượt đã dùng/)).toBeTruthy();
     expect(screen.getByText("Đã dùng hết lượt làm")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Làm lại" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Thi thử lại" })).toBeNull();
   });
 
   it("offers a retake while a finite slot remains", async () => {
@@ -103,7 +111,7 @@ describe("Student Exam list attempt limits", () => {
       expect(screen.getByText("Có thể làm lại")).toBeTruthy(),
     );
     expect(screen.getByText(/1\/2 lượt đã dùng/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Làm lại" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Thi thử lại" })).toBeTruthy();
   });
 
   it("shows an upcoming Exam without offering a start action", async () => {
@@ -128,9 +136,7 @@ describe("Student Exam list attempt limits", () => {
     render(<StudentExamList />);
 
     await waitFor(() => expect(screen.getByText(/Sắp mở/)).toBeTruthy());
-    expect(
-      screen.queryByRole("button", { name: "Bắt đầu làm bài" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Thi thử" })).toBeNull();
   });
 
   it("prioritizes resuming an active attempt after the schedule closes", async () => {
@@ -157,7 +163,7 @@ describe("Student Exam list attempt limits", () => {
 
     await waitFor(() => expect(screen.getByText(/Đã đóng/)).toBeTruthy());
     expect(
-      screen.getByRole("button", { name: /Tiếp tục làm bài/ }),
+      screen.getByRole("button", { name: /Tiếp tục thi thử/ }),
     ).toBeTruthy();
   });
 
@@ -188,8 +194,37 @@ describe("Student Exam list attempt limits", () => {
     );
     expect(
       screen.getByRole<HTMLButtonElement>("button", {
-        name: /Bắt đầu làm bài/,
+        name: /Thi thử/,
       }).disabled,
     ).toBe(false);
+  });
+
+  it("shows enabled Exams as distinct Mock and disabled Practice actions", async () => {
+    mocks.fetchStudentExams.mockResolvedValue({
+      data: {
+        exams: [
+          createCompletedExam({
+            practiceEnabled: true,
+            state: STUDENT_EXAM_STATE.NOT_STARTED,
+            latestCompletedAttemptId: undefined,
+            completedAttemptCount: 0,
+            attemptCount: 0,
+            canStartNewAttempt: true,
+          }),
+        ],
+        serverTime: "2026-11-11T01:00:00.000Z",
+      },
+    });
+
+    render(<StudentExamList />);
+
+    expect(await screen.findByRole("button", { name: "Thi thử" })).toBeTruthy();
+    const practiceButton = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Luyện tập",
+    });
+    expect(practiceButton.disabled).toBe(true);
+    fireEvent.click(practiceButton);
+    expect(mocks.startStudentExamAttempt).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 });

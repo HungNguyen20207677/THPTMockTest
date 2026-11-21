@@ -92,11 +92,21 @@ describe("exam answer-key validation", () => {
     const scheduled = examUpsertSchema.parse(scheduledInput);
 
     expect(unrestricted.availableFrom).toBeUndefined();
+    expect(unrestricted.practiceEnabled).toBe(false);
     expect(unrestricted.availableUntil).toBeUndefined();
     expect(unrestricted.assignmentDueAt).toBeUndefined();
     expect(scheduled.availableFrom).toBe("2026-11-12T01:00:00.000Z");
     expect(scheduled.availableUntil).toBe("2026-11-12T03:00:00.000Z");
     expect(scheduled.assignmentDueAt).toBe("2026-11-12T05:30:00.000Z");
+  });
+
+  it("preserves an explicitly enabled Practice setting", () => {
+    expect(
+      examUpsertSchema.parse({
+        ...createValidExamInput(),
+        practiceEnabled: true,
+      }).practiceEnabled,
+    ).toBe(true);
   });
 
   it("rejects malformed or non-increasing availability dates", () => {

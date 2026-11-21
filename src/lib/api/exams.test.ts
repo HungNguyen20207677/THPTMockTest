@@ -40,6 +40,7 @@ function createValidInput(): UpsertExamInput {
     title: "De thi thu Toan so 1",
     description: undefined,
     status: EXAM_STATUS.DRAFT,
+    practiceEnabled: false,
     visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
     assignedStudentIds: [],
     part3InputMode: PART3_INPUT_MODE.BUBBLE,

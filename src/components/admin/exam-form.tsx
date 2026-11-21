@@ -3,7 +3,12 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useDeferredValue, useEffect, useState } from "react";
+import {
+  useDeferredValue,
+  useEffect,
+  useState,
+  type InputHTMLAttributes,
+} from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 
 import { QuestionTopicSelector } from "@/components/admin/question-topic-selector";
@@ -158,11 +163,30 @@ function createEmptyDynamicAnswerKey(structure: ExamStructureSnapshot): {
   };
 }
 
+export function PracticeEnabledControl(
+  props: InputHTMLAttributes<HTMLInputElement>,
+) {
+  return (
+    <label className="border-border has-checked:border-primary has-checked:bg-primary/5 flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors has-disabled:cursor-not-allowed has-disabled:opacity-60">
+      <input type="checkbox" className="mt-0.5 size-4" {...props} />
+      <span className="space-y-1">
+        <span className="block font-medium">Cho phép luyện tập</span>
+        <span className="text-muted-foreground block text-xs leading-5">
+          Luyện tập không giới hạn thời gian; Thi thử vẫn dùng đồng hồ, giới hạn
+          lượt và quy tắc toàn màn hình. Tính năng mở bài luyện tập chưa được
+          kích hoạt toàn hệ thống.
+        </span>
+      </span>
+    </label>
+  );
+}
+
 function createEmptyEditorValues(mode: ExamFormProps["mode"]): ExamEditorInput {
   const commonValues = {
     title: "",
     description: "",
     status: EXAM_STATUS.DRAFT,
+    practiceEnabled: false,
     availableFrom: null,
     availableUntil: null,
     assignmentDueAt: null,
@@ -214,6 +238,7 @@ function toEditorValues(exam: ExamDetail): ExamEditorInput {
     title: exam.title,
     description: exam.description ?? "",
     status: exam.status,
+    practiceEnabled: exam.practiceEnabled,
     availableFrom: exam.availableFrom,
     availableUntil: exam.availableUntil,
     assignmentDueAt: exam.assignmentDueAt,
@@ -1839,7 +1864,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 : "Hai cách nhập dùng cùng quy tắc 4 ô và cùng cách chấm điểm."}
             </p>
           </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <div className="border-border space-y-2 rounded-md border p-3 text-sm">
               <Label htmlFor="exam-max-attempts">Số lần làm bài tối đa</Label>
               <Controller
@@ -1880,6 +1905,7 @@ export function ExamForm({ mode, examId }: ExamFormProps) {
                 </p>
               )}
             </div>
+            <PracticeEnabledControl {...register("practiceEnabled")} />
             <label
               className={`border-border has-checked:border-primary has-checked:bg-primary/5 flex items-start gap-3 rounded-md border p-3 text-sm transition-colors ${isBusy ? "cursor-not-allowed" : "cursor-pointer"}`}
             >

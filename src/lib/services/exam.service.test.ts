@@ -253,6 +253,7 @@ function createDynamicInput(
     title: legacyInput.title,
     description: legacyInput.description,
     status: legacyInput.status,
+    practiceEnabled: legacyInput.practiceEnabled,
     visibilityMode: legacyInput.visibilityMode,
     assignedStudentIds: legacyInput.assignedStudentIds,
     part3InputMode: legacyInput.part3InputMode,
@@ -284,6 +285,7 @@ function createDynamicUpdateInput(
     title: baseInput.title,
     description: baseInput.description,
     status: baseInput.status,
+    practiceEnabled: baseInput.practiceEnabled,
     visibilityMode: baseInput.visibilityMode,
     assignedStudentIds: baseInput.assignedStudentIds,
     part3InputMode: baseInput.part3InputMode,
@@ -312,6 +314,7 @@ function createValidInput(): UpsertExamInput {
     title: "Đề thi thử Toán số 1",
     description: "Đề luyện tập",
     status: EXAM_STATUS.DRAFT,
+    practiceEnabled: false,
     visibilityMode: EXAM_VISIBILITY_MODE.ALL_STUDENTS,
     assignedStudentIds: [],
     part3InputMode: PART3_INPUT_MODE.BUBBLE,
@@ -353,7 +356,6 @@ function createStoredExam(
 
   return {
     id: "exam-id",
-    practiceEnabled: false,
     ...inputWithoutAvailability,
     availableFrom: availableFrom ? new Date(availableFrom) : null,
     availableUntil: availableUntil ? new Date(availableUntil) : null,
@@ -1173,6 +1175,7 @@ describe("exam service", () => {
       title: baseInput.title,
       description: baseInput.description,
       status: baseInput.status,
+      practiceEnabled: baseInput.practiceEnabled,
       visibilityMode: baseInput.visibilityMode,
       assignedStudentIds: baseInput.assignedStudentIds,
       part3InputMode: baseInput.part3InputMode,
@@ -1740,7 +1743,7 @@ describe("exam service", () => {
     expect(mocks.releaseExamPdfOperationLease).toHaveBeenCalled();
   });
 
-  it("updates question topics as metadata after attempts without touching grading", async () => {
+  it("updates Practice and question topics as metadata after attempts without touching grading", async () => {
     const currentExam = createStoredExam();
     const assignedStudentId = "64b000000000000000000001";
     const questionTopicIds = createEmptyQuestionTopicIds();
@@ -1751,6 +1754,7 @@ describe("exam service", () => {
       ...createValidInput(),
       title: "Đề thi thử Toán đã đổi tên",
       description: "Mô tả mới",
+      practiceEnabled: true,
       visibilityMode: EXAM_VISIBILITY_MODE.SELECTED_STUDENTS,
       assignedStudentIds: [assignedStudentId],
       questionTopicIds,
@@ -1762,6 +1766,7 @@ describe("exam service", () => {
     const updatedExam = createStoredExam({
       title: input.title,
       description: input.description,
+      practiceEnabled: input.practiceEnabled,
       visibilityMode: input.visibilityMode,
       assignedStudentIds: input.assignedStudentIds,
       questionTopicIds,
@@ -1780,6 +1785,7 @@ describe("exam service", () => {
     expect(result).toMatchObject({
       title: input.title,
       description: input.description,
+      practiceEnabled: true,
       settings: input.settings,
       visibilityMode: input.visibilityMode,
       assignedStudentIds: input.assignedStudentIds,
@@ -1792,6 +1798,7 @@ describe("exam service", () => {
         title: input.title,
         description: input.description,
         status: input.status,
+        practiceEnabled: input.practiceEnabled,
         availableFrom: null,
         availableUntil: null,
         assignmentDueAt: null,
@@ -1904,6 +1911,7 @@ describe("exam service", () => {
       title: baseInput.title,
       description: baseInput.description,
       status: baseInput.status,
+      practiceEnabled: baseInput.practiceEnabled,
       visibilityMode: baseInput.visibilityMode,
       assignedStudentIds: baseInput.assignedStudentIds,
       part3InputMode: baseInput.part3InputMode,

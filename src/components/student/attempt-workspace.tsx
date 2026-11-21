@@ -30,7 +30,10 @@ import {
   submitStudentExamAttempt,
   uploadStudentEssayImage,
 } from "@/lib/api/student-exams";
-import { EXAM_ATTEMPT_STATUS } from "@/lib/constants/exam-attempt";
+import {
+  EXAM_ATTEMPT_MODE,
+  EXAM_ATTEMPT_STATUS,
+} from "@/lib/constants/exam-attempt";
 import { EXAM_STRUCTURE_QUESTION_TYPE } from "@/lib/constants/exam-structure-template";
 import {
   EXAM_STRUCTURE,
@@ -1010,19 +1013,24 @@ export function DynamicAnswerSheet({
 function EndedAttempt({ context }: { context: StudentExamAttemptContext }) {
   const wasAutoSubmitted =
     context.attempt.status === EXAM_ATTEMPT_STATUS.AUTO_SUBMITTED;
+  const isPractice = context.attempt.mode === EXAM_ATTEMPT_MODE.PRACTICE;
 
   return (
     <div className="mx-auto max-w-2xl py-12">
       <section className="border-border bg-background space-y-4 rounded-xl border p-6 text-center shadow-sm">
-        <p className="text-primary text-sm font-semibold">LƯỢT LÀM BÀI</p>
+        <p className="text-primary text-sm font-semibold">
+          {isPractice ? "CHẾ ĐỘ LUYỆN TẬP" : "LƯỢT LÀM BÀI"}
+        </p>
         <h1 className="text-2xl font-bold">{context.exam.title}</h1>
         <p className="text-muted-foreground">
           Lần làm {context.attempt.attemptNumber}
         </p>
         <div className="bg-muted rounded-lg p-4 text-sm leading-6">
-          {wasAutoSubmitted
-            ? "Đã hết thời gian và bài làm đã được tự động nộp."
-            : "Bài làm đã được nộp thành công."}{" "}
+          {isPractice
+            ? "Buổi luyện tập đã kết thúc. Kết quả luyện tập chưa được mở trong giai đoạn này."
+            : wasAutoSubmitted
+              ? "Đã hết thời gian và bài làm đã được tự động nộp."
+              : "Bài làm đã được nộp thành công."}{" "}
           Phiếu trả lời không còn có thể chỉnh sửa.
         </div>
         {context.attempt.submittedAt && (
@@ -1032,11 +1040,13 @@ function EndedAttempt({ context }: { context: StudentExamAttemptContext }) {
           </p>
         )}
         <div className="flex flex-wrap justify-center gap-2">
-          <Button asChild>
-            <Link href={getResultHref(context.exam.id, context.attempt.id)}>
-              Xem kết quả
-            </Link>
-          </Button>
+          {!isPractice && (
+            <Button asChild>
+              <Link href={getResultHref(context.exam.id, context.attempt.id)}>
+                Xem kết quả
+              </Link>
+            </Button>
+          )}
           <Button asChild variant="outline">
             <Link href="/student">Quay lại danh sách đề thi</Link>
           </Button>
@@ -1121,7 +1131,7 @@ function ClockIcon() {
   );
 }
 
-function ActiveAttemptWorkspace({
+export function ActiveAttemptWorkspace({
   initialContext,
 }: {
   initialContext: StudentExamAttemptContext;
@@ -1129,6 +1139,7 @@ function ActiveAttemptWorkspace({
   const router = useRouter();
   const { exam, attempt: initialAttempt } = initialContext;
   const [context, setContext] = useState(initialContext);
+  const isPractice = context.attempt.mode === EXAM_ATTEMPT_MODE.PRACTICE;
   const [answers, setAnswers] = useState<ExamAttemptAnswers>(
     initialAttempt.answers,
   );
@@ -1146,6 +1157,8 @@ function ActiveAttemptWorkspace({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [exitError, setExitError] = useState<string | null>(null);
+  const [isExiting, setIsExiting] = useState(false);
   const [isAutoFinalizing, setIsAutoFinalizing] = useState(false);
   const [isExpirationPending, setIsExpirationPending] = useState(false);
   const [activeEssayImageMutations, setActiveEssayImageMutations] = useState(0);
@@ -1500,6 +1513,9 @@ function ActiveAttemptWorkspace({
   }
 
   function beginIntentionalFilePickerInteraction() {
+    if (isPractice) {
+      return;
+    }
     intentionalFilePickerRef.current = {
       active: true,
       wasFullscreen: isDocumentElementFullscreen(),
@@ -1507,6 +1523,9 @@ function ActiveAttemptWorkspace({
   }
 
   function finishIntentionalFilePickerInteraction() {
+    if (isPractice) {
+      return;
+    }
     const interaction = intentionalFilePickerRef.current;
 
     if (!interaction.active) {
@@ -1685,6 +1704,7 @@ function ActiveAttemptWorkspace({
 
   const handleFullscreenExitTransition = useEffectEvent(() => {
     if (
+      isPractice ||
       context.attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS ||
       !context.canEditAnswers ||
       expirationStartedRef.current ||
@@ -1751,7 +1771,11 @@ function ActiveAttemptWorkspace({
       setAnswers(latestContext.attempt.answers);
       setContext(latestContext);
       setIsSubmitDialogOpen(false);
-      router.replace(getResultHref(exam.id, initialAttempt.id));
+      router.replace(
+        latestContext.attempt.mode === EXAM_ATTEMPT_MODE.PRACTICE
+          ? "/student"
+          : getResultHref(exam.id, initialAttempt.id),
+      );
       return true;
     } catch {
       return false;
@@ -1928,7 +1952,11 @@ function ActiveAttemptWorkspace({
         canEditAnswers: result.canEditAnswers,
       }));
       setIsSubmitDialogOpen(false);
-      router.replace(getResultHref(exam.id, initialAttempt.id));
+      router.replace(
+        result.attempt.mode === EXAM_ATTEMPT_MODE.PRACTICE
+          ? "/student"
+          : getResultHref(exam.id, initialAttempt.id),
+      );
     } catch (submitError) {
       const errorMessage = getRequestError(
         submitError,
@@ -1965,6 +1993,39 @@ function ActiveAttemptWorkspace({
     }
   }
 
+  async function handlePracticeSaveAndExit() {
+    if (
+      !isPractice ||
+      isExiting ||
+      isSubmitting ||
+      activeEssayImageMutations > 0 ||
+      pendingFlagQuestionIds.size > 0 ||
+      hasInvalidPartThreeText ||
+      flagError
+    ) {
+      return;
+    }
+
+    setIsExiting(true);
+    setExitError(null);
+    try {
+      await autosave.flush();
+      if (isMountedRef.current) {
+        router.push("/student");
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        setExitError(
+          getRequestError(
+            error,
+            "Không thể lưu trước khi thoát. Vui lòng thử lại.",
+          ),
+        );
+        setIsExiting(false);
+      }
+    }
+  }
+
   useEffect(() => {
     isMountedRef.current = true;
 
@@ -1975,6 +2036,9 @@ function ActiveAttemptWorkspace({
   }, []);
 
   useEffect(() => {
+    if (isPractice) {
+      return;
+    }
     const initialIsFullscreen = isDocumentElementFullscreen();
     fullscreenTrackingRef.current =
       createExamFullscreenTrackingState(initialIsFullscreen);
@@ -2034,7 +2098,7 @@ function ActiveAttemptWorkspace({
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, []);
+  }, [isPractice]);
 
   useEffect(() => {
     if (pdfLoadState !== "loading") {
@@ -2047,6 +2111,15 @@ function ActiveAttemptWorkspace({
     );
     return () => window.clearTimeout(timeoutId);
   }, [pdfLoadState, pdfLoadVersion]);
+
+  const practiceExitDisabledReason =
+    activeEssayImageMutations > 0
+      ? "Hãy chờ thao tác ảnh hoàn tất."
+      : pendingFlagQuestionIds.size > 0 || flagError
+        ? "Hãy chờ câu đánh dấu được lưu."
+        : hasInvalidPartThreeText
+          ? "Hãy sửa câu trả lời ngắn chưa hợp lệ trước khi thoát."
+          : null;
 
   if (
     context.attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS ||
@@ -2221,7 +2294,9 @@ function ActiveAttemptWorkspace({
           }}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle>Xác nhận nộp bài</AlertDialogTitle>
+            <AlertDialogTitle>
+              {isPractice ? "Kết thúc luyện tập?" : "Xác nhận nộp bài"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               Bạn đã hoàn thành {progress.answeredQuestions}/
               {progress.totalQuestions} câu.{" "}
@@ -2231,8 +2306,9 @@ function ActiveAttemptWorkspace({
                   câu chưa hoàn thành.{" "}
                 </>
               )}
-              Sau khi nộp, câu trả lời không thể thay đổi và lượt làm bài sẽ kết
-              thúc.
+              {isPractice
+                ? "Sau khi kết thúc, câu trả lời không thể thay đổi. Kết quả luyện tập chưa được mở trong giai đoạn này."
+                : "Sau khi nộp, câu trả lời không thể thay đổi và lượt làm bài sẽ kết thúc."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {submissionError && (
@@ -2249,7 +2325,13 @@ function ActiveAttemptWorkspace({
               disabled={isSubmitting}
               onClick={() => void handleManualSubmit()}
             >
-              {isSubmitting ? "Đang nộp bài..." : "Xác nhận nộp bài"}
+              {isSubmitting
+                ? isPractice
+                  ? "Đang kết thúc..."
+                  : "Đang nộp bài..."
+                : isPractice
+                  ? "Xác nhận kết thúc"
+                  : "Xác nhận nộp bài"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2268,13 +2350,18 @@ function ActiveAttemptWorkspace({
                 · Lần làm {context.attempt.attemptNumber}
               </span>
             </h1>
+            {isPractice && (
+              <span className="border-primary/20 bg-primary/5 text-primary shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium">
+                Chế độ luyện tập
+              </span>
+            )}
             <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
-              <div className="border-border bg-muted/40 flex h-9 items-center gap-2 rounded-lg border px-2.5">
-                <ClockIcon />
-                <span className="text-muted-foreground hidden text-xs sm:inline">
-                  Còn lại
-                </span>
-                {context.attempt.expiresAt ? (
+              {!isPractice && context.attempt.expiresAt && (
+                <div className="border-border bg-muted/40 flex h-9 items-center gap-2 rounded-lg border px-2.5">
+                  <ClockIcon />
+                  <span className="text-muted-foreground hidden text-xs sm:inline">
+                    Còn lại
+                  </span>
                   <CountdownTimer
                     expiresAt={context.attempt.expiresAt}
                     serverNow={context.serverNow}
@@ -2288,44 +2375,77 @@ function ActiveAttemptWorkspace({
                     }}
                     onExpired={handleCountdownExpired}
                   />
-                ) : null}
-              </div>
+                </div>
+              )}
               <AutosaveIndicator status={autosave.status} />
-              <Button
-                ref={fullscreenButtonRef}
-                type="button"
-                size="icon"
-                variant="outline"
-                disabled={
-                  !fullscreenSupported ||
-                  isChangingFullscreenForExit ||
-                  isSubmitting ||
-                  isExpirationPending ||
-                  hasCountdownExpired ||
-                  activeEssayImageMutations > 0
-                }
-                aria-label={
-                  isFullscreen
-                    ? "Thoát toàn màn hình và nộp bài"
-                    : "Mở chế độ toàn màn hình"
-                }
-                title={
-                  fullscreenSupported
-                    ? isFullscreen
+              {!isPractice && (
+                <Button
+                  ref={fullscreenButtonRef}
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  disabled={
+                    !fullscreenSupported ||
+                    isChangingFullscreenForExit ||
+                    isSubmitting ||
+                    isExpirationPending ||
+                    hasCountdownExpired ||
+                    activeEssayImageMutations > 0
+                  }
+                  aria-label={
+                    isFullscreen
                       ? "Thoát toàn màn hình và nộp bài"
-                      : "Mở toàn màn hình"
-                    : "Trình duyệt không hỗ trợ toàn màn hình"
-                }
-                className="size-9"
-                onClick={() => void handleFullscreenToggle()}
-              >
-                <FullscreenIcon active={isFullscreen} />
-              </Button>
+                      : "Mở chế độ toàn màn hình"
+                  }
+                  title={
+                    fullscreenSupported
+                      ? isFullscreen
+                        ? "Thoát toàn màn hình và nộp bài"
+                        : "Mở toàn màn hình"
+                      : "Trình duyệt không hỗ trợ toàn màn hình"
+                  }
+                  className="size-9"
+                  onClick={() => void handleFullscreenToggle()}
+                >
+                  <FullscreenIcon active={isFullscreen} />
+                </Button>
+              )}
+              {isPractice && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    isExiting ||
+                    isSubmitting ||
+                    activeEssayImageMutations > 0 ||
+                    pendingFlagQuestionIds.size > 0 ||
+                    hasInvalidPartThreeText ||
+                    Boolean(flagError)
+                  }
+                  aria-describedby={
+                    practiceExitDisabledReason
+                      ? "practice-exit-disabled-reason"
+                      : undefined
+                  }
+                  title={practiceExitDisabledReason ?? undefined}
+                  onClick={() => void handlePracticeSaveAndExit()}
+                  className="h-9 px-3"
+                >
+                  {isExiting ? "Đang lưu..." : "Lưu và thoát"}
+                </Button>
+              )}
+              {isPractice && practiceExitDisabledReason && (
+                <span id="practice-exit-disabled-reason" className="sr-only">
+                  {practiceExitDisabledReason}
+                </span>
+              )}
               <Button
                 ref={submitButtonRef}
                 type="button"
+                aria-label={isPractice ? "Kết thúc luyện tập" : "Nộp bài"}
                 disabled={
                   isSubmitting ||
+                  isExiting ||
                   hasCountdownExpired ||
                   isExpirationPending ||
                   !canSubmitAnswers
@@ -2340,12 +2460,25 @@ function ActiveAttemptWorkspace({
                 onClick={() => setIsSubmitDialogOpen(true)}
                 className="h-9 px-3"
               >
-                <span className="sm:hidden">Nộp</span>
-                <span className="hidden sm:inline">Nộp bài</span>
+                <span className="sm:hidden">
+                  {isPractice ? "Kết thúc" : "Nộp"}
+                </span>
+                <span className="hidden sm:inline">
+                  {isPractice ? "Kết thúc luyện tập" : "Nộp bài"}
+                </span>
               </Button>
             </div>
           </div>
         </header>
+
+        {exitError && (
+          <p
+            role="alert"
+            className="border-destructive/30 bg-destructive/5 text-destructive shrink-0 rounded-lg border px-3 py-2 text-xs"
+          >
+            {exitError}
+          </p>
+        )}
 
         {fullscreenError &&
           !environmentWarning &&
@@ -2593,7 +2726,10 @@ function ActiveAttemptWorkspace({
                   )
                 }
                 disabled={
-                  hasCountdownExpired || isExpirationPending || isSubmitting
+                  hasCountdownExpired ||
+                  isExpirationPending ||
+                  isSubmitting ||
+                  isExiting
                 }
                 progress={dynamicProgress}
                 shortAnswerInputMode={
@@ -2621,7 +2757,10 @@ function ActiveAttemptWorkspace({
                   )
                 }
                 disabled={
-                  hasCountdownExpired || isExpirationPending || isSubmitting
+                  hasCountdownExpired ||
+                  isExpirationPending ||
+                  isSubmitting ||
+                  isExiting
                 }
                 progress={legacyProgress}
                 part3InputMode={exam.part3InputMode}

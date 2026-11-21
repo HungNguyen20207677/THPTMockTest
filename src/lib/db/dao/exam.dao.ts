@@ -67,6 +67,7 @@ export interface SaveExamRecordInput {
   title: string;
   description?: string;
   status: ExamStatus;
+  practiceEnabled: boolean;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
   assignmentDueAt?: Date | null;
@@ -87,6 +88,7 @@ export interface UpdateExamMetadataRecordInput {
   title: string;
   description?: string;
   status: ExamStatus;
+  practiceEnabled: boolean;
   availableFrom?: Date | null;
   availableUntil?: Date | null;
   assignmentDueAt?: Date | null;

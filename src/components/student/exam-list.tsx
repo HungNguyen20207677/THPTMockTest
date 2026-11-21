@@ -434,7 +434,7 @@ export function StudentExamList() {
                           setStartTarget(exam);
                         }}
                       >
-                        Tiếp tục làm bài
+                        Tiếp tục thi thử
                         <span aria-hidden="true">→</span>
                       </Button>
                     )}
@@ -449,7 +449,7 @@ export function StudentExamList() {
                           setStartTarget(exam);
                         }}
                       >
-                        Bắt đầu làm bài
+                        Thi thử
                         <span aria-hidden="true">→</span>
                       </Button>
                     )}
@@ -484,9 +484,28 @@ export function StudentExamList() {
                           setStartTarget(exam);
                         }}
                       >
-                        Làm lại
+                        Thi thử lại
                       </Button>
                     )}
+                  {exam.practiceEnabled && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled
+                      aria-describedby={`practice-unavailable-${exam.id}`}
+                      title="Chế độ luyện tập chưa được mở"
+                    >
+                      Luyện tập
+                    </Button>
+                  )}
+                  {exam.practiceEnabled && (
+                    <span
+                      id={`practice-unavailable-${exam.id}`}
+                      className="text-muted-foreground self-center text-xs"
+                    >
+                      Chưa mở
+                    </span>
+                  )}
                 </div>
               </article>
             ))}
